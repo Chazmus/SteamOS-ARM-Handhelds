@@ -55,7 +55,7 @@ Switch with the Performance button, the KONKR Control plugin, or `konkrctl profi
 
 1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer to `abl_a` and `abl_b`. Android still boots from its menu.
 2. Download all three `.7z` parts from [Releases](../../releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
-3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT, set boot mode to Linux and hit START.
+3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT (or AYANEO Pocket S2), set boot mode to Linux and hit START.
 
 First boot takes a couple of minutes, then sign in to Steam and you're good to go.
 
@@ -117,7 +117,7 @@ Valve's files and the Steam client aren't in this repo, the build downloads them
 
 ## Supporting the project
 
-I work on this in my spare time and it's free. If it got your Pocket FIT running the way you wanted, a coffee really helps.
+I work on this in my spare time and it's free. If it got your device running the way you wanted, a coffee really helps.
 
 <p align="left">
   <a href="https://ko-fi.com/aimalb"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi"></a>
