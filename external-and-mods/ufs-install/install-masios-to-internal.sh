@@ -129,6 +129,13 @@ FRESH_EXCLUDES=(
   "${GAMES_EXCLUDES[@]}"
   --exclude='/steamos/.local/share/Steam/config/loginusers.vdf'
   --exclude='/steamos/.local/share/Steam/config/config.vdf'
+  --exclude='/steamos/.local/share/Steam/config/DialogConfig.vdf'
+  --exclude='/steamos/.local/share/Steam/config/libraryfolders.vdf'
+  --exclude='/steamos/.local/share/Steam/config/remoteclients.vdf'
+  --exclude='/steamos/.local/share/Steam/config/avatarcache/'
+  --exclude='/steamos/.local/share/Steam/config/htmlcache/'
+  --exclude='/steamos/.local/share/Steam/appcache/httpcache/'
+  --exclude='/steamos/.local/share/Steam/appcache/cefdata/'
   --exclude='/steamos/.local/share/Steam/userdata/'
   --exclude='/steamos/.local/share/Steam/ssfn*'
   --exclude='/steamos/.local/share/Steam/logs/'

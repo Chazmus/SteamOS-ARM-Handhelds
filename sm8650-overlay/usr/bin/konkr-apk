@@ -147,8 +147,11 @@ EOF
 # unless a real SteamVR registered itself.
 ensure_vrpaths() {
   local vrp="${HOME}/.config/openvr/openvrpaths.vrpath" base="${HOME}/.local/share/konkr-apk/steamvr"
-  [[ -s "$vrp" ]] && return 0
+  # Always: a vrpath left pointing here (a home copied without
+  # ~/.local/share/konkr-apk) makes Lepton pass an empty host path to podman
+  # ("host directory cannot be empty") and Android never starts.
   mkdir -p "${vrp%/*}" "$base/runtime" "$base/config" "$base/logs"
+  [[ -s "$vrp" ]] && return 0
   cat >"$vrp" <<EOF
 {
   "config": ["$base/config"],
