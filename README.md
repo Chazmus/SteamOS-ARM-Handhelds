@@ -107,10 +107,7 @@ Games with anti-cheat that blocks emulators won't run, and a few apps may still 
 
 ## Known issues
 
-- Real kernel sleep doesn't wake up reliably yet, that's why standby is the default.
-- It gets hot in heavy games, 90°C+ with the fan maxed out. Silent or a frame limit helps a lot.
-- Hardware rotation is off for now.
-- The KONKR and Quick Access buttons don't show up in Steam's controller test, but they work.
+Nothing I could find in my own testing on v1.2. If something breaks for you, open an issue and I'll add it here.
 
 ## Building
 
