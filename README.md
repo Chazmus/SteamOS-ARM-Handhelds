@@ -57,7 +57,7 @@ Switch with the Performance button, the KONKR Control plugin, or `konkrctl profi
 2. Download all three `.7z` parts from [Releases](../../releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
 3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT, set boot mode to Linux and hit START.
 
-First boot takes a couple of minutes, then it's the normal Steam setup (language, Wi-Fi, time, sign in).
+First boot takes a couple of minutes, then sign in to Steam and you're good to go.
 
 The Linux user is `steamos` and has no password until you set one: open Konsole in Desktop Mode and run `passwd`. You need it for `sudo`.
 
