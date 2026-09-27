@@ -206,7 +206,6 @@ GAMESCOPE_ARGS=(
   --backend drm
   --prefer-output "$OUTPUT"
   --force-internal
-  --force-windows-fullscreen
   --scaler fit
   --filter linear
   --steam
