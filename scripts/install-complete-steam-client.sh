@@ -74,6 +74,24 @@ sanitize_steam_user_data() {
     >"${d}/steam.cfg"
   mkdir -p "${d}/steamrtarm64"
   cp -f "${d}/steam.cfg" "${d}/steamrtarm64/steam.cfg" 2>/dev/null || true
+
+  # Steam > Settings > Developer > Force WPA Supplicant, on. Off, every Steam
+  # start asks steamos-manager for iwd (which this kernel can't run) and
+  # Wi-Fi drops for about a minute while NetworkManager is put back.
+  mkdir -p "${d}/config"
+  printf '%b\n' '"InstallConfigStore"' '{' '\t"SteamOS"' '\t{' \
+    '\t\t"WifiForceWPASupplicant"\t\t"1"' '\t}' '}' >"${d}/config/config.vdf"
+
+  # With no ~/.steam/registry.vdf at all Steam skips the first-run setup and
+  # goes straight to sign-in. Ship one that says setup hasn't run.
+  local home="${d%/.local/share/Steam}"
+  if [[ "$home" != "$d" ]]; then
+    mkdir -p "${home}/.steam"
+    printf '%b\n' '"Registry"' '{' '\t"HKCU"' '\t{' '\t\t"Software"' '\t\t{' \
+      '\t\t\t"Valve"' '\t\t\t{' '\t\t\t\t"Steam"' '\t\t\t\t{' \
+      '\t\t\t\t\t"CompletedOOBEStage1"\t\t"0"' '\t\t\t\t\t"CompletedOOBE"\t\t"0"' \
+      '\t\t\t\t}' '\t\t\t}' '\t\t}' '\t}' '}' >"${home}/.steam/registry.vdf"
+  fi
 }
 
 mkdir -p "$STEAM_HOME"

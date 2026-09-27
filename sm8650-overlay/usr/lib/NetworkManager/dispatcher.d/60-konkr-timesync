@@ -1,0 +1,14 @@
+#!/bin/sh
+# No RTC on this device, so the clock boots at the last saved time until NTP
+# syncs. systemd-timesyncd only hears about network changes from
+# systemd-networkd, not NetworkManager: its first try runs before Wi-Fi is
+# up, then it backs off, and the first sync landed ~30 min after boot (wrong
+# time for TLS, Steam and atomupd's wait-for-sync). Kick it when a
+# connection comes up and the clock still isn't synchronized.
+case "$2" in
+  up|connectivity-change) ;;
+  *) exit 0 ;;
+esac
+[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] && exit 0
+systemctl try-restart systemd-timesyncd.service
+exit 0

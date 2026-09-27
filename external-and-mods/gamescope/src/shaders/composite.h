@@ -3,6 +3,23 @@
 #include "shaderfilter.h"
 #include "alphamode.h"
 
+// Rotate only the final store coordinate (CCW 90-degree steps: 1=90, 2=180,
+// 3=270); the scene stays logical so sampling and blending are unchanged.
+uvec2 outputLogicalSize(uint rotation) {
+    uvec2 size = imageSize(dst);
+    return (rotation & 1u) != 0u ? uvec2(size.y, size.x) : size;
+}
+
+ivec2 rotateOutputCoord(uvec2 coord, uint rotation) {
+    uvec2 size = imageSize(dst);
+    switch (rotation) {
+        case 1u: return ivec2(coord.y, size.y - 1u - coord.x);
+        case 2u: return ivec2(size.x - 1u - coord.x, size.y - 1u - coord.y);
+        case 3u: return ivec2(size.x - 1u - coord.y, coord.x);
+        default: return ivec2(coord);
+    }
+}
+
 vec4 sampleRegular(sampler2D tex, vec2 coord, uint colorspace) {
     vec4 color = textureLod(tex, coord, 0);
     color.rgb = colorspace_plane_degamma_tf(color.rgb, colorspace);
@@ -50,7 +67,7 @@ uint pseudo_random(uint seed) {
     return seed * 1664525u + 1013904223u;
 }
 
-void compositing_debug(uvec2 coord) {
+void compositing_debug(uvec2 coord, uint rotation) {
     uvec2 pos = coord;
     pos.x -= (u_frameId & 2) != 0 ?  128 : 0;
     pos.y -= (u_frameId & 1) != 0 ?  128 : 0;
@@ -66,7 +83,7 @@ void compositing_debug(uvec2 coord) {
             if (time.x + time.y + time.z + time.w < 2.0f)
                 value = vec4(0.0f, 0.0f, 0.0f, 1.0f);
         }
-        imageStore(dst, ivec2(coord), value);
+        imageStore(dst, rotateOutputCoord(coord, rotation), value);
     }
 }
 
@@ -104,12 +121,7 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
     //
     // We also need to do degamma here for non-linear views to blend in linear space.
     // ie. PQ -> PQ would need us to manually do bilinear here.
-    //
-    // Do not use textureQueryLevels() here: Turnip/Freedreno often returns 0 for
-    // sampler1D, which skipped the 3D LUT path entirely (Steam night mode was a
-    // no-op even after GAMESCOPE_COLOR_NIGHT_MODE was set). c_output_eotf is
-    // EOTF_Count when color management is disabled.
-    bool lut3d_enabled = c_output_eotf < EOTF_Count;
+    bool lut3d_enabled = textureQueryLevels(s_shaperLut[plane_eotf]) != 0;
     if (lut3d_enabled)
     {
         color = colorspace_plane_shaper_tf(color, colorspace);
@@ -127,7 +139,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalize
     vec2 pixCoord = coord * scale - 0.5f;
     vec2 originPixCoord = floor(pixCoord);
 
-    vec2 gatherUV = (originPixCoord * scale + 1.0f) / scale;
+    vec2 gatherUV = (originPixCoord + 1.0f) / scale;
 
     vec4 red   = textureGather(tex, gatherUV, 0);
     vec4 green = textureGather(tex, gatherUV, 1);

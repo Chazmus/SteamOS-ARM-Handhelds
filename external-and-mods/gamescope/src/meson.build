@@ -13,28 +13,27 @@ dep_xi = dependency('xi')
 drm_dep = dependency('libdrm', version: '>= 2.4.113', required: get_option('drm_backend'))
 eis_dep = dependency('libeis-1.0', required : get_option('input_emulation'))
 
-libsystemd_dep = dependency('libsystemd', required : false)
-
 wayland_server = dependency('wayland-server', version: '>=1.21')
-wayland_protos = dependency('wayland-protocols', version: '>=1.17')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
 sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
+pixman_dep = dependency('pixman-1')
+udev_dep = dependency('libudev')
 
 wlroots_dep = dependency(
-  'wlroots',
-  version: ['>= 0.18.0', '< 0.19.0'],
-  fallback: ['wlroots', 'wlroots'],
+  'wlroots-0.20',
+  version: ['>= 0.20.0', '< 0.21.0'],
+  fallback: 'wlroots',
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
 
 displayinfo_dep = dependency(
   'libdisplay-info',
-  version: ['>= 0.0.0', '< 0.3.0'],
-  fallback: ['libdisplay-info', 'di_dep'],
+  version: ['>= 0.0.0', '< 0.5.0'],
+  fallback: 'libdisplay-info',
   default_options: ['default_library=static'],
 )
 
@@ -64,12 +63,14 @@ shader_src = [
   'shaders/cs_composite_blur.comp',
   'shaders/cs_composite_blur_cond.comp',
   'shaders/cs_composite_rcas.comp',
+  'shaders/cs_composite_rcas_1px.comp',
   'shaders/cs_easu.comp',
   'shaders/cs_easu_fp16.comp',
   'shaders/cs_gaussian_blur_horizontal.comp',
   'shaders/cs_nis.comp',
   'shaders/cs_nis_fp16.comp',
   'shaders/cs_rgb_to_nv12.comp',
+  'shaders/cs_sgsr.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)
@@ -97,6 +98,7 @@ required_wlroots_features = ['xwayland']
 src = [
   'Backends/HeadlessBackend.cpp',
   'Backends/WaylandBackend.cpp',
+  'Utils/DirHelpers.cpp',
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
   'Utils/Process.cpp',
@@ -104,10 +106,12 @@ src = [
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
+  'convar_script.cpp',
   'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
+  'mode_list_file.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
@@ -134,7 +138,7 @@ if drm_dep.found()
   liftoff_dep = dependency(
     'libliftoff',
     version: ['>= 0.5.0', '< 0.6.0'],
-    fallback: ['libliftoff', 'liftoff'],
+    fallback: 'libliftoff',
     default_options: ['default_library=static'],
   )
 else
@@ -150,7 +154,6 @@ gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
-gamescope_cpp_args += '-DHAVE_LIBSYSTEMD=@0@'.format(libsystemd_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_SCRIPTING=1'
 
 src += spirv_shaders
@@ -177,6 +180,9 @@ compiler_version = cc.version()
 
 vcs_tag_cmd = ['git', 'describe', '--always', '--tags', '--dirty=+']
 vcs_tag = run_command(vcs_tag_cmd, check: false).stdout().strip()
+if vcs_tag == ''
+  vcs_tag = '3.16.30+2.g6edb42b-sm8650'
+endif
 version_tag = vcs_tag + ' (' + compiler_name + ' ' + compiler_version + ')'
 
 gamescope_version_conf = configuration_data()
@@ -198,7 +204,7 @@ gamescope_version = configure_file(
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
-      libdecor_dep, eis_dep, luajit_dep, libinput_dep, libsystemd_dep,
+      libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep,
     ],
     install: true,
     cpp_args: gamescope_cpp_args,
@@ -207,21 +213,24 @@ gamescope_version = configure_file(
 gamescope_core_src = [
   'convar.cpp',
   'log.cpp',
+  'Utils/DirHelpers.cpp',
   'Utils/Process.cpp',
   'Utils/Version.cpp',
 ]
 
 if pipewire_dep.found()
-  executable( 'gamescopestream', ['Apps/gamescopestream.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+  executable( 'gamescopestream', ['Apps/gamescopestream.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep, cap_dep ], install: true )
 endif
 
-executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, install:true )
+executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, dependencies: [cap_dep], install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
-executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[benchmark_dep, glm_dep])
+executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[benchmark_dep, glm_dep, cap_dep])
 
-executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep])
+executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep, cap_dep])
 
-executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, cap_dep], install: true, cpp_args: ['-Werror=switch-enum'])
 
-executable('gamescope_hotkey_example', ['Apps/gamescope_hotkey_example.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, xkbcommon], install: false )
+executable('gamescope-type', ['Apps/gamescope_type.c'], protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
+
+executable('gamescope_hotkey_example', ['Apps/gamescope_hotkey_example.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, xkbcommon, cap_dep], install: false )

@@ -28,7 +28,6 @@ const setProfile = callable("set_profile");
 const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
-const setButton = callable("set_button");
 const setPowerLed = callable("set_power_led");
 
 const PROFILES = [
@@ -44,13 +43,7 @@ const RGB_PRESETS = [
     { label: "Breathe", mode: "breath", color: "ff0040" },
     { label: "Off", mode: "off", color: "000000" },
 ];
-const ACTIONS = [
-    { data: "rgb-next", label: "Cycle stick lighting" },
-    { data: "sticks-toggle", label: "Stick lighting on/off" },
-    { data: "profile-next", label: "Cycle performance profile" },
-    { data: "fan-boost", label: "Fan boost on/off" },
-    { data: "none", label: "Do nothing" },
-];
+
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
@@ -71,7 +64,6 @@ function Content() {
     }
     const prof = PROFILES.find((p) => p.data === st.profile) || PROFILES[1];
     const fan = st.fan || { mode: "auto", fixed: 50, boost: false };
-    const buttons = st.buttons || {};
     const status = [
         st.temp_c != null ? `${st.temp_c} °C` : null,
         st.fan_rpm != null ? `fan ${st.fan_rpm} rpm (${Math.round((st.fan_pwm || 0) / 2.55)}%)` : null,
@@ -136,18 +128,7 @@ function Content() {
             })),
         ] }),
         jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            row(jsx(DFL.DropdownItem, {
-                label: "KONKR button",
-                rgOptions: ACTIONS,
-                selectedOption: buttons.F13 || "rgb-next",
-                onChange: (o) => setButton("F13", o.data).then(refresh),
-            })),
-            row(jsx(DFL.DropdownItem, {
-                label: "Performance button",
-                rgOptions: ACTIONS,
-                selectedOption: buttons.F14 || "profile-next",
-                onChange: (o) => setButton("F14", o.data).then(refresh),
-            })),
+            note("KONKR cycles stick lighting · Performance cycles the performance profile"),
             note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }),
         jsxs(DFL.PanelSection, { title: "Hardware", children: [

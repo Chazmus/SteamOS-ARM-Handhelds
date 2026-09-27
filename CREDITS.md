@@ -1,10 +1,10 @@
-# Credits and upstream sources
+# Credits
 
-**SteamOS-ARM-SM8650** brings official SteamOS ARM to the KONKR Pocket FIT
-(SM8650). It's a port of MaSi's **SteamOS-ARM-SM8550**, and everything MaSi
-credits below still applies.
+**SteamOS-ARM-Handhelds** brings official SteamOS ARM to the KONKR Pocket FIT
+(SM8650). Some of its groundwork (the image builder and a few scripts) came
+from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still applies.
 
-## This port
+## This project
 
 | Source | URL | What we use |
 |--------|-----|-------------|

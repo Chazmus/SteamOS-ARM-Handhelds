@@ -20,6 +20,12 @@ export XDG_SESSION_DESKTOP=KDE
 export DESKTOP_SESSION=plasma
 
 if command -v systemctl >/dev/null 2>&1; then
+  # The portal left over from Game Mode sees XDG_CURRENT_DESKTOP=KDE below,
+  # starts the KDE backend before there is a Wayland display, and that crash
+  # (plus the restart) holds up Plasma's start. Plasma starts them itself.
+  systemctl --user stop xdg-desktop-portal.service 'xdg-desktop-portal-*.service' \
+    plasma-xdg-desktop-portal-kde.service 2>/dev/null || true
+  systemctl --user reset-failed plasma-xdg-desktop-portal-kde.service 2>/dev/null || true
   systemctl --user unset-environment \
     QT_QPA_PLATFORM GAMESCOPE_WAYLAND_DISPLAY GAMESCOPE_SESSION_TARGET \
     XDG_DESKTOP_PORTAL_DIR || true

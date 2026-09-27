@@ -7,9 +7,7 @@ layout(constant_id = 3) const int  c_blur_layer_count = 0;
 
 layout(constant_id = 4) const uint c_colorspaceMask = 0;
 layout(constant_id = 5) const uint c_output_eotf = 0;
-layout(constant_id = 6) const bool c_itm_enable = false;
-
-layout(constant_id = 7) const uint c_rotation = 0; // 1: right, 2: left, 3: upsidedown
+layout(constant_id = 7) const bool c_itm_enable = false;
 
 const int colorspace_linear = 0;
 const int colorspace_sRGB = 1;
@@ -44,18 +42,6 @@ bool checkDebugFlag(uint flag) {
 
 uint get_layer_colorspace(uint layerIdx) {
     return bitfieldExtract(c_colorspaceMask, int(layerIdx) * colorspace_max_bits, colorspace_max_bits);
-}
-
-uvec2 get_rotated_dst_coord(uvec2 inCoord, uvec2 outSize) {
-    if (c_rotation == 1) {
-        return uvec2(outSize.x - inCoord.y - 1, inCoord.x);
-    } else if (c_rotation == 2) {
-        return uvec2(inCoord.y, outSize.y - inCoord.x - 1);
-    } else if (c_rotation == 3) {
-        return uvec2(outSize.x - inCoord.x - 1, outSize.y - inCoord.y - 1);
-    } else {
-        return inCoord;
-    }
 }
 
 layout(binding = 1, rgba8) writeonly uniform image2D dst;

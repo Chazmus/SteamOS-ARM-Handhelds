@@ -1,0 +1,12 @@
+[Unit]
+Description=AYANEO Pocket S2 controller default mode
+After=systemd-udev-settle.service
+Before=inputplumber.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/konkr/pocket-s2-controller
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

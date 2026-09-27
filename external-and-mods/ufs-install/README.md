@@ -1,146 +1,94 @@
-# SteamOS SM8550 UFS install
+# Install to internal storage
 
-Install **this project's SteamOS ARM userspace** on **internal UFS** alongside **Android**, using **ROCKNIX ABL 1.1.8** (or compatible) and the same **three Linux partitions** as the microSD image: boot + root + home.
+Moves the SteamOS you're running from the microSD card onto the internal
+storage, next to Android. For the KONKR Pocket FIT (and the AYANEO Pocket S2,
+untested) with ROCKNIX ABL 1.1.8 or newer.
 
-> **⚠️ RISK WARNING**
->
-> This **repartitions internal storage** and **wipes Android userdata**. You can **lose all data** on internal UFS. **Android, Linux, or both** may fail to boot. **Use at your own risk.** See [DISCLAIMER.md](DISCLAIMER.md).
+> **This erases Android's user data** (apps, photos, accounts) and changes the
+> internal partition table. Android itself stays and sets itself up again.
+> Read [DISCLAIMER.md](DISCLAIMER.md) first.
 
-This folder is **only for steamos-oficial**. It does **not** change the MaSi-OS kernel tree installer (`external-and-mods/kernel/scripts/ufs-linux`).
+## How to
 
-## Supported devices
-
-- Qualcomm **SM8550** with **ROCKNIX ABL** installed (tested with **1.1.8**)
-- AYN **Odin 2** (and similar SM8550 handhelds using the same ABL)
-
-## What you need before starting
-
-| Requirement | Notes |
-|-------------|--------|
-| ROCKNIX ABL | Installed on the device (1.1.8 or compatible) |
-| SteamOS on **microSD** | Run the installer from SD, not from UFS |
-| `/boot/KERNEL` | Dual-boot image (`root=UUID=` + `masi.ufsroot=PARTLABEL=STORAGE`) |
-| User password | `pkexec` / `sudo` (SteamOS has none until you set one) |
-
-The kernel already supports UFS boot. The installer only **repacks** `KERNEL` onto `ROCKNIX` with `root=PARTLABEL=STORAGE` so internal boot does not depend on the SD UUID.
-
-## Partition layout (after install)
-
-```
-userdata   →  Android (size you choose; all data erased)
-ROCKNIX    →  2 GiB FAT32 — KERNEL + KERNEL.md5   (ABL reads this)
-STORAGE    →  16 GiB ext4 — SteamOS root (/)
-HOME       →  remaining ext4 — /home (Steam, games, user data)
-```
-
-ABL only needs the **ROCKNIX** partition for `KERNEL`. `STORAGE` and `HOME` are Linux filesystems.
-
-If you previously installed the **two-partition** ROCKNIX + STORAGE layout, use ABL **Uninstall ROCKNIX** and run a fresh install. `--resume` only works when **all three** Linux partitions already exist.
-
-ABL Uninstall may leave a leftover **HOME** partition. Delete it if a later Android-only restore looks wrong.
-
-## Quick start
-
-From SteamOS on microSD:
+Boot SteamOS from the SD card, then either open **Easy UFS Installer** in
+Desktop Mode, or in a terminal:
 
 ```bash
-sudo ufs-diagnose.sh
-sudo install-masios-to-internal.sh
-# or:
-sudo install-masios-to-internal.sh --android-gb 64
+sudo install-masios-to-internal.sh --dry-run     # shows the plan, writes nothing
+sudo install-masios-to-internal.sh               # asks for the Android size
 ```
 
-Or open **Easy UFS Installer** from ARM-Manager.
+When it's done: power off and take the SD card out. In the ABL menu (hold
+Volume Down at power-on) set **Boot source** to **Internal**, then boot Linux.
+With Boot source left on SD, the ABL stops at "no volumes match boot source".
+Android is still in the same menu.
 
-### After a failed install (partitions already exist)
+You pick how much of the SD's `/home` comes along:
+
+| `--home` | What you get |
+|---|---|
+| `all` (default) | everything, installed games included |
+| `essentials` | Steam login, settings, saves and plugins; games get downloaded again |
+| `none` | a clean start |
+
+## Reinstall versus update
+
+Use **SteamOS Update** for an existing installation. The installer’s `--resume` option resumes a failed initial deployment by formatting boot, system and HOME again. It erases internal Linux games, saves and account data before copying the selected SD data. It is not an in-place update or a data-preserving repair.
+
+## Layout
+
+```
+before:  ... | userdata ─────────────────────────────────────────── |
+after:   ... | userdata (you pick) | ROCKNIX 2G | STORAGE 20G | HOME |
+```
+
+- Nothing before `userdata` is touched. `userdata` keeps its start, type, GUID
+  and attributes; only its end moves.
+- `ROCKNIX` (FAT32) holds the `KERNEL` the ABL boots, `STORAGE` is `/`,
+  `HOME` is `/home`. Everything is mounted by partition name, so the internal
+  install doesn't depend on the SD card.
+
+## Safety
+
+- Nothing is written until you type `ERASE` (or press Install in the app),
+  and only if the partition table still matches what was shown to you.
+- It refuses to run from internal storage, if anything on `userdata` is in
+  use, or if anything other than its own partitions follows `userdata`
+  (remove those with **UNINSTALL CFW** in the ABL menu first).
+- The whole new table is written in one go and checked against the plan,
+  both on disk and in the kernel's view, before anything is formatted.
+- The KERNEL is the SD card's own, with only `root=` changed and its header
+  checksum rebuilt, then checked again.
+
+## Giving the space back to Android
+
+The original partition table is saved to the SD card (`/boot/ufs-backup/`,
+with a copy in `/home/.ufs-backup/` on the internal install). Boot the SD card
+and run:
 
 ```bash
-sudo install-masios-to-internal.sh --deploy-only
+sudo ufs-partition.py restore --backup /boot/ufs-backup/ufs-gpt-<date>.sfdisk
 ```
 
-### Repair KERNEL / fstab only
+`userdata` gets its full size back and Android sets itself up again on its
+next boot. **UNINSTALL CFW** in the ABL menu also removes the Linux partitions.
 
-```bash
-sudo ufs-fix-internal-boot.sh
-```
+## If internal Linux doesn't boot
 
-## Scripts
+Boot the SD card and run `sudo ufs-diagnose.sh`, then
+`sudo ufs-fix-internal-boot.sh` (rewrites the KERNEL and fstab), or
+`sudo install-masios-to-internal.sh --resume` to copy the system again onto the
+existing partitions.
 
-| Script | Purpose |
-|--------|---------|
-| `install-masios-to-internal.sh` | Repartition UFS + install KERNEL + root + home |
-| `ufs-diagnose.sh` | Show UFS layout, SD vs ROCKNIX KERNEL cmdline |
-| `ufs-fix-internal-boot.sh` | Rewrite ROCKNIX KERNEL to `root=PARTLABEL=STORAGE`; fix fstab |
-| `ufs-bootimg.sh` | Shared helpers (pack UFS KERNEL from SD KERNEL) |
-| `easy-ufs-installer.py` | GUI |
+## Files
 
-## How boot works
+| File | What it does |
+|---|---|
+| `install-masios-to-internal.sh` | the installer |
+| `ufs-partition.py` | reads, repartitions and restores the internal partition table |
+| `ufs-bootimg.py` | reads, checks and retargets the ABL `KERNEL` |
+| `easy-ufs-installer.py` | the Desktop Mode app |
+| `ufs-probe-sizes.sh` | sizes for the app |
+| `ufs-diagnose.sh`, `ufs-fix-internal-boot.sh` | repair tools |
 
-| Location | KERNEL cmdline |
-|----------|----------------|
-| microSD `/boot/KERNEL` | `root=UUID=<SD>` + `masi.ufsroot=PARTLABEL=STORAGE` |
-| UFS `ROCKNIX/KERNEL` | **`root=PARTLABEL=STORAGE` only** (packed at install time) |
-
-`/etc/fstab` on STORAGE (and the SteamOS `/etc` overlay upper) mounts:
-
-- `PARTLABEL=STORAGE` → `/`
-- `PARTLABEL=ROCKNIX` → `/boot`
-- `PARTLABEL=HOME` → `/home`
-
-Internal Linux boot does **not** depend on the microSD being present.
-
-## Options (`install-masios-to-internal.sh`)
-
-```
---android-gb N    Android userdata size (GB)
---dry-run         Simulate without writing
---resume          Use existing ROCKNIX/STORAGE/HOME (no repartition)
---deploy-only     Same as --resume
---force           Skip final confirmation (still shows risk banner)
--h, --help        Help
-```
-
-Root size is **16 GiB** (same as the published image). `/home` gets the rest of the Linux space.
-
-## Typical flow after install
-
-1. **Remove microSD**, reboot → ABL Linux mode → SteamOS from UFS.
-2. Boot **Android recovery** → **Factory data reset** (userdata was wiped).
-3. Keep a working microSD as recovery until UFS Linux is verified.
-
-### Already installed but black screen on UFS?
-
-Boot from microSD and run:
-
-```bash
-sudo ufs-fix-internal-boot.sh
-```
-
-Then remove the SD and test UFS boot again.
-
-## Recovery if something goes wrong
-
-| Problem | Action |
-|---------|--------|
-| Linux black screen | `sudo ufs-diagnose.sh` then `sudo ufs-fix-internal-boot.sh` |
-| Partial install | `sudo install-masios-to-internal.sh --deploy-only` |
-| Old 2-partition install | ABL **Uninstall ROCKNIX**, then fresh install |
-| Remove internal Linux | ROCKNIX ABL → **Uninstall ROCKNIX** (delete leftover HOME if needed) |
-| Android broken | Recovery → factory reset; worst case reflash firmware |
-
-## Legal
-
-- [DISCLAIMER.md](DISCLAIMER.md) — **read before use**
-- [LICENSE](LICENSE) — GPL-2.0-or-later
-
-**You assume all risk.** Authors provide no warranty and no guarantee of support.
-
----
-
-## Aviso en español
-
-Esta herramienta **borra los datos de la partición Android `userdata`** en la memoria interna (UFS) y **reparticiona el disco**. Puedes **perder todos los datos** guardados en Android y en UFS. **Android, Linux o ambos sistemas pueden dejar de arrancar**.
-
-Instala **SteamOS de este proyecto** con **tres particiones Linux**: `ROCKNIX` (arranque ABL), `STORAGE` (sistema) y `HOME` (`/home`). El ABL 1.1.8 solo necesita `ROCKNIX` con el `KERNEL`.
-
-**Haz copias de seguridad** antes de continuar. **Úsalo bajo tu cuenta y riesgo.** Lee [DISCLAIMER.md](DISCLAIMER.md).
+GPL-2.0-or-later, see [LICENSE](LICENSE).

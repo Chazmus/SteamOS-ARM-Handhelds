@@ -1,0 +1,11 @@
+#!/bin/bash
+# Matches ArmadaOS's AYANEO default-mode startup frames. Pocket S2 only.
+set -euo pipefail
+model=$(tr -d '\0' </sys/firmware/devicetree/base/model)
+[[ "$model" == 'AYANEO Pocket S2' ]] || exit 0
+serial=/dev/ttyHS0
+[[ -c "$serial" ]] || { echo 'Pocket S2 MCU serial device not present' >&2; exit 0; }
+stty -F "$serial" 115200 -clocal -opost -isig -icanon -echo
+printf '\xe7\x55\x05\x00\x00\x00\x00\x00\x00\x5a\xed' >"$serial"
+sleep 0.1
+printf '\x35\x35\x30\x35\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30' >"$serial"

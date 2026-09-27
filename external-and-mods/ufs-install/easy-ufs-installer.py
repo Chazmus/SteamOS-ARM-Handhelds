@@ -98,6 +98,8 @@ class MainWindow(Gtk.Window):
                 "This tool repartitions internal UFS and installs SteamOS alongside Android "
                 "(ROCKNIX ABL: ROCKNIX boot + STORAGE root + HOME).\n\n"
                 "• Android userdata will be ERASED (factory-reset style).\n"
+                "• The old partition table is saved to the SD card first (/boot/ufs-backup), "
+                "so the space can be given back to Android later.\n"
                 "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
                 "• Run this from microSD Linux, not from an already-installed UFS root.\n"
                 "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n"
@@ -130,6 +132,13 @@ class MainWindow(Gtk.Window):
         self.linux_label = Gtk.Label(label="SteamOS partitions: —", xalign=0)
         self.linux_label.set_line_wrap(True)
         grid.attach(self.linux_label, 0, 1, 2, 1)
+        grid.attach(Gtk.Label(label="Bring from the SD card's /home:", xalign=0), 0, 2, 1, 1)
+        self.home_combo = Gtk.ComboBoxText()
+        self.home_combo.append("all", "Everything, installed games included")
+        self.home_combo.append("essentials", "Settings, saves and Steam login (no games)")
+        self.home_combo.append("none", "Fresh start (no Steam login, saves or games)")
+        self.home_combo.set_active_id("all")
+        grid.attach(self.home_combo, 1, 2, 1, 1)
         root.pack_start(grid, False, False, 0)
         self.size_spin.connect("value-changed", lambda *_: self._update_linux_label())
 
@@ -202,6 +211,14 @@ class MainWindow(Gtk.Window):
                     self._append(err)
                     return
                 self._info = info
+                fresh = info.get("MODE") == "fresh"
+                from_sd = info.get("RUNNING_FROM_SD") == "1"
+                self.install_btn.set_sensitive(fresh and from_sd)
+                if not from_sd:
+                    self._append("Running from internal storage: boot the SD card to install.")
+                elif info.get("MODE") == "occupied":
+                    self._append(f"Other partitions follow userdata ({info.get('OCCUPIED')}). "
+                                 "Remove them in the ABL menu (UNINSTALL CFW) first.")
                 mn = int(info["MIN_ANDROID_GIB"])
                 mx = int(info["MAX_ANDROID_GIB"])
                 rec = int(info["RECOMMENDED_ANDROID_GIB"])
@@ -211,9 +228,9 @@ class MainWindow(Gtk.Window):
                 old_two = info.get("OLD_TWOPART_INSTALL", "0") == "1"
                 extra = ""
                 if existing:
-                    extra = " (ROCKNIX+STORAGE+HOME already present — use --resume / repair tools)"
+                    extra = " (SteamOS already installed — use SteamOS Update; reinstall erases internal games and saves)"
                 elif old_two:
-                    extra = " (old 2-partition ROCKNIX+STORAGE — Uninstall ROCKNIX before a fresh SteamOS install)"
+                    extra = " (old 2-partition ROCKNIX+STORAGE — UNINSTALL CFW before a fresh SteamOS install)"
                 self.status.set_text(
                     f"UFS {info.get('DEVICE')} · total ~{info.get('DISK_TOTAL_GIB')} GB · "
                     f"userdata now ~{info.get('ORIG_ANDROID_GIB')} GB · "
@@ -260,17 +277,23 @@ class MainWindow(Gtk.Window):
         self.install_btn.set_sensitive(False)
         self.status.set_text(f"Installing with --android-gb {android_gb} (this takes a while)…")
 
+        fingerprint = self._info.get("TABLE_FINGERPRINT", "")
+        home_mode = self.home_combo.get_active_id() or "all"
+        # The table is about to change: the next install needs a fresh probe.
+        self._info = {}
+
         def worker() -> None:
-            proc = _pkexec(["bash", str(script), "--force", "--android-gb", str(android_gb)])
+            proc = _pkexec(["bash", str(script), "--force", "--android-gb", str(android_gb),
+                            "--expect", fingerprint, "--home", home_mode])
             out = ((proc.stdout or "") + (proc.stderr or "")).strip()
 
             def done() -> None:
                 self._busy = False
-                self.install_btn.set_sensitive(True)
+                self.install_btn.set_sensitive(False)
                 if out:
                     self._append(out[-8000:])
                 if proc.returncode == 0:
-                    self.status.set_text("Install finished. Reboot and select Linux in ABL.")
+                    self.status.set_text("Install finished. Power off, remove the SD card, then in the ABL menu set Boot source to Internal and boot Linux.")
                 else:
                     self.status.set_text(f"Install failed (exit {proc.returncode}). See log.")
 

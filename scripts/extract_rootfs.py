@@ -113,7 +113,7 @@ def assemble(
     sys.stdout.flush()
 
     os.makedirs(os.path.dirname(os.path.abspath(output)) or ".", exist_ok=True)
-    fd = os.open(output, os.O_RDWR | os.O_CREAT)
+    fd = os.open(output, os.O_RDWR | os.O_CREAT | os.O_TRUNC)
     try:
         os.ftruncate(fd, image_size)
         done = 0

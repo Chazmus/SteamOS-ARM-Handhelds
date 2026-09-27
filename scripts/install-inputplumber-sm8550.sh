@@ -9,8 +9,10 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 R="${1:-${ROOT}/rootfs}"
 OVL="${ROOT}/steamos-overlay"
 CACHE="${ROOT}/external-and-mods/InputPlumber"
-IP_VER="${INPUTPLUMBER_VERSION:-0.78.1}"
-TGZ="${CACHE}/inputplumber-aarch64.tar.gz"
+# 0.79+ drives the rumble motors of the AYANEO/KONKR pad in its HID mode.
+IP_VER="${INPUTPLUMBER_VERSION:-0.81.0}"
+IP_SHA256_0_81_0="5509a6f79bec95c240de34833639e3ba8a144752e3745e6eb978b38b8aa05a10"
+TGZ="${CACHE}/inputplumber-${IP_VER}-aarch64.tar.gz"
 TGZ_URL="https://github.com/ShadowBlip/InputPlumber/releases/download/v${IP_VER}/inputplumber-aarch64.tar.gz"
 
 log() { printf '==> [inputplumber] %s\n' "$*"; }
@@ -36,10 +38,25 @@ install_tarball() {
     fetch "$TGZ_URL" "$TGZ"
   fi
   [[ -s "$TGZ" ]] || die "missing ${TGZ}"
+  # Pinned hash for the default version; for an override, the release's own.
+  local want_var="IP_SHA256_${IP_VER//./_}" want got
+  want="${!want_var:-}"
+  if [[ -z "$want" ]]; then
+    fetch "${TGZ_URL}.sha256.txt" "${TGZ}.sha256.txt"
+    want="$(awk '{print $1; exit}' "${TGZ}.sha256.txt")"
+  fi
+  got="$(sha256sum "$TGZ" | awk '{print $1}')"
+  if [[ "$want" != "$got" ]]; then
+    rm -f "$TGZ"
+    die "InputPlumber ${IP_VER} checksum mismatch (got ${got}); removed the download, run again"
+  fi
   local stage="${CACHE}/extract"
   rm -rf "$stage"
   mkdir -p "$stage"
-  tar -C "$stage" -xzf "$TGZ"
+  # --no-same-owner: the release tarball is owned by uid 1001, and cp -a
+  # below would hand /usr, /usr/lib, /usr/share … to that uid.
+  tar -C "$stage" --no-same-owner -xzf "$TGZ"
+  chown -R root:root "$stage"
   local src="$stage"
   if [[ ! -x "${src}/usr/bin/inputplumber" ]]; then
     local inner
@@ -54,6 +71,13 @@ install_tarball() {
     cp -a "${src}/etc/." "${R}/etc/"
   fi
   [[ -x "${R}/usr/bin/inputplumber" ]] || die "inputplumber binary missing after extract"
+  # Local 0.81.0 fix prevents the output-only AYANEO rumble source spinning.
+  if [[ "$IP_VER" == 0.81.0 ]]; then
+    local fixed="$CACHE/inputplumber-0.81.0-konkr"
+    [[ -f "$fixed" && -f "$fixed.sha256" ]] || die "missing verified AYANEO polling fix; run build-inputplumber-konkr.sh"
+    (cd "$CACHE" && sha256sum -c "$(basename "$fixed").sha256") || die "patched InputPlumber checksum mismatch"
+    install -m0755 "$fixed" "$R/usr/bin/inputplumber"
+  fi
 }
 
 install_libiio() {

@@ -85,11 +85,11 @@ patch_kernel() {
     log "[dry-run] pack /boot/KERNEL → ROCKNIX/KERNEL (root=PARTLABEL=STORAGE)"
     return
   fi
-  have_bootimg_tools || die "Need unpack_bootimg+mkbootimg or abootimg"
+  have_bootimg_tools || die "python3 is required"
   log "Writing UFS-safe KERNEL to ROCKNIX (root=PARTLABEL=STORAGE)..."
   install_kernel_for_ufs_rocknix /boot/KERNEL "${tmp}/KERNEL" \
     || die "Failed to pack ROCKNIX KERNEL"
-  md5sum "${tmp}/KERNEL" | awk '{print $1}' > "${tmp}/KERNEL.md5"
+  (cd "${tmp}" && md5sum KERNEL > KERNEL.md5)
   verify_ufs_rocknix_kernel_cmdline "${tmp}/KERNEL" \
     || die "KERNEL cmdline still wrong after repair"
   log "ROCKNIX KERNEL: $(describe_kernel_root "${tmp}/KERNEL")"
@@ -138,12 +138,12 @@ main() {
   case "$LAYOUT" in
     old-2part)
       die "Old two-partition layout (ROCKNIX + STORAGE, no HOME).
-Reinstall with the SteamOS 3-partition installer after ABL 'Uninstall ROCKNIX'."
+Reinstall with the SteamOS 3-partition installer after ABL 'UNINSTALL CFW'."
       ;;
     incompatible-or-partial)
       die "Incompatible or partial UFS layout. Expected ROCKNIX + STORAGE + HOME.
 Re-run: sudo ./install-masios-to-internal.sh --deploy-only
-Or use ABL 'Uninstall ROCKNIX' before a fresh install."
+Or use ABL 'UNINSTALL CFW' before a fresh install."
       ;;
     none)
       die "No SteamOS / ROCKNIX internal partitions found."

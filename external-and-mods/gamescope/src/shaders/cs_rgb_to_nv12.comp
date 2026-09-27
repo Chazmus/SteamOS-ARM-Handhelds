@@ -56,10 +56,6 @@ void main() {
     ivec2 chroma_uv = thread_id.xy;
     vec2 luma_uv = vec2(thread_id.xy * 2) + vec2(0.5f, 0.5f);
 
-    uvec2 outSizeChroma = imageSize(dst_chroma);
-    uvec2 outSizeLuma = imageSize(dst_luma);
-    uvec2 outCoordChroma = get_rotated_dst_coord(chroma_uv, outSizeChroma);
-
     vec3 color[4] = {
       sampleLayer(0, vec2(luma_uv.x + offset_table[0].x, luma_uv.y + offset_table[0].y)).rgb,
       sampleLayer(0, vec2(luma_uv.x + offset_table[1].x, luma_uv.y + offset_table[1].y)).rgb,
@@ -69,13 +65,11 @@ void main() {
 
     vec3 avg_color = (color[0] + color[1] + color[2] + color[3]) / 4.0f;
     vec2 uv = applyColorMatrix(avg_color, u_outputCTM).yz;
-    imageStore(dst_chroma, ivec2(outCoordChroma), vec4(uv, 0.0f, 1.0f));
+    imageStore(dst_chroma, chroma_uv, vec4(uv, 0.0f, 1.0f));
 
     for (int i = 0; i < 4; i++) {
       float y = applyColorMatrix(color[i], u_outputCTM).x;
-      uvec2 outCoordLuma = ivec2(luma_uv + offset_table[i]);
-      outCoordLuma = get_rotated_dst_coord(outCoordLuma, outSizeLuma);
-      imageStore(dst_luma, ivec2(outCoordLuma), vec4(y, 0.0f, 0.0f, 1.0f));
+      imageStore(dst_luma, ivec2(luma_uv + offset_table[i]), vec4(y, 0.0f, 0.0f, 1.0f));
     }
   }
 }

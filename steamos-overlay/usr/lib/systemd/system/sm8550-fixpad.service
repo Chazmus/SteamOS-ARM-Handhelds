@@ -1,6 +1,5 @@
 [Unit]
 Description=SM8550 rsinput stick range (±740)
-Documentation=file:///home/steamos/LEEME-ODIN.txt
 After=systemd-udevd.service
 Wants=systemd-udevd.service
 

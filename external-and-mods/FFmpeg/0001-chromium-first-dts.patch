@@ -1,0 +1,27 @@
+--- a/libavformat/avformat.h
++++ b/libavformat/avformat.h
+@@ -1020,6 +1020,9 @@
+ 
+ struct AVCodecParserContext *av_stream_get_parser(const AVStream *s);
+ 
++/* Chromium's demuxer reads the stream's first decode timestamp. */
++int64_t av_stream_get_first_dts(const AVStream *st);
++
+ #if FF_API_GET_END_PTS
+ /**
+  * Returns the pts of the last muxed packet + its duration
+--- a/libavformat/mux_utils.c
++++ b/libavformat/mux_utils.c
+@@ -29,6 +29,12 @@
+ #include "avio.h"
+ #include "internal.h"
+ #include "mux.h"
++
++/* Keep the Chromium API required by Frame Qt WebEngine. */
++int64_t av_stream_get_first_dts(const AVStream *st)
++{
++    return cffstream(st)->first_dts;
++}
+ 
+ #if FF_API_GET_END_PTS
+ int64_t av_stream_get_end_pts(const AVStream *st)

@@ -99,8 +99,20 @@ run /usr/bin/cmake -S "$SRC_DIR" -B "$BUILD" -G Ninja \
   -DBUILD_DOC=OFF \
   "${CMAKE_EXTRA[@]}"
 run /usr/bin/cmake --build "$BUILD" -j"$(nproc)"
+# Remove incompatible ALARM leftovers that this build does not produce.
+case "$NAME" in
+  ark) rm -f "$R/usr/lib/libkerfuffle.so.26.08.1" ;;
+  gwenview)
+    rm -f "$R/usr/bin/gwenview_importer" "$R/usr/share/applications/org.kde.gwenview_importer.desktop" \
+      "$R/usr/share/solid/actions/gwenview_importer.desktop" "$R/usr/share/solid/actions/gwenview_importer_camera.desktop"
+    ;;
+  okular)
+    rm -rf "$R/usr/lib/qt6/plugins/okular_generators"
+    rm -f "$R/usr/lib/libOkular6Core.so.4" "$R/usr/lib/libOkular6Core.so.4.0.0"
+    ;;
+esac
 run /usr/bin/cmake --install "$BUILD"
-if strings "$R/usr/bin/${NAME}" 2>/dev/null | grep -q 'Qt_6\.11'; then
+if strings "$R/usr/bin/${NAME}" 2>/dev/null | grep 'Qt_6\.11' >/dev/null; then
   echo "ERROR: ${NAME} still linked against Qt_6.11" >&2
   exit 1
 fi

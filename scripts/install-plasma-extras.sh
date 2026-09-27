@@ -65,7 +65,7 @@ already_installed() {
     ark|kcalc|gwenview|okular|filelight|kate)
       [[ -x "$R/usr/bin/$name" ]] || return 1
       # ALARM Gear 26.08 is Qt 6.11 — treat as missing so we rebuild 26.04.2.
-      strings "$R/usr/bin/$name" 2>/dev/null | grep -q 'Qt_6\.11' && return 1
+      strings "$R/usr/bin/$name" 2>/dev/null | grep 'Qt_6\.11' >/dev/null && return 1
       return 0
       ;;
   esac
@@ -191,7 +191,7 @@ install_pkg() {
   fi
   # Frame Qt is 6.8.0. ALARM Gear 26.08 is linked against Qt_6.11.
   if find "$dest" -type f \( -name '*.so*' -o -perm -111 \) 2>/dev/null \
-      | head -40 | xargs -r strings 2>/dev/null | grep -q 'Qt_6\.11'; then
+      | xargs -r strings 2>/dev/null | grep 'Qt_6\.11' >/dev/null; then
     warn "skip $name ($file needs Qt_6.11; this image has Qt 6.8)"
     return 1
   fi

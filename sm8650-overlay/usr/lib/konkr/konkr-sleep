@@ -117,14 +117,18 @@ case "${1:-}" in
   standby-pre)
     audio 1
     gamescope_screen 1
-    [[ -d /sys/module/${WIFI_MODS[0]} ]] && timeout 15 modprobe -r "${WIFI_MODS[@]}"
+    # KONKR_STANDBY_KEEP_WIFI=1: testing over SSH (wake with SIGUSR1)
+    [[ -z ${KONKR_STANDBY_KEEP_WIFI:-} && -d /sys/module/${WIFI_MODS[0]} ]] \
+      && timeout 15 modprobe -r "${WIFI_MODS[@]}"
     # No touch unbind here: rebinding after a long standby left the chipone
     # panel in a ghost-touch storm (~4700 events/s) that crash-looped gamescope.
     log "standby: prepared" ;;
+  # Resume order (konkr-standby): standby-audio-on while the apps are still
+  # frozen (PipeWire kept running), then thaw, standby-screen-on, standby-post.
+  standby-audio-on) audio 0 ;;
   standby-post)
-    [[ -d /sys/module/${WIFI_MODS[0]} ]] || modprobe "${WIFI_MODS[0]}"
-    audio 0 ;;
+    [[ -d /sys/module/${WIFI_MODS[0]} ]] || modprobe "${WIFI_MODS[0]}" ;;
   standby-screen-on) gamescope_screen 0 ;;
-  *) echo "usage: konkr-sleep pre|post|standby-pre|standby-post" >&2; exit 2 ;;
+  *) echo "usage: konkr-sleep pre|post|standby-pre|standby-audio-on|standby-post|standby-screen-on" >&2; exit 2 ;;
 esac
 exit 0

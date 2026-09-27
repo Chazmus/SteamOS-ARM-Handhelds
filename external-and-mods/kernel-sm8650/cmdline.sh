@@ -3,7 +3,9 @@
 # devicetree=/dtb= here. No initramfs: root must be PARTUUID (or /dev/…),
 # the kernel cannot resolve root=UUID= on its own.
 #
-# CMDLINE_QUIET=1 hides kernel text on the panel (use once boot is proven).
+# Quiet by default: no kernel text, penguin logo or blinking cursor on the
+# panel before Steam (the journal still has everything). CMDLINE_QUIET=0 gives
+# the verbose console back (scripts/sd-debug-boot.sh sets it).
 
 build_cmdline() {
   local partuuid="$1"
@@ -15,12 +17,14 @@ build_cmdline() {
     # Pocket FIT pad is an XInput device on USB; 2 ms polling like ROCKNIX
     # (needs 0506-usbcore-add-interrupt-interval-override.patch).
     usbcore.interrupt_interval_override=045e:028e:2
+    # (The HID mode, 4001:0428, already polls at 1 ms by its own descriptor.)
     # Deep suspend never resumes on the Pocket FIT (7.1.2): the power button
     # put it to sleep and it looked powered off. s2idle wakes reliably.
     mem_sleep_default=s2idle
   )
-  if [[ "${CMDLINE_QUIET:-0}" == 1 ]]; then
-    parts+=(quiet loglevel=0 systemd.show_status=0)
+  if [[ "${CMDLINE_QUIET:-1}" == 1 ]]; then
+    parts+=(quiet loglevel=0 systemd.show_status=0 rd.udev.log_level=0
+            logo.nologo vt.global_cursor_default=0)
   else
     parts+=(console=tty0 loglevel=4)
   fi

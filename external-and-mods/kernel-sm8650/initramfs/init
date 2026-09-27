@@ -75,6 +75,13 @@ if [ -n "$bootdev" ] && mount -t vfat "$bootdev" /boot; then
 fi
 
 if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
+  if [ -f /newroot/var/lib/konkr-update/pending ]; then
+    if ! ( . /konkr-update-recover ); then
+      snap "UPDATE RECOVERY FAILED"
+      echo "Update recovery failed; system boot stopped to protect the installation"
+      exec sh
+    fi
+  fi
   snap "root mounted from $rootdev, switch_root"
   umount /boot 2>/dev/null
   exec switch_root /newroot /sbin/init

@@ -87,6 +87,11 @@ static void calculate_capture_size()
 			s_nCaptureHeight = s_nRequestedHeight;
 		}
 	}
+
+	// NV12 is 4:2:0 subsampled and only valid at even dimensions, but the ratio math can round odd.
+	constexpr uint32_t kCaptureAlign = 2;
+	s_nCaptureWidth = SPA_ROUND_UP_N(s_nCaptureWidth, kCaptureAlign);
+	s_nCaptureHeight = SPA_ROUND_UP_N(s_nCaptureHeight, kCaptureAlign);
 }
 
 static void build_format_params(struct spa_pod_builder *builder, spa_video_format format, std::vector<const struct spa_pod *> &params) {
@@ -642,7 +647,9 @@ static void run_pipewire(struct pipewire_state *state)
 		assert(!(pollfds[EVENT_NUDGE].revents & POLLHUP));
 
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLIN) {
+			pw_loop_enter(state->loop);
 			ret = pw_loop_iterate(state->loop, -1);
+			pw_loop_leave(state->loop);
 			if (ret < 0) {
 				pwr_log.errorf("pw_loop_iterate failed");
 				break;
@@ -720,12 +727,18 @@ bool init_pipewire(void)
 	}
 
 	state->running = true;
+	ret = 0;
+	pw_loop_enter(state->loop);
 	while (state->stream_node_id == SPA_ID_INVALID) {
-		int ret = pw_loop_iterate(state->loop, -1);
-		if (ret < 0) {
-			pwr_log.errorf("pw_loop_iterate failed");
-			return false;
-		}
+		ret = pw_loop_iterate(state->loop, -1);
+		if (ret < 0)
+			break;
+	}
+	pw_loop_leave(state->loop);
+
+	if (ret < 0) {
+		pwr_log.errorf("pw_loop_iterate failed");
+		return false;
 	}
 
 	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);

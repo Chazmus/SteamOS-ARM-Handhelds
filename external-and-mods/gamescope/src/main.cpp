@@ -3,12 +3,13 @@
 #include <X11/Xlib.h>
 
 #include <cstdio>
+#include <format>
 #include <thread>
 #include <mutex>
 #include <vector>
 #include <cstring>
 #include <string>
-#if defined(__linux__)
+#if HAVE_LIBCAP
 #include <sys/capability.h>
 #endif
 #include <sys/stat.h>
@@ -28,10 +29,11 @@
 #include "wlserver.hpp"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
+#include "Utils/Defer.h"
+#include "Utils/Parsers.h"
+#include "Utils/Process.h"
 #include "Utils/TempFiles.h"
 #include "Utils/Version.h"
-#include "Utils/Process.h"
-#include "Utils/Defer.h"
 
 #include "backends.h"
 #include "refresh_rate.h"
@@ -46,12 +48,15 @@ using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
+extern gamescope::ConVar<bool> cv_shutdown_on_primary_child_death;
 
 extern bool env_to_bool(const char *env);
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
 const char *g_pOriginalWaylandDisplay = nullptr;
+
+bool g_bAllowDeferredBackend = false;
 
 int g_nCursorScaleHeight = -1;
 
@@ -118,6 +123,7 @@ const struct option *gamescope_options = (struct option[]){
 
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
+	{ "xwayland-force-touch-pointer-emulation", no_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
@@ -136,6 +142,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "force-composition-rotation", no_argument, nullptr, 0 },
 	{ "force-orientation", required_argument, nullptr, 0 },
 	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
 
@@ -156,6 +163,9 @@ const struct option *gamescope_options = (struct option[]){
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
 
+	{ "allow-deferred-backend", no_argument, nullptr, 0 },
+	{ "keep-alive", no_argument, nullptr, 0 },
+
 	{} // keep last
 };
 
@@ -171,9 +181,10 @@ const char usage[] =
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
 	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
-	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel)\n"
+	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel, sgsr)\n"
 	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
+	"                                     sgsr => Snapdragon™ Game Super Resolution 1 with RCAS\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
@@ -198,6 +209,7 @@ const char usage[] =
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
@@ -229,7 +241,7 @@ const char usage[] =
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
 	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
 	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
-	"  --use-rotation-shader          use shader to rotate output\n"
+	"  --use-rotation-shader          same as --force-composition-rotation\n"
 	"\n"
 #if HAVE_OPENVR
 	"VR mode options:\n"
@@ -272,6 +284,10 @@ const char usage[] =
 	"Steam Deck options:\n"
 	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
 	"\n"
+	"Platform options:\n"
+	"  --allow-deferred-backend       Allows initting the backend in a deferred way, if it doesn't work immediately. (Note: This has some very minor correctness compromises that you should consider wrt. your platform with modifiers, etc).\n"
+	"  --keep-alive                   Keep Gamescope alive even when the primary process has died.\n"
+	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
@@ -296,8 +312,6 @@ uint32_t g_nOutputHeight = 0;
 int g_nOutputRefresh = 0;
 bool g_bOutputHDREnabled = false;
 
-bool g_bRotationShaderRequested = false;
-bool g_bRotationShaderEnabled = false;
 
 bool g_bFullscreen = false;
 bool g_bForceRelativeMouse = false;
@@ -305,9 +319,6 @@ bool g_bForceRelativeMouse = false;
 bool g_bGrabbed = false;
 
 float g_mouseSensitivity = 1.0;
-
-GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
-GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::FIT;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::FIT;
@@ -318,6 +329,7 @@ gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMES
 bool g_bBorderlessOutputWindow = false;
 
 int g_nXWaylandCount = 1;
+bool g_bNoTouchPointerEmulation = true;
 
 float g_flMaxWindowScale = FLT_MAX;
 
@@ -363,6 +375,9 @@ static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const
 	}
 }
 
+bool g_bForceCompositionRotation = false;
+uint32_t g_uOutputRotation = 0;
+
 GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
 static GamescopePanelOrientation force_orientation(const char *str)
 {
@@ -400,20 +415,13 @@ static enum GamescopeUpscaleScaler parse_upscaler_scaler(const char *str)
 
 static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 {
-	if (strcmp(str, "linear") == 0) {
-		return GamescopeUpscaleFilter::LINEAR;
-	} else if (strcmp(str, "nearest") == 0) {
-		return GamescopeUpscaleFilter::NEAREST;
-	} else if (strcmp(str, "fsr") == 0) {
-		return GamescopeUpscaleFilter::FSR;
-	} else if (strcmp(str, "nis") == 0) {
-		return GamescopeUpscaleFilter::NIS;
-	} else if (strcmp(str, "pixel") == 0) {
-		return GamescopeUpscaleFilter::PIXEL;
-	} else {
+	std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( str );
+	if ( !oFilter )
+	{
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);
 	}
+	return *oFilter;
 }
 
 static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
@@ -440,6 +448,16 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 		fprintf( stderr, "gamescope: invalid value for --backend\n" );
 		exit(1);
 	}
+}
+
+static enum gamescope::GamescopeBackend auto_select_backend()
+{
+	if ( getenv( "WAYLAND_DISPLAY" ) != NULL )
+		return gamescope::GamescopeBackend::Wayland;
+	else if ( getenv( "DISPLAY" ) != NULL )
+		return gamescope::GamescopeBackend::SDL;
+	else
+		return gamescope::GamescopeBackend::DRM;
 }
 
 static int parse_integer(const char *str, const char *optionName)
@@ -700,6 +718,8 @@ bool g_bRt = false;
 int g_argc;
 char **g_argv;
 
+extern char **environ;
+
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -712,8 +732,6 @@ int main(int argc, char **argv)
 	gamescope_optstring = optstring.c_str();
 
 	gamescope::GamescopeBackend eCurrentBackend = gamescope::GamescopeBackend::Auto;
-
-	gamescope::PrintVersion();
 
 	int o;
 	int opt_index = -1;
@@ -729,6 +747,11 @@ int main(int argc, char **argv)
 				break;
 			case 'r':
 				g_nNestedRefresh = gamescope::ConvertHztomHz( parse_integer( optarg, "nested-refresh" ) );
+				if ( g_nNestedRefresh < 0 )
+				{
+					fprintf( stderr, "gamescope: invalid value for --nested-refresh, must be >= 0\n" );
+					exit(1);
+				}
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = parse_integer( optarg, "output-width" );
@@ -771,10 +794,11 @@ int main(int argc, char **argv)
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
+					gamescope::PrintVersion();
 					fprintf(stderr, "%s", usage);
 					return 0;
 				} else if (strcmp(opt_name, "version") == 0) {
-					// We always print the version to stderr anyway.
+					gamescope::PrintVersion();
 					return 0;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
@@ -782,6 +806,12 @@ int main(int argc, char **argv)
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = parse_integer( optarg, opt_name );
+					if ( g_nXWaylandCount < 1 ) {
+						fprintf( stderr, "gamescope: invalid value for --xwayland-count, must be at least 1\n" );
+						exit(1);
+					}
+				} else if (strcmp(opt_name, "xwayland-force-touch-pointer-emulation") == 0) {
+					g_bNoTouchPointerEmulation = false;
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Markers;
 					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
@@ -791,6 +821,8 @@ int main(int argc, char **argv)
 					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
+				} else if (strcmp(opt_name, "force-composition-rotation") == 0) {
+					g_bForceCompositionRotation = true;
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
@@ -808,7 +840,8 @@ int main(int argc, char **argv)
 					g_bForceInternal = true;
 					g_bForceInternalLocked = true;
 				} else if (strcmp(opt_name, "use-rotation-shader") == 0) {
-					g_bRotationShaderRequested = true;
+					// konkr: older name for --force-composition-rotation (session scripts use it)
+					g_bForceCompositionRotation = true;
 				} else if (strcmp(opt_name, "immediate-flips") == 0) {
 					cv_tearing_enabled = true;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
@@ -825,6 +858,10 @@ int main(int argc, char **argv)
 					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
+				} else if (strcmp(opt_name, "allow-deferred-backend") == 0) {
+					g_bAllowDeferredBackend = true;
+				} else if (strcmp(opt_name, "keep-alive") == 0) {
+					cv_shutdown_on_primary_child_death = false;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
 					for ( uint32_t i = 0; i < gamescope::VirtualConnectorStrategies::Count; i++ )
 					{
@@ -844,6 +881,16 @@ int main(int argc, char **argv)
 		}
 	}
 
+	// Steam preloads its overlay into us, but only the SDL backend can draw it.
+	// A ConVar or script override comes too late to unload it.
+	gamescope::GamescopeBackend eLaunchBackend = eCurrentBackend;
+	if ( eLaunchBackend == gamescope::GamescopeBackend::Auto )
+		eLaunchBackend = auto_select_backend();
+	if ( eLaunchBackend != gamescope::GamescopeBackend::SDL )
+		gamescope::Process::RestartWithoutSteamOverlay( argv );
+
+	// Print this after the re-exec, so we only announce ourselves once.
+	gamescope::PrintVersion();
 	if ( !g_bForceInternalLocked && env_to_bool( getenv( "GAMESCOPE_FORCE_INTERNAL" ) ) )
 	{
 		g_bForceInternal = true;
@@ -879,6 +926,31 @@ int main(int argc, char **argv)
 	{
 		gamescope::CScriptScopedLock script;
 		script.Manager().RunDefaultScripts();
+
+		// Allow overriding the value of any ConVar with a suitably named environment variable
+		// (gamescope_ConVar_name=override_value). This takes precedence over the ConVar's
+		// default value and over values assigned by default scripts.
+		char **s = environ;
+		const char *prefix = "gamescope_";
+		size_t prefix_len = strlen( prefix );
+		for ( ; *s; s++ )
+		{
+			char *envvar = strdup( *s );
+			if ( strncmp( envvar, prefix, prefix_len ) == 0 ) {
+				std::string_view name( strtok( envvar, "=" ) + prefix_len );
+				if ( ! name.empty() )
+				{
+					std::string_view value( strtok( nullptr, "=" ) );
+					if ( script.Manager().Gamescope().Convars.Base[name].valid() )
+					{
+						auto override_script = std::format( "gamescope.convars.{}.value = {}", name, value );
+						console_log.infof( "Overriding from environment variable: %s", override_script.c_str() );
+						script->script( override_script );
+					}
+				}
+			}
+			free( envvar );
+		}
 	}
 
 	XInitThreads();
@@ -887,14 +959,17 @@ int main(int argc, char **argv)
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
 
+	// Allow overriding the selected backend (even the backend
+	// requested on the command line) in a startup script.
+	auto backendOverride = parse_backend_name( gamescope::cv_backend.Get().c_str() );
+	if ( backendOverride != gamescope::GamescopeBackend::Auto )
+	{
+		eCurrentBackend = backendOverride;
+	}
+
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
-		if ( g_pOriginalWaylandDisplay != NULL )
-			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
-		else if ( g_pOriginalDisplay != NULL )
-			eCurrentBackend = gamescope::GamescopeBackend::SDL;
-		else
-			eCurrentBackend = gamescope::GamescopeBackend::DRM;
+		eCurrentBackend = auto_select_backend();
 	}
 
 	if ( g_pOriginalWaylandDisplay != NULL )

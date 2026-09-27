@@ -34,17 +34,15 @@ APP_WAIT_NEW = (
     r"this.UpdateAppOverview(\4);done()})})"
 )
 
-# BootStrapperInhibitAll makes Settings/OOBE report eresult Blocked (40).
-# Soft-fail is ignored; Blocked + !available must be treated as OK.
-OLD_CHECK = (
-    "GetMostSpecificCheckResult(){const e=this.m_updateState.update_check_results??"
-    "[{eresult:s.R}];let t=!1;for(const r of e)if(r.eresult!=s.R){if(r.eresult!=s.zi)"
-    "return r.eresult;t=!0}return t?s.zi:s.R}"
-)
-NEW_CHECK = (
-    "GetMostSpecificCheckResult(){const e=this.m_updateState.update_check_results??"
-    "[{eresult:s.R}];let t=!1;for(const r of e){if(40===r.eresult&&!r.available)continue;"
-    "if(r.eresult!=s.R){if(r.eresult!=s.zi)return r.eresult;t=!0}}return t?s.zi:s.R}"
+# BootStrapperInhibitAll (steam.cfg) makes the client report eresult
+# Blocked (40) for its own update. Settings shows an error and the OOBE
+# update step is stuck on "Unable to download the required update (40)".
+# Treat Blocked like OK in both check and apply results.
+#   for(const q of he)if(q.eresult!=a.R){  →  ...if(q.eresult!=a.R&&q.eresult!=40){
+BLOCKED = re.compile(
+    r"(GetMostSpecific(?:Check|Apply)Result\(\)\{const (\w+)=this\.m_updateState\."
+    r"update_(?:check|apply)_results\?\?\[\{eresult:[\w.$]+\}\];let [\w$]+=!1;"
+    r"for\(const ([\w$]+) of \2\)if\(\3\.eresult!=[\w.$]+)\)"
 )
 
 # Exact leftovers from older steamui builds.
@@ -75,9 +73,9 @@ for p in list(root.glob("chunk*.js")) + list(root.glob("library.js")):
         txt, n = APP_WAIT.subn(APP_WAIT_NEW, txt, count=1)
         if n:
             print(f"patched AppStore wait in {p.name}", file=sys.stderr)
-    if "40===r.eresult&&!r.available" not in txt and OLD_CHECK in txt:
-        txt = txt.replace(OLD_CHECK, NEW_CHECK, 1)
-        print(f"patched updater Blocked(40) in {p.name}", file=sys.stderr)
+    txt, n = BLOCKED.subn(lambda m: f"{m.group(1)}&&{m.group(3)}.eresult!=40)", txt)
+    if n:
+        print(f"patched updater Blocked(40) x{n} in {p.name}", file=sys.stderr)
     for old, new in EXACT:
         if old in txt:
             txt = txt.replace(old, new)

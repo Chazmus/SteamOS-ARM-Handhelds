@@ -10,7 +10,7 @@ WORKDIR="${STEAMOS_WORK:-/work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
-KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-sm8650/output/current}")"
+KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-release/current}")"
 KREL="$(basename "$KOUT")"
 SM8650_OVL="${ROOT}/sm8650-overlay"
 STOCK="${R}/opt/stock-steamos"
@@ -66,6 +66,16 @@ cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
 # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
 # the AYANEO-signed ADSP/CDSP/zap live under qcom/sm8650/ayaneo/ps2).
 cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
+# Frame supplies the exact upstream VPU33 firmware under its vendor name.
+# Iris requests the upstream alias. Verify before creating that alias.
+_vpu="$R/usr/lib/firmware/qcom/vpu/vpu33_4v.mbn"
+if [[ -f "$_vpu" ]]; then
+  [[ $(sha256sum "$_vpu" | awk '{print $1}') == 7b829fc1c8ce7cca836d10e898b99c5bcbd86e22073b690147168c9d0a5de378 ]] \
+    || die "unexpected SM8650 decoder firmware; reverify against upstream"
+  ln -sfn vpu33_4v.mbn "$R/usr/lib/firmware/qcom/vpu/vpu33_p4.mbn"
+else
+  die "missing SM8650 video decoder firmware"
+fi
 cp -a "$KOUT/config-$KREL" "$KOUT/dtbs" "$R/opt/steamos-sm8650/" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -217,10 +227,18 @@ for u in steamvr-program-ble.service steamvr-v4l2loopback.service \
          deckard-power-monitor.service deckard-fpga-resume.service \
          deckard-boot-images.service \
          adbd.service adbd-post.service usb-gadget.service usb-gadget.target \
-         usb-ncm-gadget@.service usb-ncm-dnsmasq@.service; do
+         usb-ncm-gadget@.service usb-ncm-dnsmasq@.service \
+         steamos-boot.service efi.mount esp.mount systemd-repart.service; do
   # Frame USB-gadget/ADB/power-monitor: no such hardware here. They crash-loop
   # (1000+ restarts/night) and adbd-post polls ffs.adb/ready at 10 Hz forever,
   # which keeps the SoC out of deep idle and burned battery in standby.
+  # steamos-boot (A/B slot bookkeeping) needs efi.mount, which waits for the
+  # Deck's EFI partition (by-partsets/self/efi). There's none here, so every
+  # boot sat on it for the full 90 s device timeout.
+  # systemd-repart (Valve's repart.d/90-home.conf) adds a home partition to
+  # the root disk's free space at boot. Our layouts already have /home and
+  # steamos-sm8550-expand-home grows it; on internal UFS repart must never
+  # touch the partition table.
   ln -sfn /dev/null "$R/etc/systemd/system/${u}"
 done
 
@@ -342,16 +360,17 @@ ln -sfn /usr/lib/systemd/system/sm8550-wifi-backend.service \
   "$R/etc/systemd/system/NetworkManager.service.wants/sm8550-wifi-backend.service"
 ln -sfn /usr/lib/systemd/system/sm8550-wifi-backend.path \
   "$R/etc/systemd/system/multi-user.target.wants/sm8550-wifi-backend.path"
-ln -sfn /usr/lib/systemd/system/sm8550-audio-setup.service \
-  "$R/etc/systemd/system/multi-user.target.wants/sm8550-audio-setup.service"
+# Audio setup runs when the card appears (udev + sound.target), never from
+# multi-user.target, which it used to hold back. Drop links older builds made.
+rm -f "$R/etc/systemd/system/multi-user.target.wants/sm8550-audio-setup.service" \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-audio-setup.service" \
+  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/sm8550-audio-setup.service"
+mkdir -p "$R/usr/lib/systemd/system/sound.target.wants"
+ln -sfn ../sm8550-audio-setup.service \
+  "$R/usr/lib/systemd/system/sound.target.wants/sm8550-audio-setup.service"
 ln -sfn /usr/lib/systemd/system/sm8550-audio-setup.service \
   "$R/etc/systemd/system/sound.target.wants/sm8550-audio-setup.service"
-mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants" \
-  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants"
-ln -sfn /usr/lib/systemd/system/sm8550-audio-setup.service \
-  "$R/usr/lib/systemd/system/multi-user.target.wants/sm8550-audio-setup.service"
-ln -sfn /usr/lib/systemd/system/sm8550-audio-setup.service \
-  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/sm8550-audio-setup.service"
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
 ln -sfn /usr/lib/systemd/user/sm8550-audio-pipewire.service \
   "$R/usr/lib/systemd/user/default.target.wants/sm8550-audio-pipewire.service"
@@ -447,7 +466,13 @@ install_file "$OVL/etc/profile.d/sm8550-gamepad.sh" \
 # steamos-manager device, dual-SoC audio setup.
 # ---------------------------------------------------------------------------
 log "== SM8650 overlay (KONKR Pocket FIT / AYANEO Pocket S2)"
+# Speaker limiter for wireplumber.conf.d/55-konkr-speaker.conf.
+if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
+  "${SCRIPT_DIR}/build-dpl-lv2-in-rootfs.sh" "$R"
+fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
+chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
+chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README"
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
 # so its VR speaker filter chain owns it; that chain is disabled here, which
 # left the speakers unreachable. Drop the speaker from Valve's access rules.
@@ -459,13 +484,19 @@ fi
 # Same as ayn_mcu: InputPlumber loads capability maps from /usr/share too.
 mkdir -p "$R/usr/share/inputplumber/capability_maps"
 cp -f "$SM8650_OVL"/etc/inputplumber/capability_maps.d/*.yaml "$R/usr/share/inputplumber/capability_maps/"
+# InputPlumber ships its own Pocket FIT / Pocket S2 profiles (matched on the
+# DT compatible). Ours cover the same pads with the Deck target, back buttons
+# and the MCU keys; two matching profiles would fight over the same sources.
+rm -f "$R/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml" \
+  "$R/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml"
 chown -R root:root "$R/usr/share/alsa/ucm2/Qualcomm/sm8650" "$R/usr/share/alsa/ucm2/conf.d/sm8650" \
   "$R/etc/inputplumber" 2>/dev/null || true
 chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/konkrd" \
   "$R/usr/bin/konkrctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-focusfix" \
-  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info"
+  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" \
+  "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync"
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
 ln -sfn ../konkr-focusfix.service \
@@ -500,6 +531,14 @@ chroot "$R" update-desktop-database -q /usr/share/applications
 # Wi-Fi/touch/audio/wake sources. Default sleep is konkr-standby.
 mkdir -p "$R/usr/lib/systemd/system/sleep.target.wants"
 ln -sfn ../konkr-sleep.service "$R/usr/lib/systemd/system/sleep.target.wants/konkr-sleep.service"
+# SSH stays off, like on the Steam Deck: a public image should not listen on
+# every user's network. /etc/ssh/sshd_config.d/10-konkr.conf (password login
+# for steamos, root off) applies once a user runs `passwd` and
+# `sudo systemctl enable --now sshd`. The build rootfs is reused, so drop a
+# link left by earlier builds.
+rm -f "$R/usr/lib/systemd/system/multi-user.target.wants/sshd.service" \
+  "$R/etc/systemd/system/multi-user.target.wants/sshd.service" \
+  "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/sshd.service"
 # Discover: fetch the Flathub catalog (never downloaded on a fresh image).
 mkdir -p "$R/usr/lib/systemd/system/timers.target.wants"
 ln -sfn ../konkr-flatpak-appstream.timer \
@@ -524,11 +563,22 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
   # testing `konkrctl mcu disable` — v1.0/v1.1 shipped with the buttons dead.
   rm -f "$R/etc/modprobe.d/konkr-mcu.conf" "$R/var/lib/overlays/etc/upper/modprobe.d/konkr-mcu.conf"
   cp -f "$SM8650_OVL/etc/konkrd.conf" "$R/var/lib/overlays/etc/upper/konkrd.conf"
+  # The base image has its own powerdevilrc in the upper layer, which would
+  # shadow ours (konkrd owns the power button, Plasma must not act on it).
+  mkdir -p "$R/var/lib/overlays/etc/upper/xdg"
+  cp -f "$SM8650_OVL/etc/xdg/powerdevilrc" "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc"
   mkdir -p "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d"
   cp -f "$SM8650_OVL/etc/systemd/coredump.conf.d/10-konkr-sd.conf" \
     "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/"
   cp -r "$SM8650_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/" 2>/dev/null \
     || { mkdir -p "$R/var/lib/overlays/etc/upper/inputplumber"; cp -r "$SM8650_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/"; }
+  # cp keeps the source modes; a tree that went through the exFAT HDD has 0755
+  # files (systemd warns about an executable coredump.conf) and 0700 dirs.
+  chmod 0644 "$R/var/lib/overlays/etc/upper/konkrd.conf" \
+    "$R/var/lib/overlays/etc/upper/xdg/powerdevilrc" \
+    "$R/var/lib/overlays/etc/upper/systemd/coredump.conf.d/10-konkr-sd.conf"
+  find "$R/var/lib/overlays/etc/upper/inputplumber" \
+    \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 fi
 
 # ---------------------------------------------------------------------------
@@ -551,26 +601,14 @@ done
 # ---------------------------------------------------------------------------
 # lsfg-vk
 # ---------------------------------------------------------------------------
-log "== lsfg-vk"
-mkdir -p "$R/usr/local/lib" "$R/usr/lib" "$R/usr/share/vulkan/implicit_layer.d" \
-  "$R/usr/local/share/vulkan/implicit_layer.d"
-if [[ -f /usr/local/lib/liblsfg-vk.so ]]; then
-  install_file /usr/local/lib/liblsfg-vk.so "$R/usr/local/lib/liblsfg-vk.so" 0755
-  install_file /usr/local/lib/liblsfg-vk.so "$R/usr/lib/liblsfg-vk.so" 0755
-fi
-# An implicit layer whose library is missing makes every Vulkan app log
-# loader errors; only register it system-wide when the .so is there (the
-# decky-lsfg-vk plugin installs its own per-user copy otherwise).
-if [[ -f "$R/usr/local/lib/liblsfg-vk.so" ]]; then
-  install_file "$OVL/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
-    "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" 0644
-  install_file "$OVL/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
-    "$R/usr/local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" 0644
-else
-  rm -f "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
-    "$R/usr/local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
-  log "lsfg-vk: no system library — per-user via decky-lsfg-vk"
-fi
+log "== lsfg-vk 2.0 (unmodified ARM layer + Decky x86 runtime)"
+# Reused roots must not register the old 1.x layer alongside version 2.
+for prefix in "$R/usr" "$R/usr/local"; do
+  rm -f "$prefix/lib/liblsfg-vk.so" "$prefix/lib/liblsfg-vk-arm64.so" \
+    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
+    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json"
+done
+[[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" ]] || die "missing LSFG v2 ARM layer"
 
 # ---------------------------------------------------------------------------
 # Mesa Turnip
@@ -651,13 +689,9 @@ txt = txt.replace("/home/steam/", "/home/steamos/")
 p.write_text(txt)
 PY
 fi
-# Ensure the layer .so exists in the home tree even if the symlink was dangling
-if [[ -f "$R/usr/local/lib/liblsfg-vk.so" ]]; then
-  mkdir -p "$HOME_DST/.local/lib"
-  install_file "$R/usr/local/lib/liblsfg-vk.so" "$HOME_DST/.local/lib/liblsfg-vk.so" 0755
-fi
-install_file "$OVL/home-steamos/LEEME-ODIN.txt" "$HOME_DST/LEEME-ODIN.txt" 0644
-install_file "$OVL/home-steamos/README-ODIN.txt" "$HOME_DST/README-ODIN.txt" 0644
+rm -f "$HOME_DST/.local/lib/liblsfg-vk.so" \
+  "$HOME_DST/.local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
+rm -f "$HOME_DST/LEEME-ODIN.txt" "$HOME_DST/README-ODIN.txt"
 
 # Frame steam.tar.zst is an incomplete client (spinner, no package zips).
 # Bake a complete ARM client (seed binaries from host if present), then
@@ -667,7 +701,7 @@ log "== complete Steam ARM client"
 mkdir -p "$STEAM_HOME"
 if [[ -x "${SCRIPT_DIR}/install-complete-steam-client.sh" ]]; then
   "${SCRIPT_DIR}/install-complete-steam-client.sh" "$STEAM_HOME" \
-    || log "WARN: complete Steam install failed — Game Mode will stay on the spinner"
+    || die "complete Steam client installation failed"
 fi
 if [[ -x "$R/usr/lib/steamos/sm8550-patch-steamui" && -d "$STEAM_HOME/steamui" ]]; then
   "$R/usr/lib/steamos/sm8550-patch-steamui" "$STEAM_HOME/steamui" || true
@@ -732,18 +766,18 @@ fi
 needs_gear_qt68() {
   local bin="$R/usr/bin/$1"
   [[ ! -x "$bin" ]] && return 0
-  strings "$bin" 2>/dev/null | grep -q 'Qt_6\.11'
+  strings "$bin" 2>/dev/null | grep 'Qt_6\.11' >/dev/null
 }
 for _gear in ark kcalc filelight gwenview okular; do
   if needs_gear_qt68 "$_gear"; then
     log "== official ${_gear} 26.04.2 for Qt 6.8"
     "${SCRIPT_DIR}/build-kde-gear-26.04.2.sh" "$R" "$_gear" \
-      || log "WARN: ${_gear} 26.04.2 build failed"
+      || die "required desktop app ${_gear} build failed"
   fi
 done
 log "== vendor apps (UFS, MESA, Proton-ARM, Non-Steam, SRM)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-vendor-apps.sh" "$R" \
-  || log "WARN: vendor apps incomplete"
+  || die "required vendor apps (installer/updater) failed"
 log "== system fixes (LSFG-VK, Thor, Decky plugins, Return icon)"
 STEAMOS_HOME="$HOME_DST" "${SCRIPT_DIR}/install-system-fixes.sh" "$R" \
   || log "WARN: system fixes incomplete"
@@ -780,6 +814,30 @@ fi
 
 # Empty mount points the bwrap builds (gamescope/box64) leave in the rootfs.
 rmdir "$R/src/box64" "$R/src/gamescope" "$R/src" "$R/build-parent" 2>/dev/null || true
+
+# Desktop Mode look: Frame's steamos-set-plasma-theme only picks the Deck
+# theme on Jupiter/Galileo boards. com.valve.vapor.desktop has no splash,
+# so Plasma shows its stock "KDE Plasma" one instead of the Steam logo.
+if [[ -f "$R/etc/xdg/kdeglobals" ]]; then
+  sed -i 's/^LookAndFeelPackage=.*/LookAndFeelPackage=com.valve.vapor.deck.desktop/' "$R/etc/xdg/kdeglobals"
+fi
+
+log "== source permissions"
+# cp -a keeps the source tree's modes, and a copy that went through the
+# exFAT HDD has 0700 dirs and 0600 files. gamescope runs as steamos: with an
+# unreadable /usr/share/gamescope/scripts it never defines debug(), the
+# KONKR display script aborts it and Game Mode is a black screen.
+for d in usr/share usr/local/share usr/lib/konkr usr/lib/steamos etc/gamescope etc/inputplumber; do
+  [[ -d "$R/$d" ]] || continue
+  find "$R/$d" -xdev \( -path '*/guestos' -o -path '*/factory/root' \) -prune -o \
+    -type d \( ! -perm -o=rx -o ! -perm -u=x \) -exec chmod u+rwx,go+rx {} + -o \
+    -type f ! -perm -o=r -exec chmod go+r {} +
+done
+find "$R" -xdev -name '._*' -type f -delete 2>/dev/null || true
+# Nothing under /usr or /etc belongs to a regular user. A tarball unpacked
+# with its owner (uid 1001) made /usr unowned: polkit, D-Bus and sshd then
+# ignore their files, and Discover, Decky and more break.
+find "$R/usr" "$R/etc" -xdev \( -uid +999 -o -gid +999 \) -exec chown -h root:root {} + 2>/dev/null || true
 
 log "== summary"
 {

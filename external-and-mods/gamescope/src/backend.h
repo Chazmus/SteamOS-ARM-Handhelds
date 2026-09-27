@@ -16,6 +16,7 @@
 #include <optional>
 #include <atomic>
 #include <variant>
+#include <any>
 
 struct wlr_buffer;
 struct wlr_dmabuf_attributes;
@@ -29,6 +30,8 @@ namespace gamescope
     struct VBlankScheduleTime;
     class BackendBlob;
     class INestedHints;
+
+    extern ConVar<std::string> cv_backend;
 
     namespace VirtualConnectorStrategies
     {
@@ -64,6 +67,16 @@ namespace gamescope
     static inline bool VirtualConnectorKeyIsSteam( VirtualConnectorKey_t ulKey )
     {
         return VirtualConnectorInSteamPerAppState() && ulKey == 769;
+    }
+
+    static constexpr uint64_t k_ulNonSteamWindowBit = ( uint64_t( 1 ) << 63u );
+    static constexpr uint64_t k_ulReservedBit = ( uint64_t( 1 ) << 62u );
+
+    static constexpr gamescope::VirtualConnectorKey_t k_ulSteamBootstrapperKey = ( uint64_t( 1 ) | k_ulReservedBit );
+
+    static inline bool VirtualConnectorKeyIsNonSteamWindow( VirtualConnectorKey_t ulKey )
+    {
+        return VirtualConnectorInSteamPerAppState() && ( ulKey & k_ulNonSteamWindowBit ) == k_ulNonSteamWindowBit;
     }
 
     static inline std::string_view VirtualConnectorStrategyToString( VirtualConnectorStrategy eStrategy )
@@ -106,6 +119,10 @@ namespace gamescope
         // but don't want to expose HDR there as it is not good.
         bool bExposeHDRSupport = false;
         bool bAlwaysPatchEdid = false;
+        // Only drive a panel in HDR while an HDR app is running.
+        bool bContentDrivenHDR = false;
+        // Panel ignores hardware backlight control in PQ, follow it in software.
+        bool bSoftwareBacklight = false;
 
         // The output encoding to use for HDR output.
         // For typical HDR10 displays, this will be PQ.
@@ -135,13 +152,6 @@ namespace gamescope
         }
     };
 
-    struct BackendMode
-    {
-        uint32_t uWidth;
-        uint32_t uHeight;
-        uint32_t uRefresh; // Hz
-    };
-
     struct BackendPresentFeedback
     {
     public:
@@ -153,6 +163,11 @@ namespace gamescope
 
         std::atomic<uint64_t> m_uQueuedPresents = { 0u };
         std::atomic<uint64_t> m_uCompletedPresents = { 0u };
+    };
+
+    enum class ConnectorProperty
+    {
+        IsFileBrowser,
     };
 
     class IBackendConnector
@@ -190,7 +205,12 @@ namespace gamescope
 
         virtual uint64_t GetVirtualConnectorKey() const = 0;
 
+        // A stand-in connector with no display behind it, e.g. the DRM headless virtual screen.
+        virtual bool IsHeadless() const { return false; }
+
         virtual INestedHints *GetNestedHints() = 0;
+
+        virtual void SetProperty( ConnectorProperty eProperty, std::any value ) = 0;
     };
 
     class CBaseBackendConnector : public IBackendConnector
@@ -216,6 +236,8 @@ namespace gamescope
         virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
         virtual uint64_t GetVirtualConnectorKey() const override { return m_ulVirtualConnectorKey; }
         virtual INestedHints *GetNestedHints() override { return nullptr; }
+
+        virtual void SetProperty( ConnectorProperty eProperty, std::any value ) override { }
     protected:
         uint64_t m_ulConnectorId = 0;
         uint64_t m_ulVirtualConnectorKey = 0;
@@ -249,6 +271,8 @@ namespace gamescope
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
+
+        virtual bool ShouldPaintCursor() { return false; }
     };
 
     class IBackendFb : public IRcObject
@@ -256,6 +280,14 @@ namespace gamescope
     public:
         virtual void SetBuffer( wlr_buffer *pClientBuffer ) = 0;
         virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
+
+        virtual IBackendFb *EnsureImported() = 0;
+    };
+
+    class IBackendPlane
+    {
+    public:
+        virtual ~IBackendPlane() = default;
     };
 
     class CBaseBackendFb : public IBackendFb
@@ -269,6 +301,8 @@ namespace gamescope
 
         void SetBuffer( wlr_buffer *pClientBuffer ) override;
         void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) override;
+
+        virtual IBackendFb *EnsureImported() override { return this; };
 
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
@@ -305,16 +339,24 @@ namespace gamescope
         //
         // shared_ptr owns the structure.
         // Rc manages acquire/release of buffer to/from client while imported.
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) = 0;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
-        inline bool SupportsFormat( uint32_t uDrmFormat ) const
-        {
-            return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
-        }
+		inline bool SupportsFormat( uint32_t uDrmFormat ) const
+		{
+			return !this->GetSupportedModifiers( uDrmFormat ).empty();
+		}
+		inline bool SupportsInvalidModifier( uint32_t uDrmFormat ) const
+		{
+			return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
+		}
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
+        virtual IBackendConnector *GetCurrentMouseConnector()
+        {
+            return this->GetCurrentConnector();
+        }
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
@@ -353,6 +395,13 @@ namespace gamescope
 
         virtual void NotifyPhysicalInput( InputType eInputType ) = 0;
 
+        virtual bool SupportsVROverlayForwarding() = 0;
+        virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) = 0;
+
+        virtual bool NewlyInitted() = 0;
+
+        virtual void OnEndFrame() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -382,6 +431,13 @@ namespace gamescope
         virtual std::shared_ptr<IBackendConnector> CreateVirtualConnector( uint64_t ulVirtualConnectorKey ) override;
 
         virtual void NotifyPhysicalInput( InputType eInputType ) override {}
+
+        virtual bool SupportsVROverlayForwarding() override { return false; }
+        virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override {}
+
+        virtual bool NewlyInitted() override { return false; }
+
+        virtual void OnEndFrame() override {}
     };
 
     // This is a blob of data that may be associated with
@@ -446,4 +502,3 @@ inline gamescope::IBackend *GetBackend()
 {
     return gamescope::IBackend::Get();
 }
-

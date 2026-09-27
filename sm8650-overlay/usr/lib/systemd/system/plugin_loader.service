@@ -27,6 +27,11 @@ Environment=BOX64_NOBANNER=1
 # can't build its app list (empty Desktop Mode menu).
 Environment=BOX64_DYNACACHE_FOLDER=/var/cache/decky-box64
 CacheDirectory=decky-box64
+# Box64's native liblzma wrapper calls Python's x86 allocator callback
+# (PyLzma_Malloc) as ARM code: SIGILL. tarfile's "r:*" tries xz first, so
+# any archive read kills the plugin (decky-lsfg-vk Install did nothing) and
+# the loader then spins a core on the dead backend. Emulate liblzma instead.
+Environment=BOX64_EMULATED_LIBS=liblzma.so.5
 
 [Install]
 WantedBy=multi-user.target

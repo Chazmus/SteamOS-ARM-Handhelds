@@ -71,9 +71,16 @@ fetch() {
 rocknix_path() { echo "${ROCKNIX_DIR}/$1"; }
 
 prepare_source() {
+  if [[ -d "$ROCKNIX_DIR/.git" ]]; then
+    [[ "$(git -C "$ROCKNIX_DIR" rev-parse HEAD)" == "$(git -C "$ROCKNIX_DIR" rev-parse "${ROCKNIX_REF}^{commit}")" ]] || die "ROCKNIX checkout does not match pinned ${ROCKNIX_REF}"
+  else
+    die "ROCKNIX source needs Git metadata to verify the pinned revision"
+  fi
   local tarball="${CACHE}/linux-${KVER}.tar.xz"
   fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
-  if [[ -f "${SRC}/.sm8650-patched" ]]; then
+  local patch_digest
+  patch_digest="$(find "${HERE}/patches" "${HERE}/dts" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d" " -f1)"
+  if [[ -f "${SRC}/.sm8650-patched" && "$(cat "${SRC}/.sm8650-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
   fi
@@ -120,7 +127,7 @@ prepare_source() {
   for dtb in $DTBS; do
     grep -q "${dtb}.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}.dtb" >>"$mk"
   done
-  touch "${SRC}/.sm8650-patched"
+  printf "%s\n" "$patch_digest" > "${SRC}/.sm8650-patched"
 }
 
 stage_builtin_firmware() {
@@ -213,6 +220,7 @@ build_initramfs() {
   rm -rf "$d"; mkdir -p "$d/root/bin" "$d/root/dev" "$d/root/proc" "$d/root/sys"
   cp "$bb" "$d/root/bin/busybox"
   install -m0755 "${HERE}/initramfs/init" "$d/root/init"
+  install -m0755 "${HERE}/initramfs/konkr-update-recover" "$d/root/konkr-update-recover"
   (cd "$d/root" && find . | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9) >"$d/initrd.gz"
   INITRD="$d/initrd.gz"
 }
@@ -264,6 +272,15 @@ install_output() {
 }
 
 main() {
+  if [[ "${1:-}" == --repack-boot ]]; then
+    [[ -s "$SRC/arch/arm64/boot/Image" ]] || die "no previously built kernel Image"
+    KREL="$(make -s -C "$SRC" kernelrelease)"
+    [[ -d "$OUT_BASE/$KREL" ]] || die "no previously built kernel output"
+    build_initramfs
+    pack_kernel_img "$OUT_BASE/$KREL/boot/KERNEL"
+    log "repacked initramfs: $OUT_BASE/$KREL/boot/KERNEL"
+    return
+  fi
   check_deps
   [[ -d "$ROCKNIX_DIR/projects/ROCKNIX/devices/SM8650" ]] \
     || die "ROCKNIX tree not found at ${ROCKNIX_DIR} (sparse clone of ROCKNIX/distribution@${ROCKNIX_REF})"

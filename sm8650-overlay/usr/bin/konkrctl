@@ -10,6 +10,7 @@
                                        (find out what each extra button sends)
   konkrctl sleep standby|s2idle|status standby (default: panel off, session
                                        frozen, ~1 W) or experimental kernel s2idle
+  konkrctl speaker boost|flat|status   speaker loudness chain (default: boost)
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ STATE = "/var/lib/konkrd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 S2IDLE = "/var/lib/konkrd/sleep-s2idle"
 PROFILES = ("silent", "balanced", "turbo")
+SPEAKER_CONF = "/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 
 
 def need_root() -> None:
@@ -121,6 +123,26 @@ def sleep_mode(cmd: str) -> None:
     sleep_mode("status")
 
 
+def speaker(cmd: str) -> None:
+    off = SPEAKER_CONF + ".off"
+    if cmd == "status":
+        print("speaker :", "boost (+8 dB, limited)" if os.path.exists(SPEAKER_CONF) else "flat")
+        return
+    need_root()
+    if cmd == "flat" and os.path.exists(SPEAKER_CONF):
+        os.replace(SPEAKER_CONF, off)
+    elif cmd == "boost" and os.path.exists(off):
+        os.replace(off, SPEAKER_CONF)
+    elif cmd not in ("flat", "boost"):
+        sys.exit(__doc__)
+    # WirePlumber runs in the user session; it rebuilds the sink on restart.
+    for uid in os.listdir("/run/user"):
+        if uid.isdigit() and uid != "0":
+            subprocess.run(["systemctl", "--user", "-M", f"{uid}@", "restart",
+                            "wireplumber.service"], capture_output=True)
+    speaker("status")
+
+
 def monitor() -> None:
     need_root()
     ev = struct.Struct("llHHi")
@@ -183,6 +205,8 @@ def main() -> None:
         mcu(a[1])
     elif a[0] == "sleep" and len(a) == 2:
         sleep_mode(a[1])
+    elif a[0] == "speaker" and len(a) == 2:
+        speaker(a[1])
     elif a[0] == "monitor":
         monitor()
     else:

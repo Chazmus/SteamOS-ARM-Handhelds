@@ -32,6 +32,7 @@ import os
 import select
 import signal
 import struct
+import subprocess
 import sys
 import time
 
@@ -136,6 +137,7 @@ def load_conf() -> configparser.ConfigParser:
         "buttons": {"F13": "rgb-next", "F14": "profile-next", "F15": "none"},
         "fan": {"enabled": "yes", "min_pwm": "0", "failsafe_pwm": "180"},
         "games": {"boost": "yes", "avoid_little_cores": "yes"},
+        "controller": {"mode": "default"},
     })
     cp.read(CONF)
     return cp
@@ -151,15 +153,19 @@ def find_fan() -> str | None:
 
 def soc_temp_c() -> float:
     """Hottest CPU/GPU tsens zone, °C."""
-    hottest = 0.0
+    hottest = None
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
         t = rd(f"{z}/type")
         if not (t.startswith("cpu") or t.startswith("gpu") or "gpuss" in t):
             continue
         try:
-            hottest = max(hottest, int(rd(f"{z}/temp", "0")) / 1000.0)
+            value = int(rd(f"{z}/temp")) / 1000.0
+            if -20 <= value <= 150:
+                hottest = value if hottest is None else max(hottest, value)
         except ValueError:
             pass
+    if hottest is None:
+        raise RuntimeError("no valid CPU/GPU temperature sensor")
     return hottest
 
 
@@ -187,6 +193,10 @@ def curve_pwm(curve, temp: float) -> int:
     return curve[-1][1]
 
 
+FIXED_OVERRIDE_ON_C = 90
+FIXED_OVERRIDE_OFF_C = 82
+
+
 class Fan:
     def __init__(self, conf):
         self.dir = find_fan()
@@ -196,6 +206,7 @@ class Fan:
         self.cur = -1
         self.smooth = None
         self.set_temp = 0.0
+        self.hot_override = False
         if self.enabled:
             wr(f"{self.dir}/pwm1_enable", 1)
             log(f"fan: {self.dir}")
@@ -206,9 +217,28 @@ class Fan:
         if not self.enabled:
             return
         fan = fan or {}
-        raw = soc_temp_c()
-        if raw >= 90:
-            fan = {"mode": "auto"}           # safety: never hold a low fixed speed when hot
+        try:
+            raw = soc_temp_c()
+        except RuntimeError:
+            wr(f"{self.dir}/pwm1", 255)
+            self.cur = 255
+            self.smooth = None
+            return
+        # Safety: never hold a low fixed speed when hot. Latched with
+        # hysteresis: under load the SoC sits right at 90 °C, and flipping
+        # every tick between the fixed speed and the curve (100 % there) made
+        # the fan pulse (user report, v1.1).
+        if fan.get("mode") == "fixed":
+            if not self.hot_override and raw >= FIXED_OVERRIDE_ON_C:
+                self.hot_override = True
+                log(f"fan: {raw:.0f} C, overriding the fixed speed until {FIXED_OVERRIDE_OFF_C} C")
+            elif self.hot_override and raw <= FIXED_OVERRIDE_OFF_C:
+                self.hot_override = False
+                log(f"fan: {raw:.0f} C, back to the fixed speed")
+            if self.hot_override:
+                fan = {**fan, "mode": "auto"}
+        else:
+            self.hot_override = False
         if fan.get("mode") == "fixed":
             step = max(0, min(255, int(int(fan.get("fixed", 50)) * 2.55)))
             if step != self.cur and wr(f"{self.dir}/pwm1", step):
@@ -499,6 +529,8 @@ class Leds:
             wr(f"{self.sticks}/brightness", 0)
             return
         color = cfg.get("color", "ff3c00")
+        if not isinstance(color, str) or len(color) != 6 or any(c not in "0123456789abcdefABCDEF" for c in color):
+            color = "ff3c00"
         rgb = tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
         eff = f"{self.sticks}/effect"
         if mode == "breath":
@@ -528,6 +560,10 @@ def hotkey_devices() -> list[str]:
 
 KEY_POWER = 116
 LONG_PRESS_S = 1.0
+# Presses right after a wake are ignored, like powerbuttond on the Deck
+# ("still actively resuming"): the wake press was followed by a second one
+# that put the device straight back to sleep (journal, 2026-09-26).
+WAKE_GRACE_S = 2.5
 
 
 def steam_url(url: str) -> None:
@@ -542,6 +578,37 @@ def steam_url(url: str) -> None:
            "XDG_RUNTIME_DIR": f"/run/user/{uid}",
            "PATH": "/usr/bin:/bin"}
     subprocess.Popen(["runuser", "-u", "steamos", "--", "/usr/bin/steam", "-ifrunning", url],
+                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def desktop_running() -> bool:
+    import subprocess
+    return subprocess.run(["pgrep", "-x", "plasmashell"],
+                          stdout=subprocess.DEVNULL).returncode == 0
+
+
+def power_press(long: bool) -> None:
+    """Steam Deck behaviour. Game Mode: Steam's own short (sleep) / long
+    (power menu) press handling. Desktop Mode: sleep, or Plasma's shut down
+    / restart / log out prompt."""
+    import pwd
+    import subprocess
+    if not desktop_running():
+        steam_url("steam://longpowerpress" if long else "steam://shortpowerpress")
+        return
+    if not long:
+        subprocess.Popen(["systemctl", "suspend"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    try:
+        uid = pwd.getpwnam("steamos").pw_uid
+    except KeyError:
+        return
+    env = {"HOME": "/home/steamos", "USER": "steamos", "PATH": "/usr/bin:/bin",
+           "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+           "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus"}
+    subprocess.Popen(["runuser", "-u", "steamos", "--", "qdbus6", "org.kde.LogoutPrompt",
+                      "/LogoutPrompt", "org.kde.LogoutPrompt.promptShutDown"],
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -568,6 +635,120 @@ def notify_desktop(title: str, body: str) -> None:
                      env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# ----------------------------------------------------------- touch boost ----
+# Android-style input boost. At idle schedutil parks the cores near their
+# floor, and the first frames after a touch (a tab switch, a scroll) stalled
+# while the clocks ramped: on the Steam home screen 5 frames over 34 ms per
+# 5 s of scrolling and a 234 ms freeze on a tab switch, vs 0-1 and 117-167 ms
+# with the floor raised (measured 2026-09-26; the GPU floor made no
+# difference). konkrd owns scaling_min_freq nowhere else.
+TOUCH_BOOST_HZ = {"big": 1800000, "little": 1500000}
+TOUCH_BOOST_HOLD_S = 1.2
+TOUCH_SAMPLE_S = 0.3        # look at the touchscreen at most ~3x a second
+
+
+# ------------------------------------------------------------ controller ----
+# The pad boots in the fake Xbox 360 mode (045e:028e), where the two back
+# buttons send nothing. The AYANEO default mode (4001:0428) reports them and
+# InputPlumber maps them to the Deck's back paddles. konkr_sysbtn switches
+# the MCU; the pad re-enumerates about a second later.
+XBOX_PAD = ("045e", "028e")
+
+
+def gamepad_mode_attr() -> str | None:
+    for a in glob.glob("/sys/bus/serial/devices/*/gamepad_mode"):
+        return a
+    return None
+
+
+def ensure_gamepad_mode(conf: configparser.ConfigParser) -> None:
+    want = conf.get("controller", "mode", fallback="default")
+    if want not in ("default", "xbox"):
+        return
+    if "KONKR Pocket FIT" not in rd("/sys/firmware/devicetree/base/model"):
+        return
+    attr = gamepad_mode_attr()
+    if not attr:
+        return
+    in_xbox = any((rd(f"{d}/idVendor"), rd(f"{d}/idProduct")) == XBOX_PAD
+                  for d in glob.glob("/sys/bus/usb/devices/*"))
+    if (want == "default") == in_xbox and wr(attr, want):
+        log(f"controller switched to {want} mode")
+
+
+def touchscreens() -> list[str]:
+    """Direct-touch devices with multitouch positions (the panel)."""
+    out = []
+    for ev in glob.glob("/sys/class/input/event*"):
+        try:
+            props = int(rd(f"{ev}/device/properties", "0").split()[-1], 16)
+            absbits = int(rd(f"{ev}/device/capabilities/abs", "0").split()[-1], 16)
+        except ValueError:
+            continue
+        if props & 0x2 and absbits & (1 << 0x35):
+            out.append(f"/dev/input/{os.path.basename(ev)}")
+    return out
+
+
+class TouchBoost:
+    def __init__(self):
+        self.fds: dict[int, str] = {}
+        self.last_scan = 0.0
+        self.last_touch = 0.0
+        self.active = False
+        big = big_cpus()
+        self.floors: dict[str, int] = {}
+        for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
+            cpus = {int(c) for c in rd(f"{pol}/related_cpus").split() if c.isdigit()}
+            want = TOUCH_BOOST_HZ["big" if cpus and cpus <= big else "little"]
+            freqs = sorted(int(f) for f in rd(f"{pol}/scaling_available_frequencies").split() if f.isdigit())
+            pick = next((f for f in freqs if f >= want), freqs[-1] if freqs else 0)
+            if pick:
+                self.floors[pol] = pick
+
+    def rescan(self) -> None:
+        if time.monotonic() - self.last_scan < 5:
+            return
+        self.last_scan = time.monotonic()
+        have = set(self.fds.values())
+        for path in touchscreens():
+            if path not in have:
+                try:
+                    self.fds[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = path
+                    log(f"touch boost: watching {path}")
+                except OSError:
+                    pass
+
+    def watch_fds(self) -> list[int]:
+        """fds to select on: none right after a touch (the boost is on and
+        the panel reports at ~280 Hz, which must not wake konkrd each time)."""
+        self.rescan()
+        if time.monotonic() - self.last_touch < TOUCH_SAMPLE_S:
+            return []
+        return list(self.fds)
+
+    def drain(self, fd: int) -> None:
+        try:
+            while os.read(fd, INPUT_EVENT.size * 256):
+                pass
+        except BlockingIOError:
+            pass
+        except OSError as e:
+            if e.errno in (errno.ENODEV, errno.EBADF):
+                os.close(fd)
+                self.fds.pop(fd, None)
+            return
+        self.last_touch = time.monotonic()
+
+    def tick(self, standby: bool) -> None:
+        want = not standby and time.monotonic() - self.last_touch < TOUCH_BOOST_HOLD_S
+        if want == self.active:
+            return
+        self.active = want
+        for pol, floor in self.floors.items():
+            wr(f"{pol}/scaling_min_freq", floor if want else rd(f"{pol}/cpuinfo_min_freq"))
+
+
 class Hotkeys:
     def __init__(self):
         self.fds: dict[int, str] = {}
@@ -588,14 +769,18 @@ class Hotkeys:
             except OSError:
                 pass
 
-    def poll(self, timeout: float) -> list[int]:
+    def poll(self, timeout: float, touch: "TouchBoost | None" = None) -> list[int]:
         self.rescan()
-        if not self.fds:
+        tfds = touch.watch_fds() if touch else []
+        if not self.fds and not tfds:
             time.sleep(timeout)
             return []
-        r, _, _ = select.select(list(self.fds), [], [], timeout)
+        r, _, _ = select.select(list(self.fds) + tfds, [], [], timeout)
         keys = []
         for fd in r:
+            if fd in tfds:
+                touch.drain(fd)
+                continue
             try:
                 data = os.read(fd, INPUT_EVENT.size * 64)
             except OSError as e:
@@ -619,11 +804,13 @@ class Daemon:
         self.games = GameBoost(self.conf)
         self.leds = Leds()
         self.keys = Hotkeys()
+        self.touch = TouchBoost()
         self.reload = False
         signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))
         signal.signal(signal.SIGTERM, self.stop)
         self.apply_profile(flash=False)
         self.leds.apply_sticks(self.st)
+        ensure_gamepad_mode(self.conf)
 
     def stop(self, *_):
         self.fan.failsafe_now()
@@ -684,17 +871,26 @@ class Daemon:
         next_ui_check = 0.0
         power_down_at = None
         power_long_sent = False
+        last_standby = 0.0
         while True:
-            timeout = 0.1 if power_down_at is not None else 0.5
-            for code, value in self.keys.poll(timeout):
+            timeout = 0.1 if power_down_at is not None else 0.25 if self.touch.active else 0.5
+            if os.path.exists(STANDBY_FLAG):
+                last_standby = time.monotonic()
+            keys = self.keys.poll(timeout, self.touch)
+            self.touch.tick(os.path.exists(STANDBY_FLAG))
+            for code, value in keys:
                 if os.path.exists(STANDBY_FLAG):
+                    last_standby = time.monotonic()
                     continue                 # konkr-standby owns the buttons
                 if code == KEY_POWER:
+                    if time.monotonic() - last_standby < WAKE_GRACE_S:
+                        power_down_at = None     # still waking up
+                        continue
                     if value == 1:
                         power_down_at, power_long_sent = time.monotonic(), False
                     elif power_down_at is not None:
                         if not power_long_sent:
-                            steam_url("steam://shortpowerpress")
+                            power_press(long=False)
                         power_down_at = None
                     continue
                 name = keymap.get(code)
@@ -704,7 +900,7 @@ class Daemon:
                     self.action(act)
             if (power_down_at is not None and not power_long_sent
                     and time.monotonic() - power_down_at >= LONG_PRESS_S):
-                steam_url("steam://longpowerpress")
+                power_press(long=True)
                 power_long_sent = True
             if self.reload:
                 self.reload = False
@@ -712,10 +908,13 @@ class Daemon:
                 self.st = load_state()
                 self.apply_profile()
                 self.leds.apply_sticks(self.st)
+                ensure_gamepad_mode(self.conf)
             now = time.monotonic()
             if now >= next_ui_check:
                 next_ui_check = now + 60.0
                 ensure_webhelper_vulkan()
+                if not os.path.exists(STANDBY_FLAG):
+                    ensure_gamepad_mode(self.conf)
             if now >= next_slow:
                 next_slow = now + 1.0
                 p = self.st["profile"]
@@ -732,6 +931,6 @@ if __name__ == "__main__":
     except Exception as exc:  # never leave the fan at a low fixed speed
         f = find_fan()
         if f:
-            wr(f"{f}/pwm1", 180)
+            wr(f"{f}/pwm1", 255)
         log(f"fatal: {exc!r}")
         raise

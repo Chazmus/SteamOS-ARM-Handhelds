@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SteamOS Update
+Comment=Update SteamOS while keeping games and saves
+Exec=konkr-update-gui
+Icon=system-software-update
+Terminal=false
+Categories=System;Settings;X-ARM-Manager;
+StartupNotify=true

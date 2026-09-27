@@ -56,7 +56,9 @@ using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
 
+static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
+static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
@@ -75,10 +77,34 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
     return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
 
-static bool IsSurfacePlane( wl_surface *pSurface ) {
-    // HACK: this probably should never be called with a null pointer, but it
-    // was happening after a window was closed.
-    return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag);
+[[maybe_unused]] static bool IsGamescopeProxy( void *pProxy ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	if ( !pProxy )
+		return false;
+
+	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pProxy );
+
+	return pTag == &GAMESCOPE_proxy_tag ||
+		pTag == &GAMESCOPE_plane_tag ||
+		pTag == &GAMESCOPE_toplevel_tag;
+}
+
+[[maybe_unused]] static bool IsGamescopePlane( wl_surface *pSurface ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	if ( !pSurface )
+		return false;
+	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pSurface );
+
+	return pTag == &GAMESCOPE_plane_tag ||
+		pTag == &GAMESCOPE_toplevel_tag;
+}
+
+static bool IsGamescopeToplevel( wl_surface *pSurface ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_toplevel_tag);
 }
 
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
@@ -121,10 +147,16 @@ namespace gamescope
         uint32_t uFractionalScale;
     };
 
-    inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
+    inline std::optional<WaylandPlaneState> ClipPlane( const WaylandPlaneState &state )
     {
         int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
         int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
+
+        // A plane that starts past the edge of the output clips away to nothing.
+        // Viewport source and destination sizes must be positive, so present no buffer at all.
+        if ( nClippedDstWidth <= 0 || nClippedDstHeight <= 0 )
+            return std::nullopt;
+
         double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
         double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
 
@@ -153,7 +185,10 @@ namespace gamescope
         {
             void *pMappedData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
             if ( pMappedData == MAP_FAILED )
+            {
+                close( nFd );
                 return -1;
+            }
             defer( munmap( pMappedData, uSize ) );
 
             memcpy( pMappedData, pData, uSize );
@@ -263,10 +298,12 @@ namespace gamescope
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
         std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
+        bool m_bUnmappedAwaitingConfigure = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
 
         std::optional<WaylandPlaneColorState> m_ColorState{};
+        float m_flPreviousSaturationScale = 1.0f;
         wp_image_description_v1 *m_pCurrentImageDescription = nullptr;
 
         std::mutex m_PlaneStateLock;
@@ -434,12 +471,15 @@ namespace gamescope
         friend CWaylandPlane;
 
         BackendConnectorHDRInfo m_HDRInfo{};
+        uint32_t m_uReferenceLuminance = 203;
+        uint32_t m_uMaxTargetLuminance = 203;
         displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
         std::vector<uint8_t> m_FakeEdid;
 
         CWaylandBackend *m_pBackend = nullptr;
 
-        CWaylandPlane m_Planes[8];
+        // One backing plane plus every layer steamcompmgr can hand us.
+        CWaylandPlane m_Planes[k_nMaxLayers + 1];
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
 
@@ -527,7 +567,7 @@ namespace gamescope
         double m_flScrollAccum[2] = { 0.0, 0.0 };
         uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
 
-        CWaylandPlane *m_pCurrentCursorPlane = nullptr;
+		wl_surface *m_pCurrentCursorSurface = nullptr;
 
         std::optional<wl_fixed_t> m_ofPendingCursorX;
         std::optional<wl_fixed_t> m_ofPendingCursorY;
@@ -624,7 +664,7 @@ namespace gamescope
 
         virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override;
         virtual bool UsesModifiers() const override;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
 
@@ -690,6 +730,7 @@ namespace gamescope
             return &iter->second;
         }
 
+		wl_region *GetEmptyRegion() const { return m_pEmptyRegion; }
         wl_region *GetFullRegion() const { return m_pFullRegion; }
         CWaylandFb *GetBlackFb() const { return m_BlackFb.get(); }
 
@@ -724,6 +765,10 @@ namespace gamescope
         void Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface );
         static const wl_keyboard_listener s_KeyboardListener;
 
+		void Wayland_LockedPointer_Locked( zwp_locked_pointer_v1 *pLockedPointer );
+		void Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer );
+		static const zwp_locked_pointer_v1_listener s_LockedPointerListener;
+
         void Wayland_WPColorManager_SupportedIntent( wp_color_manager_v1 *pWPColorManager, uint32_t uRenderIntent );
         void Wayland_WPColorManager_SupportedFeature( wp_color_manager_v1 *pWPColorManager, uint32_t uFeature );
         void Wayland_WPColorManager_SupportedTFNamed( wp_color_manager_v1 *pWPColorManager, uint32_t uTF );
@@ -749,6 +794,7 @@ namespace gamescope
         zwp_linux_dmabuf_v1 *m_pLinuxDmabuf = nullptr;
         xdg_wm_base *m_pXdgWmBase = nullptr;
         wp_viewporter *m_pViewporter = nullptr;
+		wl_region *m_pEmptyRegion = nullptr;
         wl_region *m_pFullRegion = nullptr;
         Rc<CWaylandFb> m_BlackFb;
         OwningRc<CWaylandFb> m_pOwnedBlackFb;
@@ -792,6 +838,7 @@ namespace gamescope
         wl_pointer *m_pPointer = nullptr;
         wl_touch *m_pTouch = nullptr;
         zwp_locked_pointer_v1 *m_pLockedPointer = nullptr;
+		bool m_bPointerLocked = false;
         wl_surface *m_pLockedSurface = nullptr;
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
@@ -850,6 +897,11 @@ namespace gamescope
         .modifiers     = WAYLAND_NULL(),
         .repeat_info   = WAYLAND_NULL(),
     };
+	const zwp_locked_pointer_v1_listener CWaylandBackend::s_LockedPointerListener =
+	{
+		.locked        = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_LockedPointer_Locked ),
+		.unlocked      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_LockedPointer_Unlocked ),
+	};
 
     const wp_color_manager_v1_listener CWaylandBackend::s_WPColorManagerListener
     {
@@ -937,7 +989,7 @@ namespace gamescope
     CWaylandConnector::CWaylandConnector( CWaylandBackend *pBackend, uint64_t ulVirtualConnectorKey )
         : CBaseBackendConnector{ ulVirtualConnectorKey }
         , m_pBackend( pBackend )
-        , m_Planes{ this, this, this, this, this, this, this, this }
+        , m_Planes{ this, this, this, this, this, this, this, this, this }
     {
         m_HDRInfo.bAlwaysPatchEdid = true;
     }
@@ -956,7 +1008,7 @@ namespace gamescope
 
     bool CWaylandConnector::Init()
     {
-        for ( uint32_t i = 0; i < 8; i++ )
+        for ( uint32_t i = 0; i < std::size( m_Planes ); i++ )
         {
             bool bSuccess = m_Planes[i].Init( i == 0 ? nullptr : &m_Planes[0], i == 0 ? nullptr : &m_Planes[ i - 1 ] );
             if ( !bSuccess )
@@ -1008,20 +1060,22 @@ namespace gamescope
 
         if ( !m_bVisible )
         {
-            uint32_t uCurrentPlane = 0;
-            for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                m_Planes[uCurrentPlane++].Present( nullptr );
+            for ( CWaylandPlane &plane : m_Planes )
+                plane.Present( nullptr );
         }
         else
         {
             // TODO: Dedupe some of this composite check code between us and drm.cpp
-            bool bLayer0ScreenSize = close_enough(pFrameInfo->layers[0].scale.x, 1.0f) && close_enough(pFrameInfo->layers[0].scale.y, 1.0f);
+            bool bLayer0ScreenSize = close_enough(pFrameInfo->layers.get( 0 ).scale.x, 1.0f) && close_enough(pFrameInfo->layers.get( 0 ).scale.y, 1.0f);
 
-            bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
+            GamescopeUpscaleFilter eLayer0Filter = pFrameInfo->layers.get( 0 ).filter;
+            bool bNeedsCompositeFromFilter = ( eLayer0Filter == GamescopeUpscaleFilter::NEAREST ||
+                                               eLayer0Filter == GamescopeUpscaleFilter::PIXEL ) && !bLayer0ScreenSize;
 
             bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
             bNeedsFullComposite |= pFrameInfo->useNISLayer0;
+            bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
             bNeedsFullComposite |= pFrameInfo->blurLayer0;
             bNeedsFullComposite |= bNeedsCompositeFromFilter;
             bNeedsFullComposite |= g_bColorSliderInUse;
@@ -1032,16 +1086,19 @@ namespace gamescope
                 bNeedsFullComposite |= g_bHDRItmEnable;
 
             if ( !m_pBackend->SupportsColorManagement() )
-                bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
+                bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers.get( 0 ).colorspace );
 
             bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
 
             if ( !bNeedsFullComposite )
             {
                 bool bNeedsBacking = true;
-                if ( pFrameInfo->layerCount >= 1 )
+                if ( pFrameInfo->layers.count() >= 1 )
                 {
-                    if ( pFrameInfo->layers[0].isScreenSize() && !pFrameInfo->layers[0].hasAlpha() )
+                    if ( pFrameInfo->layers.get( 0 ).isScreenSize() &&
+                         close_enough( pFrameInfo->layers.get( 0 ).offset.x, 0.0f ) &&
+                         close_enough( pFrameInfo->layers.get( 0 ).offset.y, 0.0f ) &&
+                         !pFrameInfo->layers.get( 0 ).hasAlpha() )
                         bNeedsBacking = false;
                 }
 
@@ -1065,8 +1122,8 @@ namespace gamescope
                         } );
                 }
 
-                for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                    m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layerCount ? &pFrameInfo->layers[i] : nullptr );
+                for ( int i = 0; uCurrentPlane < std::size( m_Planes ); i++ )
+                    m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layers.count() ? &pFrameInfo->layers.get( i ) : nullptr );
             }
             else
             {
@@ -1095,12 +1152,12 @@ namespace gamescope
 
                 m_Planes[0].Present( &compositeLayer );
 
-                for ( int i = 1; i < 8; i++ )
+                for ( size_t i = 1; i < std::size( m_Planes ); i++ )
                     m_Planes[i].Present( nullptr );
             }
         }
 
-        for ( int i = 7; i >= 0; i-- )
+        for ( int i = int( std::size( m_Planes ) ) - 1; i >= 0; i-- )
             m_Planes[i].Commit();
 
         wl_display_flush( m_pBackend->GetDisplay() );
@@ -1326,7 +1383,6 @@ namespace gamescope
     {
         m_pParent = pParent;
         m_pSurface = wl_compositor_create_surface( m_pBackend->GetCompositor() );
-        wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_plane_tag );
         wl_surface_set_user_data( m_pSurface, this );
         wl_surface_add_listener( m_pSurface, &s_SurfaceListener, this );
 
@@ -1362,6 +1418,7 @@ namespace gamescope
 
         if ( !pParent )
         {
+			wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_toplevel_tag );
             m_pFrame = libdecor_decorate( m_pBackend->GetLibDecor(), m_pSurface, &s_LibDecorFrameInterface, this );
             libdecor_frame_set_title( m_pFrame, "Gamescope" );
             libdecor_frame_set_app_id( m_pFrame, "gamescope" );
@@ -1369,9 +1426,12 @@ namespace gamescope
         }
         else
         {
+			wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_plane_tag );
             m_pSubsurface = wl_subcompositor_get_subsurface( m_pBackend->GetSubcompositor(), m_pSurface, pParent->GetSurface() );
             wl_subsurface_place_above( m_pSubsurface, pSiblingBelow->GetSurface() );
             wl_subsurface_set_sync( m_pSubsurface );
+			// Allow pParent to receive input while covered by subsurface planes
+			wl_surface_set_input_region( m_pSurface, m_pBackend->GetEmptyRegion() );
         }
 
         wl_surface_commit( m_pSurface );
@@ -1416,9 +1476,12 @@ namespace gamescope
                     .pHDRMetadata = oState->pHDRMetadata,
                 };
 
-                if ( !m_ColorState || *m_ColorState != colorState )
+                float flScale = cv_wayland_hdr10_saturation_scale;
+
+                if ( !m_ColorState || *m_ColorState != colorState || m_flPreviousSaturationScale != flScale )
                 {
                     m_ColorState = colorState;
+                    m_flPreviousSaturationScale = flScale;
 
                     if ( m_pCurrentImageDescription )
                     {
@@ -1434,7 +1497,6 @@ namespace gamescope
                     {
                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
 
-                        double flScale = cv_wayland_hdr10_saturation_scale;
                         if ( close_enough( flScale, 1.0f ) )
                         {
                             wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
@@ -1498,7 +1560,7 @@ namespace gamescope
                     default:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
                         frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_PRIMARIES_UNDEFINED );
-                        frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
+                        frog_color_managed_surface_set_known_transfer_function( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
                         break;
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
@@ -1539,6 +1601,9 @@ namespace gamescope
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
+            if ( m_pFrame && m_bUnmappedAwaitingConfigure )
+                return;
+
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
@@ -1546,6 +1611,9 @@ namespace gamescope
         }
         else
         {
+            if ( m_pFrame )
+                m_bUnmappedAwaitingConfigure = true;
+
             wl_surface_attach( m_pSurface, nullptr, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
         }
@@ -1582,7 +1650,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
-        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb() ) : nullptr;
+        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb()->EnsureImported() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
         if ( pBuffer )
@@ -1644,8 +1712,8 @@ namespace gamescope
 
     void CWaylandPlane::Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_pOutputs.emplace_back( pOutput );
 
@@ -1653,8 +1721,8 @@ namespace gamescope
     }
     void CWaylandPlane::Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         std::erase( m_pOutputs, pOutput );
 
@@ -1680,6 +1748,8 @@ namespace gamescope
         }
         g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
         g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
+
+        m_bUnmappedAwaitingConfigure = false;
 
         CommitLibDecor( pConfiguration );
 
@@ -1799,7 +1869,16 @@ namespace gamescope
 
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Done( wp_image_description_info_v1 *pImageDescInfo )
     {
+        auto *pHDRInfo = &m_pConnector->m_HDRInfo;
+        if (m_pBackend->SupportsColorManagement()) {
+            pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && m_pConnector->m_uMaxTargetLuminance > m_pConnector->m_uReferenceLuminance );
+            pHDRInfo->eOutputEncodingEOTF = pHDRInfo->bExposeHDRSupport ? EOTF_PQ : EOTF_Gamma22;
+        }
 
+        xdg_log.infof( "HDR INFO" );
+        xdg_log.infof( "  cv_hdr_enabled: %s", cv_hdr_enabled ? "true" : "false" );
+        xdg_log.infof( "  uMaxLum: %u, uRefLum: %u", m_pConnector->m_uMaxTargetLuminance, m_pConnector->m_uReferenceLuminance);
+        xdg_log.infof( "  bExposeHDRSupport: %s", pHDRInfo->bExposeHDRSupport ? "true" : "false" );
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_ICCFile( wp_image_description_info_v1 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize )
     {
@@ -1818,40 +1897,12 @@ namespace gamescope
     {
 
     }
-    static const char *TFToString( uint32_t uTF )
-    {
-        switch ( (wp_color_manager_v1_transfer_function) uTF )
-        {
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_BT1886: return "BT1886";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22: return "GAMMA22";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA28: return "GAMMA28";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST240: return "ST240";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR: return "EXT_LINEAR";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_100: return "LOG_100";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_316: return "LOG_316";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_XVYCC: return "XVYCC";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB: return "SRGB";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_SRGB: return "EXT_SRGB";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ: return "ST2084_PQ";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST428: return "ST428";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_HLG: return "HLG";
-            default: return "Unknown";
-        }
-    }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TFNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uTF)
     {
-        auto *pHDRInfo = &m_pConnector->m_HDRInfo;
-        pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && uTF == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
-        pHDRInfo->eOutputEncodingEOTF = ( cv_hdr_enabled && uTF == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) ? EOTF_PQ : EOTF_Gamma22;
-
-        xdg_log.infof( "HDR INFO" );
-        xdg_log.infof( "  cv_hdr_enabled: %s", cv_hdr_enabled ? "true" : "false" );
-        xdg_log.infof( "  uTF: %s", TFToString( uTF ) );
-        xdg_log.infof( "  bExposeHDRSupport: %s", pHDRInfo->bExposeHDRSupport ? "true" : "false" );
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Luminances( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum )
     {
-
+        m_pConnector->m_uReferenceLuminance = uRefLum;
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetPrimaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY )
     {
@@ -1863,7 +1914,7 @@ namespace gamescope
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetLuminance( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum )
     {
-
+        m_pConnector->m_uMaxTargetLuminance = uMaxLum;
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Target_MaxCLL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxCLL )
     {
@@ -1969,6 +2020,10 @@ namespace gamescope
             return false;
         }
 
+		m_pEmptyRegion = wl_compositor_create_region( m_pCompositor );
+		m_pFullRegion = wl_compositor_create_region( m_pCompositor );
+		wl_region_add( m_pFullRegion, 0, 0, INT32_MAX, INT32_MAX );
+
         // Grab stuff from any extra bindings/listeners we set up, eg. format/modifiers.
         wl_display_roundtrip( m_pDisplay );
 
@@ -1990,13 +2045,12 @@ namespace gamescope
                     return false;
                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_LUMINANCES ) )
                     return false;
+                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
+                    return false;
 
                 // Transfer Functions
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB ) )
-                    return false;
                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
                     return false;
-                // TODO: Need scRGB
 
                 // Primaries
                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.ePrimaries, WP_COLOR_MANAGER_V1_PRIMARIES_SRGB ) )
@@ -2006,6 +2060,22 @@ namespace gamescope
 
                 return true;
             }();
+
+            if ( m_WPColorManagerFeatures.bSupportsGamescopeColorManagement )
+            {
+                // HDR10.
+                {
+                    wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pWPColorManager );
+                    wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
+                    wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
+                    m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ ] = wp_image_description_creator_params_v1_create( pParams );
+                }
+
+                // scRGB
+                {
+                    m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ] = wp_color_manager_v1_create_windows_scrgb( m_pWPColorManager );
+                }
+            }
         }
 
         m_pLibDecor = libdecor_new( m_pDisplay, &s_LibDecorInterface );
@@ -2019,7 +2089,7 @@ namespace gamescope
         {
             return false;
         }
-
+        
         if ( !wlsession_init() )
         {
             xdg_log.errorf( "Failed to initialize Wayland session" );
@@ -2032,14 +2102,13 @@ namespace gamescope
             return false;
         }
 
+        xdg_log.infof( "Initted Wayland backend" );
+
         return true;
     }
 
     bool CWaylandBackend::PostInit()
     {
-        m_pFullRegion = wl_compositor_create_region( m_pCompositor );
-        wl_region_add( m_pFullRegion, 0, 0, INT32_MAX, INT32_MAX );
-
         if ( m_pSinglePixelBufferManager )
         {
             wl_buffer *pBlackBuffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer( m_pSinglePixelBufferManager, 0, 0, 0, ~0u );
@@ -2065,6 +2134,8 @@ namespace gamescope
 
         m_pDefaultCursorInfo = GetX11HostCursor();
         m_pDefaultCursorSurface = CursorInfoToSurface( m_pDefaultCursorInfo );
+
+        xdg_log.infof( "Post-Initted Wayland backend" );
 
         return true;
     }
@@ -2156,7 +2227,7 @@ namespace gamescope
         return std::make_shared<BackendBlob>( data );
     }
 
-    OwningRc<IBackendFb> CWaylandBackend::ImportDmabufToBackend( wlr_buffer *pClientBuffer, wlr_dmabuf_attributes *pDmaBuf )
+    OwningRc<IBackendFb> CWaylandBackend::ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf )
     {
         zwp_linux_buffer_params_v1 *pBufferParams = zwp_linux_dmabuf_v1_create_params( m_pLinuxDmabuf );
         if ( !pBufferParams )
@@ -2187,6 +2258,7 @@ namespace gamescope
         if ( !pImportedBuffer )
         {
             xdg_log.errorf( "Failed to import dmabuf" );
+            zwp_linux_buffer_params_v1_destroy( pBufferParams );
             return nullptr;
         }
 
@@ -2368,16 +2440,23 @@ namespace gamescope
 
                 zwp_locked_pointer_v1_destroy( m_pLockedPointer );
                 m_pLockedPointer = nullptr;
+                m_bPointerLocked = false;
 
                 zwp_relative_pointer_v1_destroy( m_pRelativePointer );
                 m_pRelativePointer = nullptr;
+
+                m_pLockedSurface = nullptr;
             }
 
-            if ( bRelative )
-            {
-                m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, pSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
-                m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
-            }
+			if ( bRelative )
+			{
+				m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, pSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
+				zwp_locked_pointer_v1_add_listener( m_pLockedPointer, &s_LockedPointerListener, this );
+
+				m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
+
+				m_pLockedSurface = pSurface;
+			}
 
             m_InputThread.SetRelativePointer( bRelative );
 
@@ -2389,10 +2468,13 @@ namespace gamescope
     {
         bool bUseHostCursor = false;
 
-        if ( cv_wayland_mouse_warp_without_keyboard_focus )
-            bUseHostCursor = m_pRelativePointer && !m_bKeyboardEntered && m_pDefaultCursorSurface;
-        else
-            bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
+        if ( !m_pPointer )
+            return;
+
+		if ( cv_wayland_mouse_warp_without_keyboard_focus )
+			bUseHostCursor = m_bPointerLocked && !m_bKeyboardEntered && m_pDefaultCursorSurface;
+		else
+			bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
 
         if ( bUseHostCursor )
         {
@@ -2400,7 +2482,7 @@ namespace gamescope
         }
         else
         {
-            bool bHideCursor = m_pLockedPointer || !m_pCursorSurface;
+			bool bHideCursor = m_bPointerLocked || !m_pCursorSurface;
 
             if ( bHideCursor )
                 wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
@@ -2476,19 +2558,6 @@ namespace gamescope
         {
             m_pWPColorManager = (wp_color_manager_v1 *)wl_registry_bind( pRegistry, uName, &wp_color_manager_v1_interface, 1u );
             wp_color_manager_v1_add_listener( m_pWPColorManager, &s_WPColorManagerListener, this );
-
-            // HDR10.
-            {
-                wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pWPColorManager );
-                wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
-                wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
-                m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ ] = wp_image_description_creator_params_v1_create( pParams );
-            }
-
-            // scRGB
-            {
-                m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ] = wp_color_manager_v1_create_windows_scrgb( m_pWPColorManager );
-            }
         }
         else if ( !strcmp( pInterface, zwp_pointer_constraints_v1_interface.name ) )
         {
@@ -2600,8 +2669,8 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_uPointerEnterSerial = uSerial;
         m_bMouseEntered = true;
@@ -2610,8 +2679,8 @@ namespace gamescope
     }
     void CWaylandBackend::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_bMouseEntered = false;
     }
@@ -2620,8 +2689,8 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_uKeyboardEnterSerial = uSerial;
         m_bKeyboardEntered = true;
@@ -2630,13 +2699,24 @@ namespace gamescope
     }
     void CWaylandBackend::Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_bKeyboardEntered = false;
 
         UpdateCursor();
     }
+
+	void CWaylandBackend::Wayland_LockedPointer_Locked( zwp_locked_pointer_v1 *pLockedPointer )
+	{
+		m_bPointerLocked = true;
+		UpdateCursor();
+	}
+	void CWaylandBackend::Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer )
+	{
+		m_bPointerLocked = false;
+		UpdateCursor();
+	}
 
     // WP Color Manager
 
@@ -2754,6 +2834,25 @@ namespace gamescope
         return true;
     }
 
+    // The display connection is dead by the time we get here, so say why before we take the process with us.
+    static void LogDisplayError( const char *pszWhat, wl_display *pDisplay )
+    {
+        int nError = wl_display_get_error( pDisplay );
+
+        if ( nError == EPROTO )
+        {
+            const wl_interface *pInterface = nullptr;
+            uint32_t uId = 0;
+            uint32_t uCode = wl_display_get_protocol_error( pDisplay, &pInterface, &uId );
+
+            xdg_log.errorf( "%s: protocol error %u on %s@%u", pszWhat, uCode, pInterface ? pInterface->name : "<unknown>", uId );
+        }
+        else
+        {
+            xdg_log.errorf( "%s: %s", pszWhat, strerror( nError ) );
+        }
+    }
+
     void CWaylandInputThread::ThreadFunc()
     {
         m_bInitted.wait( false );
@@ -2764,6 +2863,7 @@ namespace gamescope
         int nFD = wl_display_get_fd( m_pBackend->GetDisplay() );
         if ( nFD < 0 )
         {
+            xdg_log.errorf( "Couldn't get Wayland display fd for input thread." );
             abort();
         }
 
@@ -2775,6 +2875,7 @@ namespace gamescope
         {
             if ( ( nRet = wl_display_dispatch_queue_pending( m_pBackend->GetDisplay(), m_pQueue ) ) < 0 )
             {
+                LogDisplayError( "Failed to dispatch input thread queue", m_pBackend->GetDisplay() );
                 abort();
             }
 
@@ -2783,6 +2884,7 @@ namespace gamescope
                 if ( errno == EAGAIN || errno == EINTR )
                     continue;
 
+                LogDisplayError( "Failed to prepare read of input thread queue", m_pBackend->GetDisplay() );
                 abort();
             }
 
@@ -2790,7 +2892,10 @@ namespace gamescope
             {
                 wl_display_cancel_read( m_pBackend->GetDisplay() );
                 if ( nRet < 0 )
+                {
+                    xdg_log.errorf_errno( "Input thread poll failed" );
                     abort();
+                }
 
                 assert( nRet == 0 );
                 continue;
@@ -2798,6 +2903,7 @@ namespace gamescope
 
             if ( ( nRet = wl_display_read_events( m_pBackend->GetDisplay() ) ) < 0 )
             {
+                LogDisplayError( "Failed to read events on input thread", m_pBackend->GetDisplay() );
                 abort();
             }
         }
@@ -2979,35 +3085,36 @@ namespace gamescope
 
     // Pointer
 
-    void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
-    {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+	void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
+	{
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
-        CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
-        if ( !pPlane )
-            return;
-        m_pCurrentCursorPlane = pPlane;
-        m_bMouseEntered = true;
-        m_uPointerEnterSerial = uSerial;
+		m_pCurrentCursorSurface = pSurface;
+		m_bMouseEntered = true;
+		m_uPointerEnterSerial = uSerial;
 
-        Wayland_Pointer_Motion( pPointer, 0, fSurfaceX, fSurfaceY );
-    }
-    void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
-    {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		Wayland_Pointer_Motion( pPointer, 0, fSurfaceX, fSurfaceY );
+	}
+	void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
+	{
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
-        CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
-        if ( !pPlane )
-            return;
-        if ( pPlane != m_pCurrentCursorPlane )
-            return;
-        m_pCurrentCursorPlane = nullptr;
-        m_bMouseEntered = false;
-    }
-    void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
-    {
+		m_pCurrentCursorSurface = nullptr;
+		m_bMouseEntered = false;
+	}
+	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
+	{
+		// Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+		if ( !m_bMouseEntered )
+			return;
+
+		CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( m_pCurrentCursorSurface );
+
+		if ( !pPlane )
+			return;
+
         if ( m_pRelativePointer.load() != nullptr )
             return;
 
@@ -3019,10 +3126,7 @@ namespace gamescope
             return;
         }
 
-        if ( !m_pCurrentCursorPlane )
-            return;
-
-        auto oState = m_pCurrentCursorPlane->GetCurrentState();
+		auto oState = pPlane->GetCurrentState();
         if ( !oState )
             return;
 
@@ -3037,6 +3141,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         // Don't do any motion/movement stuff if we don't have kb focus
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
@@ -3047,19 +3154,35 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Axis( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis, wl_fixed_t fValue )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
+
         m_uAxisSource = uAxisSource;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Value120( wl_pointer *pPointer, uint32_t uAxis, int32_t nValue120 )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 
@@ -3124,6 +3247,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
+
         m_bKeyboardEntered = true;
         m_uScancodesHeld.clear();
 
@@ -3147,6 +3273,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface )
     {
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
+
         m_bKeyboardEntered = false;
         m_uKeyModifiers = 0;
 
@@ -3184,9 +3313,9 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_RelativePointer_RelativeMotion( zwp_relative_pointer_v1 *pRelativePointer, uint32_t uTimeHi, uint32_t uTimeLo, wl_fixed_t fDx, wl_fixed_t fDy, wl_fixed_t fDxUnaccel, wl_fixed_t fDyUnaccel )
     {
-        // Don't do any motion/movement stuff if we don't have kb focus
-        if ( !cv_wayland_mouse_relmotion_without_keyboard_focus && !m_bKeyboardEntered )
-            return;
+		// Don't do any motion/movement stuff if we don't have kb focus
+		if ( !m_pBackend->m_bPointerLocked || ( !cv_wayland_mouse_relmotion_without_keyboard_focus && !m_bKeyboardEntered ) )
+			return;
 
         wlserver_lock();
         wlserver_mousemotion( wl_fixed_to_double( fDxUnaccel ), wl_fixed_to_double( fDyUnaccel ), ++m_uFakeTimestamp );

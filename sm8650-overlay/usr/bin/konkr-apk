@@ -121,6 +121,24 @@ patch("liblepton/mounting.sh",
       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
       '    # konkr-apk: extra overlay\n'
       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n')
+
+# Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
+# every start. Match the certified identity from props_overlay, or Google
+# sees a Pixel 5 fingerprint on a "Valve Lepton" and refuses it again.
+patch("liblepton/properties.sh",
+      '    props_echo "ro.product.brand=Steam Frame"\n'
+      '    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n',
+      '    # konkr-apk: certified identity\n'
+      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+      '        props_echo "ro.product.brand=google"\n'
+      '        props_echo "ro.product.model=Pixel 5"\n'
+      '        props_echo "ro.product.manufacturer=Google"\n'
+      '    else\n'
+      '    props_echo "ro.product.brand=Steam Frame"\n'
+      '    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n'
+      '    fi\n')
 EOF
 }
 
@@ -214,6 +232,48 @@ ensure_android() {
 #                 odex/dalvik-cache built against it. Tied to one Lepton
 #                 Android image: skipped for any other version, which then
 #                 boots stock (apps relying on those services may crash).
+#  props-<ver>/   build.prop copies (generated below): Google refuses Play
+#                 Store sign-in on uncertified builds ("This device isn't Play
+#                 Protect certified") and Lepton identifies as a userdebug
+#                 LineageOS test-keys build. These present the certified
+#                 Pixel 5 build with the same Android 11 build ID instead.
+PROPS_REV=2
+PROPS_FP=google/redfin/redfin:11/RQ3A.211001.001/7641976:user/release-keys
+
+# Generated from the installed Lepton so it follows Lepton updates; bump
+# PROPS_REV when the values change. ro.build.type stays Lepton's userdebug:
+# with "user" Android's vendor interface check fails and an "Android System:
+# internal problem with your device" popup appears on every start.
+props_overlay() {
+  local ver="$1" src="${LEPTON_DIR}/images/rootfs" out f
+  out="${HOME}/.local/share/konkr-apk/props-${ver}"
+  if [[ "$(cat "$out/.rev" 2>/dev/null)" != "$PROPS_REV" ]]; then
+    rm -rf "$out"
+    for f in system/build.prop system/system_ext/build.prop system/product/build.prop \
+        vendor/build.prop vendor/odm/etc/build.prop; do
+      [[ -f "$src/$f" ]] || continue
+      mkdir -p "$out/${f%/*}"
+      sed -E \
+        -e "s#^(ro\.([a-z_]+\.)?build\.fingerprint)=.*#\1=${PROPS_FP}#" \
+        -e "s#^(ro\.bootimage\.build\.fingerprint)=.*#\1=${PROPS_FP}#" \
+        -e 's#^(ro\.([a-z_]+\.)?build\.tags)=.*#\1=release-keys#' \
+        -e 's#^(ro\.product\.([a-z_]+\.)?brand)=.*#\1=google#' \
+        -e 's#^(ro\.product\.([a-z_]+\.)?manufacturer)=.*#\1=Google#' \
+        -e 's#^(ro\.product\.([a-z_]+\.)?model)=.*#\1=Pixel 5#' \
+        -e 's#^(ro\.product\.([a-z_]+\.)?(name|device))=.*#\1=redfin#' \
+        -e 's#^(ro\.build\.version\.incremental)=.*#\1=7641976#' \
+        -e 's#^(ro\.build\.description)=.*#\1=redfin-user 11 RQ3A.211001.001 7641976 release-keys#' \
+        -e 's#^(ro\.build\.version\.security_patch)=.*#\1=2021-10-05#' \
+        "$src/$f" >"$out/$f"
+    done
+    if [[ -f "$out/system/build.prop" ]] && ! grep -q '^ro\.build\.fingerprint=' "$out/system/build.prop"; then
+      echo "ro.build.fingerprint=${PROPS_FP}" >>"$out/system/build.prop"
+    fi
+    echo "$PROPS_REV" >"$out/.rev"
+  fi
+  echo "$out"
+}
+
 overlay_dirs() {
   local ver dirs=("${OVERLAY_ROOT}/common")
   ver="$(cat "${LEPTON_DIR}/images/version.txt" 2>/dev/null || true)"
@@ -222,6 +282,7 @@ overlay_dirs() {
   else
     say "Lepton's Android image (${ver:-unknown}) is newer than this build's framework fixes; some apps may crash."
   fi
+  dirs+=("$(props_overlay "${ver:-unknown}")")
   echo "${dirs[*]}"
 }
 
@@ -294,7 +355,12 @@ sync_titles() {
   # Keyboards have a settings screen but aren't something to launch.
   pkgs="$(grep -vxF -f <(asx "ime list -a -s" | cut -d/ -f1 || true) <<<"$pkgs" || true)"
   for pkg in $pkgs; do
-    [[ -f "${DESKTOP_DIR}/konkr-android-${pkg}.desktop" ]] || add_title "$pkg"
+    f="${DESKTOP_DIR}/konkr-android-${pkg}.desktop"
+    if [[ ! -f "$f" ]]; then
+      add_title "$pkg"
+    elif ! grep -qx "$pkg" "${SYS}/titles" 2>/dev/null; then
+      steam_add "$f" "$pkg" && echo "$pkg" >>"${SYS}/titles"
+    fi
   done
   for f in "${DESKTOP_DIR}"/konkr-android-*.desktop; do
     [[ -f "$f" ]] || continue
@@ -357,6 +423,14 @@ cmd_daemon() {
   # No setup wizard runs here, and Android ignores Home ("user setup is in
   # progress") until setup is marked done. It gets reset, so set it each boot.
   asx 'settings put secure user_setup_complete 1; settings put global device_provisioned 1' >/dev/null || true
+  # Google checked this Android in under the old, uncertified identity. With
+  # no account signed in yet, clear that so it checks in again as certified.
+  if [[ "$(cat "${SYS}/props-rev" 2>/dev/null)" != "$PROPS_REV" ]]; then
+    if ! asx 'dumpsys account' | grep -qE 'Account \{name=.*, type=com\.google\}'; then
+      asx 'pm clear com.google.android.gsf; pm clear com.google.android.gms; pm clear com.android.vending' >/dev/null || true
+    fi
+    echo "$PROPS_REV" >"${SYS}/props-rev"
+  fi
   echo "$GAMESCOPE_WAYLAND_DISPLAY" >"$READY"
 
   # Pads every 3 s; titles for apps installed from inside Android (Play

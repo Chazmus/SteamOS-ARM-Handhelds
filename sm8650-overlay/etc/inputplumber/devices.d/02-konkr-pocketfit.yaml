@@ -33,6 +33,13 @@ source_devices:
       product_id: "0428"
       handler: event*
     capability_map_id: konkr_pocketfit_dinput
+  # Same pad, its HID node: rumble. The motors only take an output report
+  # in this mode (byte 4 left, byte 5 right); InputPlumber >= 0.79 sends it.
+  - group: gamepad
+    hidraw:
+      vendor_id: 0x4001
+      product_id: 0x0428
+      interface_num: 0
   - group: gamepad
     evdev:
       vendor_id: "045e"

@@ -15,7 +15,7 @@ WORKDIR="${STEAMOS_WORK:-/work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
-KOUT="${KERNEL_OUT:-${WORKDIR}/kernel-sm8650/output/current}"
+KOUT="${KERNEL_OUT:-${WORKDIR}/kernel-release/current}"
 BOX64_SRC="${BOX64_SRC:-${MOD}/BOX64/box64}"
 BOX64_BUILD="${BOX64_BUILD:-/tmp/box64-build-frame}"
 IMG="${STEAMOS_SM8650_IMG:-${WORKDIR}/steamos-sm8650.img}"
@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-STEAMOS_BUILD="${STEAMOS_BUILD:-20260921.6090922}"
+STEAMOS_BUILD="${STEAMOS_BUILD:-20260925.6175226}"
 STEAMOS_BUNDLE="deckard-${STEAMOS_BUILD}-0.5.0"
 STEAMOS_URL="https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}"
 
@@ -94,7 +94,7 @@ ensure_official_rootfs() {
   fi
   [[ "$SKIP_DOWNLOAD" -eq 1 ]] && die "rootfs missing and --skip-download set"
   command -v unsquashfs >/dev/null || die "unsquashfs missing (apt install squashfs-tools)"
-  local dl="${WORKDIR}/steamos" img sha
+  local dl="${WORKDIR}/steamos-${STEAMOS_BUILD}" img sha
   mkdir -p "${dl}"
   img="${dl}/rootfs.img"
   if [[ ! -s "${dl}/bundle/rootfs.img.caibx" ]]; then
@@ -116,7 +116,7 @@ ensure_official_rootfs() {
   log "Unpacking rootfs.img → ${R}"
   mkdir -p "${WORKDIR}/.rootfs-ro" "${R}"
   sudo_run mount -o loop,ro "${img}" "${WORKDIR}/.rootfs-ro"
-  sudo_run rsync -aHAX --numeric-ids "${WORKDIR}/.rootfs-ro/" "${R}/"
+  sudo_run rsync -aHAX --filter="-x btrfs.*" --numeric-ids "${WORKDIR}/.rootfs-ro/" "${R}/"
   sudo_run umount "${WORKDIR}/.rootfs-ro"
   [[ -x "${R}/usr/bin/bash" ]] || die "unpacked rootfs has no /usr/bin/bash"
 }
@@ -198,10 +198,6 @@ prepare_runtime() {
     "${R}/etc/profile.d/sm8550-gamepad.sh"
   install -D -m0755 "${OVL}/usr/lib/steamos/gamescope-session" \
     "${R}/usr/lib/steamos/gamescope-session"
-  install -D -m0644 "${OVL}/home-steamos/LEEME-ODIN.txt" \
-    "${R}/home/steamos/LEEME-ODIN.txt"
-  install -D -m0644 "${OVL}/home-steamos/README-ODIN.txt" \
-    "${R}/home/steamos/README-ODIN.txt"
   install -D -m0644 "${OVL}/etc/systemd/journald.conf.d/99-sm8550-persist.conf" \
     "${R}/etc/systemd/journald.conf.d/99-sm8550-persist.conf"
   mkdir -p "${R}/var/log/journal" \
@@ -409,11 +405,13 @@ EOF
   # rsync as root can copy steam:steam binaries; restore setuid now so
   # Decky / MESA / UFS ask for the user password on first boot.
   restore_image_suid "${MNT}/root"
+  # Each new installation must generate its own D-Bus/network identity.
+  sudo_run truncate -s 0 "${MNT}/root/etc/machine-id"
+  if [[ -f "${MNT}/root/var/lib/overlays/etc/upper/machine-id" ]]; then
+    sudo_run truncate -s 0 "${MNT}/root/var/lib/overlays/etc/upper/machine-id"
+  fi
 
-  # The Easy UFS Installer (external-and-mods/ufs-install) repartitions
-  # SM8550 UFS layouts; it is not validated on SM8650 and is not shipped.
-  sudo_run rm -f "${MNT}/root/usr/share/applications/easy-ufs-install.desktop" \
-    "${MNT}/root/usr/share/applications/ufs-install.desktop" 2>/dev/null || true
+  # Ship the SM8650 installer; its runtime checks require booting from SD.
 
   log "Copying /home/steamos"
   if [[ -d "${R}/home/steamos" ]]; then
@@ -477,5 +475,8 @@ if [[ "$IMAGE_ONLY" -eq 0 ]]; then
 fi
 # Always refresh runtime bits before packing
 [[ -x "${R}/usr/local/bin/box64" ]] || install_box64_rootfs
+# Decky's plugin_loader.service execs /usr/bin/box64. A rootfs that already
+# had box64 skips install_box64_rootfs, so make the link here too.
+ln -sfn /usr/local/bin/box64 "${R}/usr/bin/box64"
 prepare_runtime
 build_image

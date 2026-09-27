@@ -9,13 +9,16 @@ this instead. It:
   - pauses the running game (SIGSTOP on the Steam-launched process tree),
   - suspends audio, detaches the touch panel, unloads Wi-Fi and has
     gamescope power the panel off (konkr-sleep standby-pre),
-  - freezes the whole user session (user.slice: Steam, gamescope, mangoapp,
-    PipeWire), so nothing in userspace wakes the CPUs,
+  - freezes the user session (Steam, gamescope, games, Android), so nothing
+    in userspace wakes the CPUs. PipeWire, WirePlumber and D-Bus keep
+    running (idle, outputs suspended): frozen along with the apps, PipeWire
+    woke hours out of date and audio lagged and crackled for minutes,
   - turns the panel backlight and the LEDs off,
   - takes the big cores offline, drops the little ones to their lowest clock
     and caps the GPU,
-  - blocks until the power button is pressed again (or SIGUSR1, for testing
-    over SSH: Wi-Fi stays up), then restores it all.
+  - blocks until the power button is pressed again (or SIGUSR1; for testing
+    over SSH run it with KONKR_STANDBY_KEEP_WIFI=1), then restores it all: CPUs and audio first,
+    then the apps, then the screen.
 
 Steam sees a normal suspend/resume cycle (PrepareForSleep false → true →
 false). Nothing enters kernel suspend, so there is nothing to fail to wake.
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import glob
 import os
+import pwd
 import select
 import signal
 import struct
@@ -119,6 +123,58 @@ def power_key_fd() -> int | None:
     return None
 
 
+# Keep audio and D-Bus running while freezing the graphical user.
+KEEP_RUNNING = {"pipewire.service", "pipewire-pulse.service", "wireplumber.service",
+                "dbus-broker.service", "at-spi-dbus-bus.service", "init.scope"}
+
+
+def freeze_targets() -> list[str]:
+    """cgroups to freeze: each session scope, every user-manager slice but
+    session.slice, and every session.slice unit but KEEP_RUNNING."""
+    out = []
+    try:
+        uid = pwd.getpwnam("steamos").pw_uid
+        own = next(line.split(":", 2)[2].strip() for line in
+                   open("/proc/self/cgroup") if line.startswith("0::"))
+    except (KeyError, OSError, StopIteration):
+        return []
+    own = os.path.normpath("/sys/fs/cgroup" + own)
+    for user in glob.glob(f"/sys/fs/cgroup/user.slice/user-{uid}.slice"):
+        for child in sorted(os.listdir(user)):
+            path = os.path.join(user, child)
+            if not os.path.isdir(path):
+                continue
+            if not (child.startswith("user@") and child.endswith(".service")):
+                out.append(path)                  # session-N.scope
+                continue
+            for sub in sorted(os.listdir(path)):
+                spath = os.path.join(path, sub)
+                if not os.path.isdir(spath) or sub in KEEP_RUNNING:
+                    continue
+                if sub != "session.slice":
+                    out.append(spath)             # app.slice, …
+                    continue
+                for unit in sorted(os.listdir(spath)):
+                    upath = os.path.join(spath, unit)
+                    if os.path.isdir(upath) and unit not in KEEP_RUNNING:
+                        out.append(upath)
+    # A caller inside a graphical session must never freeze itself or the
+    # session coordinating its wake-up. Root SSH sessions are not selected.
+    return [path for path in out
+            if own != path and not own.startswith(path + "/")]
+
+
+def set_frozen(cgroups: list[str], frozen: bool) -> list[str]:
+    """Write cgroup.freeze; returns the cgroups that took it."""
+    done = [cg for cg in cgroups if wr_ok(f"{cg}/cgroup.freeze", 1 if frozen else 0)]
+    if frozen:
+        end = time.monotonic() + 2.0              # let tasks reach the freezer
+        while time.monotonic() < end and any(
+                "frozen 1" not in rd(f"{cg}/cgroup.events") for cg in done):
+            time.sleep(0.05)
+    return done
+
+
 WAKE_R, WAKE_W = os.pipe()
 
 
@@ -150,7 +206,7 @@ def main() -> int:
     saved: dict[str, str] = {}
     paused: list[int] = []
     offlined: list[int] = []
-    frozen = False
+    frozen: list[str] = []
     try:
         # Drain the press that triggered sleep, so its release is not the wake.
         time.sleep(0.6)
@@ -178,8 +234,11 @@ def main() -> int:
                 wr(f"{led}/brightness", 0)
         run("/usr/lib/konkr/konkr-sleep", "standby-pre")
         time.sleep(0.3)               # let gamescope commit the panel-off
-        frozen = run("systemctl", "freeze", "user.slice") == 0
+        frozen = set_frozen(freeze_targets(), True)
         for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
+            # konkrd's touch boost may still hold the floor up (it drops it
+            # within 0.5 s of this flag); a max below the min would be refused.
+            wr(f"{pol}/scaling_min_freq", rd(f"{pol}/cpuinfo_min_freq"))
             saved[f"{pol}/scaling_max_freq"] = rd(f"{pol}/scaling_max_freq")
             wr(f"{pol}/scaling_max_freq", rd(f"{pol}/cpuinfo_min_freq"))
         for cpu in big_cpus():
@@ -190,18 +249,26 @@ def main() -> int:
             freqs = sorted(int(f) for f in rd(f"{gpu}/available_frequencies").split() if f.isdigit())
             if freqs:
                 wr(f"{gpu}/max_freq", freqs[0])
-        log(f"standby: paused {len(paused)} game processes, user.slice "
-            f"{'frozen' if frozen else 'NOT frozen'}, cpus {offlined} offline, screen off")
+        how = (f"{len(frozen)} session cgroups frozen (audio kept running)" if frozen
+               else "session NOT frozen")
+        log(f"standby: paused {len(paused)} game processes, {how}, "
+            f"cpus {offlined} offline, screen off")
         wait_power_press(fd)
         log("wake")
     finally:
+        # CPUs and clocks first, then audio (PipeWire is still running), then
+        # the apps, so they wake to a ready speaker and a current clock.
         for cpu in offlined:
             wr(f"/sys/devices/system/cpu/cpu{cpu}/online", 1)
+        for path, val in saved.items():
+            if val and ("/cpufreq/" in path or "/devfreq/" in path):
+                wr(path, val)
+        run("/usr/lib/konkr/konkr-sleep", "standby-audio-on")
         if frozen:
-            run("systemctl", "thaw", "user.slice")
+            set_frozen(frozen, False)
         run("/usr/lib/konkr/konkr-sleep", "standby-screen-on")
         for path, val in saved.items():
-            if val:
+            if val and "/cpufreq/" not in path and "/devfreq/" not in path:
                 wr(path, val)
         run("/usr/lib/konkr/konkr-sleep", "standby-post")
         for pid in paused:

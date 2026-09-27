@@ -9,6 +9,11 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 log() { echo "sm8550-audio-setup: $*" >&2; }
 
+# WirePlumber waits for this before it opens the card, so it never races
+# alsaucm (that left the speakers silent on some boots). Set on every exit.
+READY=/run/sm8550-audio-ready
+trap 'touch "$READY"' EXIT
+
 # ostree / image pack often leaves UCM dirs 700 steam:steam; root alsaucm
 # then cannot read them and the speakers stay silent.
 for d in /usr/share/alsa/ucm2/AYN /usr/share/alsa/ucm2/Qualcomm/sm8650 \

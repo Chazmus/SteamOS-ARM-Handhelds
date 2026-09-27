@@ -78,10 +78,10 @@ case "$LAYOUT" in
     echo "    HOME     = /home          (${HM})"
     ;;
   old-2part)
-    echo "  Old MaSi-OS / ROCKNIX style (2 Linux partitions, no HOME):"
+    echo "  Older ROCKNIX-style (2 Linux partitions, no HOME):"
     echo "    ROCKNIX  = boot / KERNEL  (${RK})"
     echo "    STORAGE  = Linux rootfs  (${ST})"
-    echo "  This SteamOS installer will not reuse that layout. Uninstall ROCKNIX first."
+    echo "  This SteamOS installer will not reuse that layout. UNINSTALL CFW first."
     ;;
   incompatible-or-partial)
     echo "  ROCKNIX present but STORAGE/HOME missing, or layout is incomplete."
@@ -178,12 +178,12 @@ case "$LAYOUT" in
   old-2part)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  This device has:    ROCKNIX + STORAGE only"
-    echo "  Action:             ABL 'Uninstall ROCKNIX', then fresh SteamOS UFS install"
+    echo "  Action:             ABL 'UNINSTALL CFW', then fresh SteamOS UFS install"
     ;;
   incompatible-or-partial|mixed-or-unknown)
     echo "  Expected layout:    ROCKNIX + STORAGE + HOME"
     echo "  Partial install:    sudo ./install-masios-to-internal.sh --deploy-only"
-    echo "  Other layouts:      ABL 'Uninstall ROCKNIX' (remove leftover HOME if needed)"
+    echo "  Other layouts:      ABL 'UNINSTALL CFW' (remove leftover HOME if needed)"
     echo "  Boot/cmdline fix:   only if ROCKNIX + STORAGE + HOME already exist"
     ;;
   android-only)
@@ -193,6 +193,6 @@ esac
 echo
 echo "  Restore full Android userdata size (expand partition):"
 echo "    NOT done by ufs-fix-internal-boot.sh"
-echo "    Use ABL 'Uninstall ROCKNIX' OR EDL flash"
+echo "    Use ABL 'UNINSTALL CFW' OR EDL flash"
 echo "    ABL Uninstall may leave HOME; delete that partition if it remains."
 echo "================================================================"

@@ -18,8 +18,6 @@
 #include <wlr/types/wlr_seat.h>
 #include "wlr_end.hpp"
 
-#include "gamescope-input-method-protocol.h"
-
 struct wlserver_input_method_manager *global_manager = nullptr;
 
 /* The C/C++ standard library doesn't expose a reliable way to decode UTF-8,
@@ -220,7 +218,11 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		"\n"
 		"xkb_types \"(unnamed)\" { include \"complete\" };\n"
 		"\n"
-		"xkb_compatibility \"(unnamed)\" { include \"complete\" };\n"
+		"xkb_compatibility \"(unnamed)\" {\n"
+		"	include \"complete\"\n"
+		// libxkbcommon 1.12+ serializes only matched interprets, Xwayland needs at least one
+		"	interpret Any+AnyOfOrNone(all) { action= NoAction(); };\n"
+		"};\n"
 		"\n"
 		"xkb_symbols \"(unnamed)\" {\n"
 	);
@@ -309,7 +311,7 @@ static void press_key(struct wlserver_input_method *ime, uint32_t keycode, struc
 	wlr_seat_keyboard_notify_key(seat, 0, keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
 	ime->held_keycode = keycode;
 
-	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 30 /* ms */);
+	wl_event_source_timer_update(ime->ime_release_ime_keypress_event_source, 30 /* ms */);
 }
 
 static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keysym)
@@ -407,7 +409,7 @@ void type_text(struct wlserver_input_method *ime, const char *text)
 	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 100 /* ms */);
 }
 
-static void perform_action(struct wlserver_input_method *ime, enum gamescope_input_method_action action)
+void perform_action(struct wlserver_input_method *ime, enum gamescope_input_method_action action)
 {
 	if (actions.count(action) == 0) {
 		ime_log.errorf("unsupported action %d", action);
@@ -526,7 +528,12 @@ static const struct gamescope_input_method_interface ime_impl = {
 
 void destroy_ime(struct wlserver_input_method *ime)
 {
+	// Removing the release timer would strand the held key, so let it go now.
+	release_key_if_needed(ime);
+	wl_event_source_remove(ime->ime_reset_ime_keyboard_event_source);
+	wl_event_source_remove(ime->ime_release_ime_keypress_event_source);
 	wlr_keyboard_finish(&ime->keyboard);
+	free(ime->pending.string);
 }
 
 static void ime_handle_resource_destroy(struct wl_resource *ime_resource)

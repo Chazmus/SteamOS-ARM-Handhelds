@@ -61,6 +61,10 @@ EOF
     ln -sfn "${s}.sh" "$bin/${s}" || true
   fi
 done
+# restore / inspect: `sudo ufs-partition.py restore --backup …` (printed by the installer)
+for s in ufs-partition ufs-bootimg; do
+  ln -sfn /usr/share/easy-ufs-install/${s}.py "$bin/${s}.py"
+done
 [[ -f "${MOD}/ufs-install/easy-ufs-installer.svg" ]] && \
   install -m 0644 "${MOD}/ufs-install/easy-ufs-installer.svg" \
     "$icons/scalable/apps/easy-ufs-installer.svg"
@@ -68,6 +72,17 @@ install -m 0644 "${MOD}/ufs-install/easy-ufs-installer.desktop" \
   "$apps/easy-ufs-installer.desktop"
 rm -f "$HOME_DST/Desktop/Easy UFS Installer.desktop" \
   "$R/etc/skel/Desktop/Easy UFS Installer.desktop"
+
+# Offline update staging GUI and privileged helper.
+mkdir -p "$R/usr/share/konkr-update"
+install -m0644 "$MOD/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"
+install -m0644 "$MOD/konkr-update/konkr-update-gui.py" "$R/usr/share/konkr-update/konkr-update-gui.py"
+cat > "$bin/konkr-update-gui" <<'EOF'
+#!/bin/bash
+exec /usr/bin/python3 /usr/share/konkr-update/konkr-update-gui.py "$@"
+EOF
+chmod 0755 "$bin/konkr-update-gui"
+install -m0644 "$MOD/konkr-update/konkr-update.desktop" "$apps/konkr-update.desktop"
 
 # ── MESA Easy Manager (ARM-Manager, SteamOS password warning in app) ────────
 log "MESA Easy Manager"
