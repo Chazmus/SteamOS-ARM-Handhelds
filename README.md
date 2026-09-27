@@ -54,10 +54,10 @@ Switch with the Performance button, the KONKR Control plugin, or `konkrctl profi
 ## Installing
 
 1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer to `abl_a` and `abl_b`. Android still boots from its menu.
-2. Download all three `.7z` parts from [Releases](../../releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
+2. Download all three `.7z` parts from the [v1.2 release](../../releases/tag/v1.2), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
 3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT (or AYANEO Pocket S2), set boot mode to Linux and hit START.
 
-First boot takes a couple of minutes, then sign in to Steam and you're good to go.
+First boot takes a couple of minutes, then sign in to Steam and you're good to go. After that, apply the [v1.2.1 hotfix](../../releases/tag/v1.2.1), it only takes a minute.
 
 The Linux user is `steamos` and has no password until you set one: open Konsole in Desktop Mode and run `passwd`. You need it for `sudo`.
 
@@ -107,7 +107,9 @@ Games with anti-cheat that blocks emulators won't run, and a few apps may still 
 
 ## Known issues
 
-Nothing I could find in my own testing on v1.2. If something breaks for you, open an issue and I'll add it here.
+- **Games flicker below 1080p** (picture jumps between full screen and the top-left corner). Fixed by the [v1.2.1 hotfix](../../releases/tag/v1.2.1), and built into v1.3.
+
+If something else breaks for you, open an issue and I'll add it here.
 
 ## Building
 
