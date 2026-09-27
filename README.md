@@ -41,7 +41,7 @@ The Steam Frame image is built for a VR headset, and other ARM builds pretty muc
 - louder speakers without clipping (a limiter on the speakers only, headphones untouched), and no more crackly menu sounds
 - the clock syncs as soon as wifi connects (the Pocket FIT has no clock battery, and the stock setup took up to half an hour), and boot no longer waits on Steam Deck partitions that don't exist here
 - the performance overlay works
-- lsfg works on ARM. The plugin only comes with x86 layers (those still cover x86 games under FEX), so the image adds an unmodified ARM64 build of lsfg-vk 2.0 for ARM64 games
+- lsfg works on ARM. The plugin only comes with x86 layers (those still cover x86 games under FEX), so the image adds an unmodified ARM64 build of [lsfg-vk](https://lsfg-vk.dev) 2.0 by PancakeTAS for ARM64 games (CC BY-NC-ND 4.0, see [LICENSE](LICENSE))
 
 ## Profiles
 
