@@ -1,6 +1,5 @@
 #!/bin/sh
 # SteamOS Boot Hook for AYN Odin 3 (SM8750)
-# Executed by ROCKNIX / CoreELEC kernel initramfs immediately after mounting /flash.
 
 echo "" > /dev/console
 echo "=============================================" > /dev/console
@@ -41,7 +40,9 @@ mount --move /dev /sysroot/dev
 mount --move /proc /sysroot/proc
 mount --move /sys /sysroot/sys
 mount --move /run /sysroot/run 2>/dev/null || true
-mount --move /flash /sysroot/boot 2>/dev/null || true
+
+# Unmount /flash so systemd's fstab can mount /boot cleanly
+umount /flash 2>/dev/null || true
 
 # Hand over execution to SteamOS systemd
 exec /usr/bin/busybox switch_root /sysroot /usr/lib/systemd/systemd
