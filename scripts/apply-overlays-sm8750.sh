@@ -126,7 +126,12 @@ for svc in \
   deckard-typec-logger.service dsp_service.service \
   iris-driver-rebind.service steamvr-program-ble.service \
   steamvr-set-kernel-thread-priorities.service \
-  steamvr-v4l2loopback.service
+  steamvr-v4l2loopback.service deckard-charger.service \
+  deckard-power-monitor.service adbd.service adbd-pre.service \
+  adbd-post.service usb-gadget.target usb-gadget.service \
+  usb-gadget-init.service 'usb-ncm-gadget@.service' \
+  'usb-ncm-dnsmasq@.service' 'usb-ncm-gadget@usb0.service' \
+  'usb-ncm-dnsmasq@usb0.service'
 do
   rm -f "$R/etc/systemd/system/multi-user.target.wants/${svc}" \
         "$R/etc/systemd/system/default.target.wants/${svc}" \
