@@ -234,6 +234,7 @@ build_initramfs() {
   cp "$bb" "$d/root/bin/busybox"
   install -m0755 "${HERE}/initramfs/init" "$d/root/init"
   install -m0755 "${HERE}/initramfs/konkr-update-recover" "$d/root/konkr-update-recover"
+  install -m0755 "${HERE}/initramfs/bootdebug" "$d/root/bootdebug"
   (cd "$d/root" && find . | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9) >"$d/initrd.gz"
   INITRD="$d/initrd.gz"
 }

@@ -16,9 +16,11 @@ mkdir -p /boot /newroot
 
 extra=0
 rootarg=""
+debug=0
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
     konkr.bootlog_wait=*) extra="${arg#*=}" ;;
+    steamos.debug=1) debug=1 ;;
     root=*) rootarg="${arg#root=}" ;;
   esac
 done
@@ -70,6 +72,7 @@ snap() {
 }
 
 if [ -n "$bootdev" ] && mount -t vfat "$bootdev" /boot; then
+  [ -e /boot/debug ] || [ -e /boot/debug.txt ] && debug=1
   n=0
   while [ "$n" -lt "$extra" ]; do snap "snapshot $n"; sleep 4; n=$((n + 1)); done
 fi
@@ -81,6 +84,18 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
       echo "Update recovery failed; system boot stopped to protect the installation"
       exec sh
     fi
+  fi
+  if [ "$debug" = 1 ]; then
+    # Log collector (see bootdebug), only for this boot's root.
+    d=/newroot/usr/lib/steamos-arm
+    u=/newroot/usr/lib/systemd/system
+    mkdir -p "$d" "$u/multi-user.target.wants"
+    cp /bootdebug "$d/bootdebug" && chmod 0755 "$d/bootdebug"
+    printf '[Unit]\nDescription=Copy boot logs to the FAT partition (debug)\nAfter=local-fs.target\n\n[Service]\nType=simple\nExecStart=/usr/lib/steamos-arm/bootdebug\n' > "$u/steamos-arm-bootdebug.service"
+    ln -sf ../steamos-arm-bootdebug.service "$u/multi-user.target.wants/steamos-arm-bootdebug.service"
+  else
+    rm -f /newroot/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-bootdebug.service \
+      /newroot/usr/lib/systemd/system/steamos-arm-bootdebug.service
   fi
   snap "root mounted from $rootdev, switch_root"
   umount /boot 2>/dev/null

@@ -1,0 +1,32 @@
+#!/bin/sh
+# Debug log collector for testers without a Linux PC. Installed into the
+# root filesystem by the initramfs when the cmdline has steamos.debug=1 (the
+# debug KERNEL) or a file called "debug" sits on the FAT boot partition.
+# Every 20 s for 3 minutes it writes the logs to BOOT/debug-logs/, which
+# any PC can read.
+out=/boot/debug-logs
+mountpoint -q /boot || mount /boot 2>/dev/null
+mkdir -p "$out" || exit 0
+i=0
+while [ "$i" -lt 9 ]; do
+  sleep 20
+  i=$((i + 1))
+  {
+    echo "=== pass $i  uptime $(cat /proc/uptime)"
+    cat /sys/firmware/devicetree/base/model 2>/dev/null | tr -d '\0'; echo
+    uname -a
+    echo "--- failed units"; systemctl --failed --no-pager
+    echo "--- sessions"; loginctl list-sessions --no-pager
+    echo "--- drm"; for c in /sys/class/drm/card*-*; do echo "$c $(cat $c/status 2>/dev/null) $(head -1 $c/modes 2>/dev/null)"; done
+    echo "--- backlight"; for b in /sys/class/backlight/*; do echo "$b $(cat $b/brightness)/$(cat $b/max_brightness)"; done
+    echo "--- gpu"; ls /sys/class/devfreq/ 2>&1; dmesg | grep -i -E "adreno|msm_dpu|a7xx|gmu|zap|drm" | tail -40
+  } > "$out/summary.txt" 2>&1
+  dmesg > "$out/dmesg.txt" 2>&1
+  journalctl -b --no-pager -o short-monotonic > "$out/journal.txt" 2>&1
+  journalctl -b --no-pager -o short-monotonic _UID=1000 > "$out/journal-user.txt" 2>&1
+  journalctl -b --no-pager -o short-monotonic -t gamescope-session -t gamescope -t bottom-screen > "$out/gamescope.txt" 2>&1
+  runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 vulkaninfo --summary > "$out/vulkan.txt" 2>&1
+  sync
+done
+echo "done, $(date)" > "$out/DONE.txt"
+sync
