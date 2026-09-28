@@ -12,7 +12,6 @@ Switch with the Performance button (Pocket FIT), the KONKR Control plugin, the b
 
 ```
 konkrctl status               # profile, fan, clocks, temps
-konkrctl sleep s2idle         # try real kernel sleep (default is standby)
 konkrctl rgb ff3c00           # stick colour (Pocket FIT)
 konkrctl speaker flat         # speakers without the loudness boost (Pocket FIT / S2)
 konkr-game fast %command%     # FEX preset for launch options, also fastest / compat

@@ -142,8 +142,7 @@ Output: `/work/steamos-sm8650.img`.
 - Standby: the Frame's ADB, USB gadget, power monitor and FPGA services are
   masked since they just crash-loop and keep the SoC awake. Sleep runs
   `konkr-standby`, which turns the panel off, freezes the session, takes the
-  big cores offline and unloads wifi. Real s2idle is there behind
-  `konkrctl sleep s2idle` but doesn't wake up reliably yet.
+  big cores offline and unloads wifi.
 - Some ARM64 Proton games hung on their splash screen because wined3d's GL
   path goes through zink. `WINE_D3D_CONFIG=renderer=vulkan` fixes it.
 - `konkr-focusfix` gives the game focus back after Quick Access closes,
