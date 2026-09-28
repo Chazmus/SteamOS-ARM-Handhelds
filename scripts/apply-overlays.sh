@@ -704,7 +704,52 @@ cat >"$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json" <<'JSON'
 JSON
 chmod 0755 "$R/usr/lib/steamos-sm8650/bin/mangoapp" 2>/dev/null || true
 
-if [[ -n "$MESA_SO" ]]; then
+# 8 Gen 2 (Adreno 740): our own Mesa 26.2.3 stack with the A740 fixes
+# (scripts/build-mesa.sh, external-and-mods/mesa/README.md) replaces Valve's
+# whole Mesa, native and in the FEX guest tree. Valve's files go by their
+# package file lists so nothing of the two builds mixes.
+if [[ -n "${MESA_STACK:-}" ]]; then
+  log "== Mesa: A740 stack from $MESA_STACK"
+  for a in aarch64 x86_64 i386; do
+    ls "$MESA_STACK/$a/usr/share/vulkan/icd.d/"freedreno_icd.*.json >/dev/null 2>&1 \
+      || die "MESA_STACK has no $a build"
+  done
+  ANDROID_VENDOR="usr/share/guestos/android/vendor/lib64"
+  [[ -f "$MESA_STACK/android/$ANDROID_VENDOR/hw/vulkan.freedreno.so" ]] \
+    || die "MESA_STACK has no android build (Lepton)"
+  PDB="$R/usr/lib/holo/pacmandb/local"
+  for pkg in deckard-mesa-linux-aarch64 deckard-mesa-linux-x86_64 deckard-mesa-android-aarch64; do
+    list="$(ls -d "$PDB/${pkg}"-[0-9]*/files 2>/dev/null | head -1)"
+    [[ -n "$list" ]] || continue
+    grep -v -e '^%' -e '/$' "$list" | grep -E '(\.so[.0-9]*|\.json)$' \
+      | grep -v -e 'VkLayer_MESA_vram_report_limit' -e 'graphics_provider.json' \
+      | while read -r f; do
+          [[ -e "$R/$f" || -L "$R/$f" ]] || continue
+          mkdir -p "$STOCK/$(dirname "$f")"
+          [[ -e "$STOCK/$f" ]] || cp -a "$R/$f" "$STOCK/$f"
+          rm -f "$R/$f"
+        done
+  done
+  GUEST="$R/usr/share/guestos/fex-mesa"
+  cp -a "$MESA_STACK/aarch64/usr/lib/." "$R/usr/lib/"
+  cp -a "$MESA_STACK/aarch64/usr/share/." "$R/usr/share/"
+  cp -a "$MESA_STACK/x86_64/usr/lib/." "$GUEST/usr/lib/"
+  cp -a "$MESA_STACK/x86_64/usr/share/." "$GUEST/usr/share/"
+  cp -a "$MESA_STACK/i386/usr/lib32/." "$GUEST/usr/lib32/"
+  cp -a "$MESA_STACK/i386/usr/share/vulkan/." "$GUEST/usr/share/vulkan/"
+  # Lepton (Android apps): same files and names as Valve's Android Mesa.
+  mkdir -p "$R/$ANDROID_VENDOR"
+  cp -a "$MESA_STACK/android/$ANDROID_VENDOR/." "$R/$ANDROID_VENDOR/"
+  chown -R root:root "$R/$ANDROID_VENDOR"
+  chown -R root:root "$R/usr/lib/dri" "$GUEST/usr/lib/dri" "$GUEST/usr/lib32/dri"
+  # mangoapp runs on the system Turnip (it matches our zink), no pin.
+  rm -rf "$R/usr/lib/steamos-sm8650/frame-turnip" \
+    "$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json"
+  for f in "$R/usr/lib/libgallium-"*.so "$GUEST/usr/lib/libgallium-"*.so \
+           "$GUEST/usr/lib32/libgallium-"*.so "$R/$ANDROID_VENDOR/libgallium_dri.so"; do
+    log "   ${f#$R}: $(grep -a -o -m1 'Mesa [0-9][0-9.]*' "$f" || echo '?')"
+  done
+elif [[ -n "$MESA_SO" ]]; then
   log "== Mesa override $MESA_SO"
   backup "$R/usr/lib/libvulkan_freedreno.so" "$STOCK/usr/lib/libvulkan_freedreno.so"
   install_file "$MESA_SO" "$R/usr/lib/libvulkan_freedreno.so" 0755
