@@ -448,6 +448,47 @@ KONKR_CEF = (
 )
 
 
+# The Adreno 740 GMU can wedge when a GPU interrupt wakes one of the little
+# cores out of power collapse (found by ArmadaOS). The kernel boots with
+# ROCKNIX's irqaffinity (little cores), so only the GPU/GMU interrupts move
+# to the big cores, after boot. SM8550 only; the Pocket FIT's A750 is fine.
+GPU_IRQ_NAMES = ("gpu", "gmu", "hfi", "adreno", "kgsl")
+
+
+def cpu_list(text: str) -> set[int]:
+    out: set[int] = set()
+    for part in text.split(","):
+        a, _, b = part.strip().partition("-")
+        if a.isdigit():
+            out.update(range(int(a), int(b or a) + 1))
+    return out
+
+
+def pin_gpu_irqs() -> None:
+    try:
+        if b"qcom,sm8550" not in open("/proc/device-tree/compatible", "rb").read():
+            return
+    except OSError:
+        return
+    big = big_cpus()
+    if not big:
+        return
+    want = ",".join(str(c) for c in sorted(big))
+    try:
+        lines = open("/proc/interrupts", encoding="utf-8").read().splitlines()
+    except OSError:
+        return
+    for line in lines[1:]:
+        irq, _, rest = line.partition(":")
+        irq = irq.strip()
+        if not irq.isdigit() or not any(n in rest.lower() for n in GPU_IRQ_NAMES):
+            continue
+        path = f"/proc/irq/{irq}/smp_affinity_list"
+        cur = rd(path)
+        if cur and cpu_list(cur) != big and wr(path, want):
+            log(f"gpu irq {irq} -> cpus {want}")
+
+
 def ensure_webhelper_vulkan() -> None:
     """Re-apply the ANGLE-Vulkan flags if a Steam client update rewrote the
     launcher (Steam restarts the UI on its own after updates)."""
@@ -948,6 +989,7 @@ class Daemon:
             if now >= next_ui_check:
                 next_ui_check = now + 60.0
                 ensure_webhelper_vulkan()
+                pin_gpu_irqs()
                 if not os.path.exists(STANDBY_FLAG):
                     ensure_gamepad_mode(self.conf)
             if now >= next_slow:
