@@ -287,6 +287,10 @@ EOF
   repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/KERNEL" "${disk_id}-02"
   sudo_run cp "${MNT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL | tee KERNEL.md5 boot/KERNEL.md5 >/dev/null"
+  if [[ -f "${MOD}/kernel-sm8750/post-flash.sh" ]]; then
+    sudo_run cp "${MOD}/kernel-sm8750/post-flash.sh" "${MNT}/boot/post-flash.sh"
+    sudo_run cp "${MOD}/kernel-sm8750/post-flash.sh" "${MNT}/boot/boot/post-flash.sh"
+  fi
 
   log "Writing p2 root"
   sudo_run rsync -aHAX --numeric-ids \

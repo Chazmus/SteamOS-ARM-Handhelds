@@ -17,13 +17,15 @@ build_cmdline() {
     nosoftlockup
     mem_sleep_default=s2idle
   )
-  if [[ "${CMDLINE_QUIET:-1}" == 1 ]]; then
+  if [[ "${CMDLINE_QUIET:-0}" == 1 ]]; then
     parts+=(quiet loglevel=0 systemd.show_status=0 rd.udev.log_level=0
             logo.nologo vt.global_cursor_default=0)
   else
     parts+=(console=tty0 loglevel=4)
   fi
   parts+=(
+    boot=LABEL=BOOT
+    disk=LABEL=home
     rw rootwait
     "root=PARTUUID=${partuuid}"
     rootfstype=ext4
