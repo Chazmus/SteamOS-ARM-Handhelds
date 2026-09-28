@@ -98,6 +98,11 @@ if [[ -d "${STEAMROOT}/linuxarm64" && -d "${STEAMROOT}/steamrtarm64" ]]; then
 fi
 echo "RUNSTEAM: DISPLAY=${DISPLAY} GAMESCOPE_WAYLAND_DISPLAY=${GAMESCOPE_WAYLAND_DISPLAY} QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
 
+if [[ -f /etc/sdl2/qcom-gamecontrollerdb.txt ]]; then
+  export SDL_GAMECONTROLLERCONFIG_FILE=/etc/sdl2/qcom-gamecontrollerdb.txt
+  export SDL_GAMECONTROLLERCONFIG="$(grep -v '^#' /etc/sdl2/qcom-gamecontrollerdb.txt | tr '\n' ',' 2>/dev/null || true)"
+fi
+
 function ln_for_real()
 {
   if [[ -d "${2}" ]]; then

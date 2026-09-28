@@ -7,9 +7,8 @@ SUBSYSTEM=="hidraw", KERNELS=="000[356]:28DE:*", MODE="0660", GROUP="input", TAG
 # Physical rsinput is InputPlumber-only (root). Steam must not enumerate it
 # next to the virtual Valve controller.
 SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Gamepad", \
-  ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_KEYBOARD}="", \
-  ENV{ID_INPUT_TOUCHPAD}="", \
-  MODE="0600", GROUP="root", TAG+="systemd"
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_JOYSTICK}="1", \
+  MODE="0660", GROUP="input", TAG+="uaccess"
 
 SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Gamepad Motion Sensors", \
   ENV{ID_INPUT_ACCELEROMETER}="1", ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_MOUSE}="", MODE="0660", GROUP="input"
