@@ -284,8 +284,10 @@ EOF
 
   log "Writing p1 BOOT (repacked KERNEL with root=PARTUUID=${disk_id}-02)"
   sudo_run mkdir -p "${MNT}/boot/boot"
-  repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL" "${disk_id}-02"
+  repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/KERNEL" "${disk_id}-02"
+  sudo_run cp "${MNT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL"
   if [[ -f "${KOUT}/boot/KERNEL.md5" ]]; then
+    sudo_run cp "${KOUT}/boot/KERNEL.md5" "${MNT}/boot/KERNEL.md5"
     sudo_run cp "${KOUT}/boot/KERNEL.md5" "${MNT}/boot/boot/KERNEL.md5"
   fi
 
