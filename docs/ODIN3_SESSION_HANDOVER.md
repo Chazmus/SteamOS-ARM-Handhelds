@@ -16,7 +16,7 @@ In this session, we transitioned the AYN Odin 3 from boot-looping/black-screen s
 1. **Physical AMOLED Display Active:** Compositor running via official Valve `gamescope 3.16.30` at 1080×1920 native rotated 90° right to 1920×1080 landscape at 120Hz.
 2. **GPU Hardware Acceleration Verified:** Adreno 830 DPU and Vulkan driver recognized properly by Mesa Turnip and Valve Steam Client.
 3. **Steam Runtime Fully Unpacked:** All ~2.1 GB of official Steam runtime binaries extracted into `/home/steamos/.local/share/Steam/`, and the `.install-complete` sentinel file successfully touched.
-4. **Steam Client & UI Active:** `steam.service` running `steamrtarm64/steam` and `steamwebhelper` (Chromium CEF) connected to Xwayland `:0`.
+4. **Steam Client & Gamepad UI Rendered on Screen:** `steamwebhelper` (Chromium CEF) mapped window `0x1a00035 "Steam Big Picture Mode"` to full 1920×1080 landscape, and the official SteamOS boot animation and UI displayed live on the physical AMOLED display.
 5. **Storage & Networking Resilient:** `/home` expanded to 46 GB; Wi-Fi operational on boot; SSH low-latency access active (`UseDNS no`).
 
 ---
