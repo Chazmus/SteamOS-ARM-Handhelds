@@ -1,6 +1,6 @@
 #!/bin/bash
-# Handheld session: SM8650 (KONKR Pocket FIT / AYANEO Pocket S2) and
-# SM8550 (Odin 2 / Thor / Mini / Portal).
+# Handheld session: SM8650 (KONKR Pocket FIT / AYANEO Pocket S2) and SM8550
+# (AYN Odin 2 family / Thor, AYANEO Pockets, Retroid Pocket 6 / Nova).
 # Replaces the Steam Frame OpenVR gamescope command line.
 
 # Create run directory file for startup and stats sockets
@@ -94,26 +94,6 @@ export GAMESCOPE_DISABLE_ASYNC_FLIPS=1
 # `konkrctl`-managed flag /var/lib/konkrd/kms-rotation, which lets gamescope
 # scan games out directly instead of compositing every frame. Two failed
 # starts in a row turn the flag off again.
-KMS_ROT_FLAG=/var/lib/konkrd/kms-rotation
-KMS_ROT_TRIES="$XDG_RUNTIME_DIR/gamescope-kms-rotation.tries"
-KMS_ROTATION=0
-DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
-# Pocket S2 1440x2560 exceeds the DPU inline rotator height limit.
-if [[ -e "$KMS_ROT_FLAG" && "$DEVICE_MODEL" != "AYANEO Pocket S2" ]]; then
-  tries="$(cat "$KMS_ROT_TRIES" 2>/dev/null || echo 0)"
-  if (( tries >= 2 )); then
-    echo >&2 "gamescope-session: KMS rotation failed twice, falling back to shader"
-  else
-    echo $((tries + 1)) >"$KMS_ROT_TRIES"
-    KMS_ROTATION=1
-  fi
-fi
-if [[ "$KMS_ROTATION" == 1 ]]; then
-  export GAMESCOPE_KMS_ROTATION=1
-  unset GAMESCOPE_USE_ROTATION_SHADER
-else
-  export GAMESCOPE_USE_ROTATION_SHADER=1
-fi
 export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
 # Same physical size the working SM8550 session advertises (not connector mm).
 export GAMESCOPE_FAKE_OUTPUT_MM="${GAMESCOPE_FAKE_OUTPUT_MM:-177x100}"
@@ -170,6 +150,27 @@ if [[ -z "$OUTPUT" ]]; then
   OUTPUT="${OUTPUT:-DSI-1}"
 fi
 
+KMS_ROT_FLAG=/var/lib/konkrd/kms-rotation
+KMS_ROT_TRIES="$XDG_RUNTIME_DIR/gamescope-kms-rotation.tries"
+KMS_ROTATION=0
+# The DPU inline rotator caps the pre-rotation height at 1088: 1440x2560
+# panels (Pocket S2, Pocket S 2K) can't use it.
+PANEL_SHORT=$(( PANEL_W < PANEL_H ? PANEL_W : PANEL_H ))
+if [[ -e "$KMS_ROT_FLAG" && "$PANEL_SHORT" -le 1088 ]]; then
+  tries="$(cat "$KMS_ROT_TRIES" 2>/dev/null || echo 0)"
+  if (( tries >= 2 )); then
+    echo >&2 "gamescope-session: KMS rotation failed twice, falling back to shader"
+  else
+    echo $((tries + 1)) >"$KMS_ROT_TRIES"
+    KMS_ROTATION=1
+  fi
+fi
+if [[ "$KMS_ROTATION" == 1 ]]; then
+  export GAMESCOPE_KMS_ROTATION=1
+  unset GAMESCOPE_USE_ROTATION_SHADER
+else
+  export GAMESCOPE_USE_ROTATION_SHADER=1
+fi
 if [[ "$PANEL_H" -gt "$PANEL_W" ]]; then
   W="${GAMESCOPE_WIDTH:-$PANEL_H}"
   H="${GAMESCOPE_HEIGHT:-$PANEL_W}"
@@ -184,17 +185,57 @@ fi
 # vertical front porch for rates in between, like the listed modes do.
 REFRESH_HZ="${GAMESCOPE_REFRESH:-}"
 MIN_HZ=60
-MAX_HZ=60
-# ROCKNIX panel-ar14-144hz lists 144/120/90/60 Hz
-if grep -qaE "KONKR Pocket FIT" /sys/firmware/devicetree/base/model 2>/dev/null; then
-  MAX_HZ=144
-fi
+MAX_HZ="$(/usr/lib/steamos/panel-modes --max "$OUTPUT" 2>/dev/null)"
+[[ "$MAX_HZ" =~ ^[0-9]+$ ]] || MAX_HZ=60
+(( MAX_HZ >= 60 )) || MAX_HZ=60
 # Start the Steam UI at 60 Hz: at 144 it redraws menus 144x/s, which roughly
 # doubles UI GPU/CPU load (heat, fan, sluggishness). Steam's refresh slider
 # (STEAM_DISPLAY_REFRESH_LIMITS) still reaches MAX_HZ per game.
 REFRESH_HZ="${REFRESH_HZ:-60}"
 if (( MAX_HZ > 60 )); then
   export STEAM_DISPLAY_REFRESH_LIMITS="${STEAM_DISPLAY_REFRESH_LIMITS:-${MIN_HZ},${MAX_HZ}}"
+fi
+
+# Dual-screen handhelds: Game Mode only drives the main panel. Keep the second
+# panel's touchscreen out of it, else touches on the dark screen land in Steam
+# (both are I2C, gamescope would map both onto the main one).
+DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
+# Steam's brightness slider goes through gamescope, which otherwise takes the
+# first backlight: the bottom panel on both of these.
+case "$DEVICE_MODEL" in
+  "AYN Thor")
+    export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen}"
+    export GAMESCOPE_BACKLIGHT_PATH="${GAMESCOPE_BACKLIGHT_PATH:-/sys/class/backlight/ae96000.dsi.0}" ;;
+  "AYANEO Pocket DS")
+    export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-Goodix Capacitive TouchScreen}"
+    export GAMESCOPE_BACKLIGHT_PATH="${GAMESCOPE_BACKLIGHT_PATH:-/sys/class/backlight/ae94000.dsi.0}" ;;
+esac
+
+# Bottom screen (bottom-screen.service): lend the second panel to its own
+# gamescope through a DRM lease, where the dashboard runs. Off with
+# "enabled": false in ~/.config/steamos-arm/bottom-screen.json; "connector"
+# there picks another output (e.g. "DP-1" to try it on an external monitor).
+rm -f "$XDG_RUNTIME_DIR/bottom-screen.env"
+read -r BOTTOM_ENABLED BOTTOM_CONNECTOR < <(python3 - "$HOME/.config/steamos-arm/bottom-screen.json" <<'PY' 2>/dev/null || echo "1 "
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+except Exception:
+    cfg = {}
+print(0 if cfg.get("enabled") is False else 1, cfg.get("connector") or "")
+PY
+)
+if [[ "${BOTTOM_ENABLED:-1}" == 1 ]]; then
+  if [[ -z "${BOTTOM_CONNECTOR:-}" ]]; then
+    BOTTOM_CONNECTOR="$(/usr/lib/steamos/panel-modes 2>/dev/null | awk -v o="$OUTPUT" '$1 != o {print $1; exit}')"
+  fi
+  if [[ -n "$BOTTOM_CONNECTOR" && "$BOTTOM_CONNECTOR" != "$OUTPUT" ]]; then
+    export GAMESCOPE_LEASE_CONNECTOR="$BOTTOM_CONNECTOR"
+    export GAMESCOPE_LEASE_SOCKET="$XDG_RUNTIME_DIR/gamescope-lease.sock"
+    printf 'BOTTOM_CONNECTOR=%q\nBOTTOM_SOCKET=%q\nBOTTOM_TOUCH=%q\n' \
+      "$BOTTOM_CONNECTOR" "$GAMESCOPE_LEASE_SOCKET" "${GAMESCOPE_IGNORE_TOUCH:-}" \
+      >"$XDG_RUNTIME_DIR/bottom-screen.env"
+  fi
 fi
 
 GAMESCOPE_SESSION_TARGET="${GAMESCOPE_SESSION_TARGET:-gamescope-session.target}"
@@ -247,6 +288,6 @@ fi
 env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE)=' \
   >"$XDG_RUNTIME_DIR/gamescope-steam.env" 2>/dev/null || true
 
-echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION}"
+echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} max=${MAX_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION} ignore_touch=${GAMESCOPE_IGNORE_TOUCH:-} bottom=${GAMESCOPE_LEASE_CONNECTOR:-none}"
 
 exec gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/lib/steamos/gamescope-onready ${WATCH_SERVICE:-}

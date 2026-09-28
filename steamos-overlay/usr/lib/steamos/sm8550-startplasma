@@ -1,4 +1,6 @@
 #!/bin/bash
 # Official startplasma-wayland, after clearing Game Mode Qt/X11 leftovers.
 /usr/lib/steamos/sm8550-prepare-plasma
+# Screen layout for this device (rotation, scale, second screen, touch).
+/usr/lib/steamos/desktop-outputs || true
 exec /usr/bin/startplasma-wayland "$@"

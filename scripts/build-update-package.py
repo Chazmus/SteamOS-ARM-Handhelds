@@ -7,10 +7,16 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import importlib.util
+
+_spec = importlib.util.spec_from_file_location(
+    'konkr_update', Path(__file__).resolve().parent.parent / 'external-and-mods/konkr-update/konkr-update.py')
+_updater = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_updater)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--rootfs', required=True)
 ap.add_argument('--kernel', required=True)
+ap.add_argument('--soc', default='sm8650', choices=sorted(_updater.SOC_MODELS))
 ap.add_argument('--version', required=True)
 ap.add_argument('--output', required=True)
 a = ap.parse_args()
@@ -41,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
             for b in iter(lambda: f.read(4 << 20), b''): h.update(b)
         files[str(p.relative_to(stage))] = h.hexdigest()
     (stage / 'manifest.json').write_text(json.dumps({'format': 1, 'architecture': 'aarch64',
-        'devices': ['KONKR Pocket FIT', 'AYANEO Pocket S2'], 'version': a.version, 'files': files}, indent=2))
+        'devices': _updater.SOC_MODELS[a.soc], 'version': a.version, 'files': files}, indent=2))
     subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', '-czf', str(output) + '.part',
                     '-C', str(stage), 'manifest.json', 'root', 'home', 'boot'], check=True)
     os.replace(str(output) + '.part', output)

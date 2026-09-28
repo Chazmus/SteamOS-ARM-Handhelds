@@ -18,6 +18,16 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 FORMAT = 1
+# DT models per SoC. Update packages are per SoC (the KERNEL is), and list
+# exactly one of these (the v1.2 updater compares the SM8650 list verbatim).
+SOC_MODELS = {
+    'sm8650': ['KONKR Pocket FIT', 'AYANEO Pocket S2'],
+    'sm8550': ['AYN Odin 2', 'AYN Odin 2 Mini', 'AYN Odin 2 Portal', 'AYN Thor',
+               'AYANEO Pocket ACE', 'AYANEO Pocket DMG', 'AYANEO Pocket DS',
+               'AYANEO Pocket EVO', 'AYANEO Pocket S 1K', 'AYANEO Pocket S 2K',
+               'Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova'],
+}
+SUPPORTED_MODELS = {m for models in SOC_MODELS.values() for m in models}
 ROOT_DIRS = ('usr', 'opt', 'etc')
 UPPER = 'var/lib/overlays/etc/upper'
 HOME_DIRS = ('homebrew/plugins/konkr-control', 'homebrew/plugins/decky-lsfg-vk')
@@ -102,7 +112,8 @@ def validate_archive(package):
         raise ValueError('required payload directories must be real directories')
     if not manifest or manifest.get('format') != FORMAT or manifest.get('architecture') != 'aarch64':
         raise ValueError('unsupported update format or architecture')
-    if manifest.get('devices') != ['KONKR Pocket FIT', 'AYANEO Pocket S2']:
+    devices = manifest.get('devices')
+    if not isinstance(devices, list) or not devices or not set(devices) <= SUPPORTED_MODELS:
         raise ValueError('unsupported device list')
     files = manifest.get('files', {})
     if not isinstance(files, dict): raise ValueError('invalid file manifest')
@@ -182,7 +193,7 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
 def stage(args):
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
     model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
-    if model not in ('KONKR Pocket FIT', 'AYANEO Pocket S2'): raise ValueError('unsupported device')
+    if model not in SUPPORTED_MODELS: raise ValueError('unsupported device')
     if os.uname().machine != 'aarch64': raise ValueError('requires ARM64 SteamOS')
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
@@ -207,6 +218,9 @@ def stage(args):
         shutil.copyfile(source_package, package); os.chmod(package, 0o600)
         if digest(package) != expected: raise ValueError('package SHA256 mismatch')
         manifest, size = validate_archive(package)
+        # One package per SoC: its KERNEL only boots the models it lists.
+        if model not in manifest['devices']:
+            raise ValueError(f'this update is for {", ".join(manifest["devices"])}, not {model}')
         used = shutil.disk_usage('/').total - shutil.disk_usage('/').free
         if shutil.disk_usage('/home').free < size + used + (512 << 20):
             raise ValueError('not enough HOME space for payload and rollback backup')

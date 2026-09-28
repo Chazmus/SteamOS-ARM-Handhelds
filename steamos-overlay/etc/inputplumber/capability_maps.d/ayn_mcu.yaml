@@ -86,6 +86,17 @@ mapping:
       gamepad:
         button: QuickAccess
 
+  # Thor's AYN key (gpio-keys-ayn). Screenshot, like the second AYANEO key.
+  - name: AYN Key
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F24
+          value_type: button
+    target_event:
+      gamepad:
+        button: Screenshot
+
   - name: Right Trigger
     source_events:
       - evdev:

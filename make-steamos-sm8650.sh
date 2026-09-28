@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Build a flashable SteamOS SM8650 image (KONKR Pocket FIT / AYANEO Pocket S2):
+# Build a flashable SteamOS ARM image for one SoC (SOC=sm8650 default, or sm8550):
+#   sm8650: KONKR Pocket FIT / AYANEO Pocket S2
+#   sm8550: AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS /
+#           EVO / S 1K / S 2K, Retroid Pocket 6 / Nova
+# The rootfs is shared; only the kernel on p1 (and its modules/firmware,
+# installed by apply-overlays) is per SoC.
 #   p1 vfat BOOT  — ABL KERNEL
 #   p2 ext4 root  — system
 #   p3 ext4 home  — user data, grown to the end of the card on first boot
@@ -15,10 +20,19 @@ WORKDIR="${STEAMOS_WORK:-/work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
-KOUT="${KERNEL_OUT:-${WORKDIR}/kernel-release/current}"
+SOC="${SOC:-sm8650}"
+case "$SOC" in
+  sm8650) _kdef="${WORKDIR}/kernel-release/current" ;;
+  sm8550) _kdef="${WORKDIR}/kernel-sm8550/output/current" ;;
+  *) echo "ERROR: unknown SOC=${SOC} (sm8650|sm8550)" >&2; exit 1 ;;
+esac
+# KOUT: this image's kernel. KERNEL_OUT (apply-overlays) may list several
+# kernels so the same rootfs carries every SoC's modules.
+KOUT="${IMAGE_KERNEL_OUT:-${_kdef}}"
+export KERNEL_OUT="${KERNEL_OUT:-${KOUT}}"
 BOX64_SRC="${BOX64_SRC:-${MOD}/BOX64/box64}"
 BOX64_BUILD="${BOX64_BUILD:-/tmp/box64-build-frame}"
-IMG="${STEAMOS_SM8650_IMG:-${WORKDIR}/steamos-sm8650.img}"
+IMG="${STEAMOS_SM8650_IMG:-${WORKDIR}/steamos-${SOC}.img}"
 MNT="${WORKDIR}/.image-mnt"
 LOOPDEV=""
 
@@ -65,7 +79,8 @@ Usage: $0 [options]
   --image-only      Only pack the .img from the current rootfs
   --img PATH        Output image (default: ${IMG})
 
-Env: BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS KERNEL_OUT
+Env: SOC (sm8650|sm8550) BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS
+     IMAGE_KERNEL_OUT (this image's kernel) KERNEL_OUT (kernels for the rootfs)
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
 EOF
 }
@@ -241,8 +256,10 @@ prepare_runtime() {
 repack_kernel_partuuid() {
   local src="$1" dest="$2" partuuid="$3"
   local cmdline
-  # shellcheck source=external-and-mods/kernel-sm8650/cmdline.sh
-  source "${MOD}/kernel-sm8650/cmdline.sh"
+  # shellcheck source=external-and-mods/kernel-sm8650/soc.env
+  source "${MOD}/kernel-${SOC}/soc.env"
+  # shellcheck source=external-and-mods/kernel-common/cmdline.sh
+  source "${MOD}/kernel-common/cmdline.sh"
   cmdline="$(build_cmdline "${partuuid}")"
   # Patch the ANDROID! header cmdline in place; kernel + DTB chain untouched.
   python3 - "${src}" "${dest}" "${cmdline}" <<'PY'
@@ -424,7 +441,7 @@ EOF
   # SteamOS mounts /etc from the overlay. Write both layers so first boot
   # actually uses this 3-partition layout (and home can grow).
   sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
-# SteamOS SM8650 — PC/handheld layout (not Steam Deck A/B)
+# SteamOS ARM (${SOC}) — PC/handheld layout (not Steam Deck A/B)
 UUID=${root_uuid}  /      ext4  defaults,noatime                         0 1
 LABEL=BOOT         /boot  vfat  defaults,umask=0077,nofail               0 2
 UUID=${home_uuid}  /home  ext4  defaults,noatime,commit=30,x-systemd.growfs 0 2
@@ -443,6 +460,8 @@ EOF
   sudo_run mkdir -p "${MNT}/root/opt/steamos-sm8650"
   sudo_run tee "${MNT}/root/opt/steamos-sm8650/IMAGE.txt" >/dev/null <<EOF
 image=$(basename "${IMG}")
+soc=${SOC}
+kernel=$(basename "$(readlink -f "${KOUT}")")
 built=$(date -Iseconds)
 root_uuid=${root_uuid}
 root_partuuid=${disk_id}-02
@@ -456,7 +475,7 @@ EOF
 ABL reads KERNEL from this FAT partition.
 Do not rename KERNEL. After flashing to a bigger card, home grows on first boot.
 root=PARTUUID=${disk_id}-02
-ABL: Set device model -> "KONKR Pocket FIT" (or "AYANEO Pocket S2").
+ABL (ROCKNIX ABL for ${SOC^^}): Set device model -> your handheld.
 EOF
 
   sync

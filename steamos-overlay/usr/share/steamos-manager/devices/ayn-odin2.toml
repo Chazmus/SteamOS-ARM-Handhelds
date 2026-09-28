@@ -16,5 +16,13 @@ device = "ayn_odin2"
 variant = "Portal"
 friendly_name = "AYN Odin 2 Portal"
 
+[[device]]
+dt.compatible = "ayn,thor"
+device = "ayn_odin2"
+variant = "Thor"
+friendly_name = "AYN Thor"
+
 [inputplumber]
-target_devices = ["deck-uhid"]
+# steamos-manager applies this list at session start. "keyboard" carries the
+# keys the pad profiles don't map (volume on gpio-keys) and the OSK.
+target_devices = ["deck-uhid", "keyboard"]

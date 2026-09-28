@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Event codes from ROCKNIX / ArmadaOS; Steam Deck targets are ours.
+version: 2
+kind: CapabilityMap
+name: AYANEO Pocket EVO side keys
+id: ayaneo_pocket_evo_keys
+mapping:
+- name: Quick Access
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_F13
+      value_type: button
+  target_event:
+    gamepad:
+      button: QuickAccess
+- name: LC
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_F14
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftPaddle2
+- name: L4
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_F15
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftPaddle1
+- name: R4
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_F16
+      value_type: button
+  target_event:
+    gamepad:
+      button: RightPaddle1
+filtered_events: []

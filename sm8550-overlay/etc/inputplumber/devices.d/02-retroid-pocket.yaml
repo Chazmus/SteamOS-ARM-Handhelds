@@ -1,34 +1,29 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# SM8550 rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
-#
-# Do not list USB/BT as ignore sources: deck-uhid is USB (VID 28de) and
-# matching it as a source restarts the composite in a loop (cursor, no Steam).
-# External HID is handled by sm8550-inputplumber-ext-hid (drop keyboard target).
+# Retroid Pocket 6 / 6 TOP-DPAD / Nova (SM8550) → virtual Steam Deck controller.
+# Same RSInput serial pad as the AYN Odin 2 (qcs8550-ayn-common.dtsi), so it
+# shares the ayn_mcu map. The two back paddles are gpio-keys (BTN_Z / BTN_C,
+# next to Volume Up) → L4 / R4. Unmapped keys (volume) pass through to the
+# keyboard target.
 version: 1
 kind: CompositeDevice
-name: AYN Odin 2
+name: Retroid Pocket
 
 matches:
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Odin 2
+          value: Retroid Pocket 6
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Odin 2 Mini
+          value: Retroid Pocket 6 TOP-DPAD
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Odin 2 Portal
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Thor
+          value: Retroid Pocket Nova
 
 single_source: false
 
@@ -38,12 +33,10 @@ source_devices:
       phys_path: rsinput-gamepad/input0
       handler: event*
     capability_map_id: ayn_mcu
-    passthrough: false
-  # Thor: the AYN key on the side (KEY_F24) is its own gpio-keys device.
   - group: gamepad
     evdev:
-      name: gpio-keys-ayn
-      phys_path: gpio-keys-ayn/input0
+      name: gpio-keys
+      phys_path: gpio-keys/input0
       handler: event*
     capability_map_id: ayn_mcu
 

@@ -1,0 +1,45 @@
+# SM8550 handhelds besides the AYN family (ayn-odin2.toml).
+[[device]]
+dt.compatible = "retroidpocket,rp6"
+device = "retroid_pocket"
+variant = "RP6"
+friendly_name = "Retroid Pocket 6"
+
+[[device]]
+dt.compatible = "retroidpocket,rpnova"
+device = "retroid_pocket"
+variant = "Nova"
+friendly_name = "Retroid Pocket Nova"
+
+[[device]]
+dt.compatible = "ayaneo,pocketace"
+device = "ayaneo_pocket_sm8550"
+variant = "ACE"
+friendly_name = "AYANEO Pocket ACE"
+
+[[device]]
+dt.compatible = "ayaneo,pocketdmg"
+device = "ayaneo_pocket_sm8550"
+variant = "DMG"
+friendly_name = "AYANEO Pocket DMG"
+
+[[device]]
+dt.compatible = "ayaneo,pocketds"
+device = "ayaneo_pocket_sm8550"
+variant = "DS"
+friendly_name = "AYANEO Pocket DS"
+
+[[device]]
+dt.compatible = "ayaneo,pocketevo"
+device = "ayaneo_pocket_sm8550"
+variant = "EVO"
+friendly_name = "AYANEO Pocket EVO"
+
+[[device]]
+dt.compatible = "ayaneo,pocket-s1"
+device = "ayaneo_pocket_sm8550"
+variant = "PocketS"
+friendly_name = "AYANEO Pocket S"
+
+[inputplumber]
+target_devices = ["deck-uhid", "keyboard"]

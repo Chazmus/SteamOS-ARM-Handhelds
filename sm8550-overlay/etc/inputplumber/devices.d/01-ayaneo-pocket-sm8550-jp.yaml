@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# AYANEO Pocket ACE / DMG (SM8550, Japanese A/B layout) → virtual Steam Deck controller.
+# XInput pad (045e:028e) plus the "AYANEO DEVICE" (1c4f:0002) for the extra
+# keys, same device list ROCKNIX uses. Untested on hardware so far.
+version: 1
+kind: CompositeDevice
+name: AYANEO Pocket ACE-DMG
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYANEO Pocket ACE
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYANEO Pocket DMG
+
+single_source: false
+
+source_devices:
+  - group: gamepad
+    evdev:
+      vendor_id: "1c4f"
+      product_id: "0002"
+      handler: event*
+    capability_map_id: ayaneo_sm8550_deck_jp
+  - group: gamepad
+    evdev:
+      vendor_id: "045e"
+      product_id: "028e"
+      handler: event*
+    capability_map_id: ayaneo_sm8550_deck_jp
+  # Firmware that boots the pad in DirectInput mode, like the Pocket S2.
+  - group: gamepad
+    evdev:
+      vendor_id: "4001"
+      product_id: "0428"
+      handler: event*
+    capability_map_id: konkr_pocketfit_dinput
+  - group: gamepad
+    hidraw:
+      vendor_id: 0x4001
+      product_id: 0x0428
+      interface_num: 0
+
+options:
+  auto_manage: true
+
+target_devices:
+  - deck-uhid
+  - keyboard

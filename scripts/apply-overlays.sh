@@ -10,9 +10,16 @@ WORKDIR="${STEAMOS_WORK:-/work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
-KOUT="$(readlink -f "${KERNEL_OUT:-${WORKDIR}/kernel-release/current}")"
+# KERNEL_OUT: one kernel output dir, or several separated by spaces (one per
+# SoC). All their modules + firmware go into the rootfs, so one rootfs serves
+# every SoC; the first one's KERNEL lands in /boot (the image builder puts the
+# right KERNEL on each image's boot partition).
+read -ra KOUTS <<<"${KERNEL_OUT:-${WORKDIR}/kernel-release/current}"
+for i in "${!KOUTS[@]}"; do KOUTS[$i]="$(readlink -f "${KOUTS[$i]}")"; done
+KOUT="${KOUTS[0]}"
 KREL="$(basename "$KOUT")"
 SM8650_OVL="${ROOT}/sm8650-overlay"
+SM8550_OVL="${ROOT}/sm8550-overlay"
 STOCK="${R}/opt/stock-steamos"
 GSBUILD="${GAMESCOPE_BUILD:-${WORKDIR}/gamescope-build}"
 # Optional Turnip override. Empty = keep the Frame's own (built for A750).
@@ -23,10 +30,12 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo "$*" | tee -a "$LOG"; }
 
 [[ -d "$R/usr/bin" ]] || die "missing rootfs at $R"
-[[ -f "$KOUT/boot/KERNEL" ]] || die "missing kernel $KOUT"
+for k in "${KOUTS[@]}"; do
+  [[ -f "$k/boot/KERNEL" ]] || die "missing kernel $k"
+  [[ -d "$k/modules/$(basename "$k")" ]] || die "missing modules $k/modules/$(basename "$k")"
+done
 [[ -x "$GSBUILD/src/gamescope" ]] || die "missing built gamescope"
 [[ -z "$MESA_SO" || -f "$MESA_SO" ]] || die "missing Mesa $MESA_SO"
-[[ -d "$KOUT/modules/$KREL" ]] || die "missing modules $KOUT/modules/$KREL"
 
 : >"$LOG"
 log "== $(date -Iseconds) apply Odin mods into $R"
@@ -50,7 +59,7 @@ install_file() {
 # ---------------------------------------------------------------------------
 # Kernel
 # ---------------------------------------------------------------------------
-log "== kernel ${KREL}"
+log "== kernel ${KOUTS[*]##*/}"
 mkdir -p "$R/boot" "$R/usr/lib/modules" "$R/usr/lib/firmware" "$R/opt/steamos-sm8650"
 if [[ -e "$R/boot/KERNEL" && ! -e "$STOCK/boot/KERNEL" ]]; then
   mkdir -p "$STOCK/boot"
@@ -60,14 +69,29 @@ cp -a "$KOUT/boot/KERNEL" "$R/boot/KERNEL"
 cp -a "$KOUT/boot/KERNEL.md5" "$R/boot/KERNEL.md5"
 chmod 0644 "$R/boot/KERNEL" "$R/boot/KERNEL.md5"
 
-# Frame kernel modules are useless with this kernel; keep only ours.
-find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 ! -name "$KREL" -exec rm -rf {} +
-cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
-# Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
-# the AYANEO-signed ADSP/CDSP/zap live under qcom/sm8650/ayaneo/ps2).
-cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
-# Frame supplies the exact upstream VPU33 firmware under its vendor name.
-# Iris requests the upstream alias. Verify before creating that alias.
+# Frame kernel modules are useless with these kernels; keep only ours.
+keep=()
+for k in "${KOUTS[@]}"; do keep+=(! -name "$(basename "$k")"); done
+find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 "${keep[@]}" -exec rm -rf {} +
+# Kernel info from older builds (flat layout, or kernels no longer shipped).
+find "$R/opt/steamos-sm8650" -mindepth 1 -maxdepth 1 ! -name IMAGE.txt "${keep[@]}" -exec rm -rf {} +
+for k in "${KOUTS[@]}"; do
+  kr="$(basename "$k")"
+  rm -rf "$R/usr/lib/modules/$kr"
+  cp -a "$k/modules/$kr" "$R/usr/lib/modules/$kr"
+  # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
+  # vendor-signed ADSP/CDSP/zap live under qcom/<soc>/<vendor>/...).
+  # Wi-Fi (WCN7850) never overwrites: the SoC sets only differ in regdb.bin,
+  # and the Pocket FIT has always run with the Frame's copy.
+  rsync -a --exclude=/ath12k/ "$k/firmware/" "$R/usr/lib/firmware/"
+  if [[ -d "$k/firmware/ath12k" ]]; then
+    rsync -a --ignore-existing "$k/firmware/ath12k/" "$R/usr/lib/firmware/ath12k/"
+  fi
+  mkdir -p "$R/opt/steamos-sm8650/$kr"
+  cp -a "$k/config-$kr" "$k/dtbs" "$R/opt/steamos-sm8650/$kr/" 2>/dev/null || true
+done
+# Frame supplies the exact upstream VPU33 firmware (SM8650) under its vendor
+# name. Iris requests the upstream alias. Verify before creating that alias.
 _vpu="$R/usr/lib/firmware/qcom/vpu/vpu33_4v.mbn"
 if [[ -f "$_vpu" ]]; then
   [[ $(sha256sum "$_vpu" | awk '{print $1}') == 7b829fc1c8ce7cca836d10e898b99c5bcbd86e22073b690147168c9d0a5de378 ]] \
@@ -76,7 +100,6 @@ if [[ -f "$_vpu" ]]; then
 else
   die "missing SM8650 video decoder firmware"
 fi
-cp -a "$KOUT/config-$KREL" "$KOUT/dtbs" "$R/opt/steamos-sm8650/" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # gamescope
@@ -118,6 +141,13 @@ install_file "${MOD}/gamescope/scripts/udev/60-gamescope-backlight.rules" \
 backup "$R/usr/lib/steamos/gamescope-session" "$STOCK/usr/lib/steamos/gamescope-session"
 install_file "$OVL/usr/lib/steamos/gamescope-session" \
   "$R/usr/lib/steamos/gamescope-session" 0755
+install_file "$OVL/usr/lib/steamos/panel-modes" \
+  "$R/usr/lib/steamos/panel-modes" 0755
+install_file "$OVL/usr/lib/steamos/desktop-outputs" \
+  "$R/usr/lib/steamos/desktop-outputs" 0755
+# The fixed layout older images put in ~/.config; desktop-outputs replaces it.
+install_file "$OVL/etc/xdg/kwinoutputconfig.json" \
+  "$R/usr/share/steamos-arm/kwinoutputconfig.legacy.json" 0644
 backup "$R/usr/lib/steamos/gamescope-onready" "$STOCK/usr/lib/steamos/gamescope-onready"
 install_file "$OVL/usr/lib/steamos/gamescope-onready" \
   "$R/usr/lib/steamos/gamescope-onready" 0755
@@ -582,6 +612,48 @@ if [[ -d "$R/var/lib/overlays/etc/upper" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Bottom screen: second panel in Game Mode (AYN Thor, AYANEO Pocket DS). The
+# Game Mode gamescope lends it through a DRM lease (gamescope-session) and
+# bottom-screen.service runs a second gamescope with the dashboard on it.
+# ---------------------------------------------------------------------------
+log "== bottom screen (dual-screen dashboard)"
+DS_OVL="${ROOT}/dualscreen-overlay"
+cp -r --no-preserve=mode,ownership "$DS_OVL/." "$R/"
+chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
+  "$R/usr/lib/steamos-arm/bottom-screen/qml" \
+  "$R/usr/lib/steamos-arm/bottom-screen/bottom-screen-session" \
+  "$R/usr/lib/steamos-arm/bottom-screen/dashboard"
+chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/Main.qml" \
+  "$R/usr/lib/systemd/user/bottom-screen.service" \
+  "$R/usr/share/polkit-1/rules.d/60-steamos-arm-bottom-screen.rules"
+# /etc is an overlay mounted after systemd reads units: enable under /usr.
+mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
+ln -sfn ../bottom-screen.service \
+  "$R/usr/lib/systemd/user/gamescope-session.target.wants/bottom-screen.service"
+
+# ---------------------------------------------------------------------------
+# SM8550 device overlay: AYANEO Pocket / Retroid Pocket pads (deck-uhid),
+# Thor + AYANEO Pocket UCM, AYANEO volume keys. Applied on every image (it
+# matches by DT model), so one rootfs serves both SoCs; only the kernel,
+# modules and firmware differ per SoC.
+# ---------------------------------------------------------------------------
+log "== SM8550 overlay (AYN / AYANEO / Retroid)"
+cp -r --no-preserve=mode,ownership "$SM8550_OVL/." "$R/"
+cp -f "$SM8550_OVL"/etc/inputplumber/capability_maps.d/*.yaml "$R/usr/share/inputplumber/capability_maps/"
+if [[ -d "$R/var/lib/overlays/etc/upper/inputplumber" ]]; then
+  cp -r --no-preserve=mode,ownership "$SM8550_OVL/etc/inputplumber/." "$R/var/lib/overlays/etc/upper/inputplumber/"
+fi
+find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/AYANEO" "$R/usr/share/alsa/ucm2/conf.d/sm8550" \
+  "$R/etc/inputplumber" "$R/var/lib/overlays/etc/upper/inputplumber" 2>/dev/null \
+  \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
+chmod 0644 "$R/usr/lib/udev/hwdb.d/10-ayaneo.hwdb"
+if command -v systemd-hwdb >/dev/null; then
+  systemd-hwdb update --root "$R" --usr
+else
+  chroot "$R" systemd-hwdb update --usr
+fi
+
+# ---------------------------------------------------------------------------
 # MangoHud: keep SteamOS stock binaries. Host Ubuntu mangoapp needs GLIBC_2.43
 # (SteamOS is 2.39) and crash-loops gamescopereaper / the session.
 # Build from external-and-mods/MangoHud against SteamOS glibc before replacing.
@@ -813,7 +885,7 @@ fi
 # ldconfig cache is arch-specific; skip. Dynamic linker will still find /usr/lib.
 
 # Empty mount points the bwrap builds (gamescope/box64) leave in the rootfs.
-rmdir "$R/src/box64" "$R/src/gamescope" "$R/src" "$R/build-parent" 2>/dev/null || true
+rmdir "$R/src/box64" "$R/src/gamescope" "$R/src/dpl" "$R/src" "$R/build-parent" 2>/dev/null || true
 
 # Desktop Mode look: Frame's steamos-set-plasma-theme only picks the Deck
 # theme on Jupiter/Galileo boards. com.valve.vapor.desktop has no splash,

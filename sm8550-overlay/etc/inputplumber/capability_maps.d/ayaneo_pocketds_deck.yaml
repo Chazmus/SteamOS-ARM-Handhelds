@@ -1,0 +1,249 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Event codes from ROCKNIX / ArmadaOS; Steam Deck targets are ours.
+version: 2
+kind: CapabilityMap
+name: AYANEO Pocket DS to Steam Deck
+id: ayaneo_pocketds_deck
+mapping:
+- name: Home button
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_START
+      value_type: button
+  target_event:
+    gamepad:
+      button: Guide
+- name: BTN6
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN6
+      value_type: button
+  target_event:
+    gamepad:
+      button: Start
+- name: BTN_SELECT
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_SELECT
+      value_type: button
+  target_event:
+    gamepad:
+      button: Select
+- name: AYANEO button
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN5
+      value_type: button
+  target_event:
+    gamepad:
+      button: QuickAccess
+- name: Secondary start
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN7
+      value_type: button
+  target_event:
+    gamepad:
+      button: QuickAccess
+- name: Three dots
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_MODE
+      value_type: button
+  target_event:
+    gamepad:
+      button: RightPaddle2
+- name: Share
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN2
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftPaddle2
+- name: L4
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN3
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftPaddle1
+- name: R4
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN4
+      value_type: button
+  target_event:
+    gamepad:
+      button: RightPaddle1
+- name: BTN_SOUTH
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_SOUTH
+      value_type: button
+  target_event:
+    gamepad:
+      button: South
+- name: BTN_WEST
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_WEST
+      value_type: button
+  target_event:
+    gamepad:
+      button: West
+- name: BTN_NORTH
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_NORTH
+      value_type: button
+  target_event:
+    gamepad:
+      button: North
+- name: BTN_EAST
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_EAST
+      value_type: button
+  target_event:
+    gamepad:
+      button: East
+- name: RightStick
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_Z
+      value_type: joystick_x
+  - evdev:
+      event_type: ABS
+      event_code: ABS_RZ
+      value_type: joystick_y
+  target_event:
+    gamepad:
+      axis:
+        name: RightStick
+- name: LeftStick
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_X
+      value_type: joystick_x
+  - evdev:
+      event_type: ABS
+      event_code: ABS_Y
+      value_type: joystick_y
+  target_event:
+    gamepad:
+      axis:
+        name: LeftStick
+- name: ABS_GAS
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_GAS
+      value_type: trigger
+  target_event:
+    gamepad:
+      trigger:
+        name: RightTrigger
+- name: ABS_BRAKE
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_BRAKE
+      value_type: trigger
+  target_event:
+    gamepad:
+      trigger:
+        name: LeftTrigger
+- name: BTN_TR
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_TR
+      value_type: button
+  target_event:
+    gamepad:
+      button: RightBumper
+- name: BTN_TL
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_TL
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftBumper
+- name: BTN_THUMBR
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_THUMBR
+      value_type: button
+  target_event:
+    gamepad:
+      button: RightStick
+- name: BTN_THUMBL
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: BTN_THUMBL
+      value_type: button
+  target_event:
+    gamepad:
+      button: LeftStick
+- name: DPadLeft
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_HAT0X
+      value_type: button
+      axis_direction: negative
+  target_event:
+    gamepad:
+      button: DPadLeft
+- name: DPadRight
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_HAT0X
+      value_type: button
+      axis_direction: positive
+  target_event:
+    gamepad:
+      button: DPadRight
+- name: DPadDown
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_HAT0Y
+      value_type: button
+      axis_direction: positive
+  target_event:
+    gamepad:
+      button: DPadDown
+- name: DPadUp
+  source_events:
+  - evdev:
+      event_type: ABS
+      event_code: ABS_HAT0Y
+      value_type: button
+      axis_direction: negative
+  target_event:
+    gamepad:
+      button: DPadUp
+filtered_events: []

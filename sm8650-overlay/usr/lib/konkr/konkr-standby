@@ -83,7 +83,22 @@ def big_cpus() -> list[int]:
     if not caps:
         return []
     low = min(caps.values())
-    return sorted(n for n, v in caps.items() if v > low and n != 0)
+    big = sorted(n for n, v in caps.items() if v > low and n != 0)
+    # SM8550 boots with irqaffinity=3-7 (IRQs off the A510s: the A740 GMU can
+    # wedge when its interrupt wakes CPU 0-2). Keep the first CPU of the IRQ
+    # mask online so interrupts never fall back onto the little cores.
+    irq = irq_cpus()
+    if irq and not (irq - set(big)):
+        big.remove(min(irq))
+    return big
+
+
+def irq_cpus() -> set[int]:
+    try:
+        mask = int(rd("/proc/irq/default_smp_affinity", "0").replace(",", ""), 16)
+    except ValueError:
+        return set()
+    return {n for n in range(64) if mask >> n & 1}
 
 
 def log(msg: str) -> None:
