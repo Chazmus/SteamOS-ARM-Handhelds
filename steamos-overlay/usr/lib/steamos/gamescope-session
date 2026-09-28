@@ -205,7 +205,6 @@ WATCH_SERVICE=""
 GAMESCOPE_ARGS=(
   --backend drm
   --prefer-output "$OUTPUT"
-  --force-internal
   --scaler fit
   --filter linear
   --steam
@@ -226,7 +225,7 @@ GAMESCOPE_ARGS=(
 
 if [[ "$KMS_ROTATION" != 1 ]]; then
   # Shader rotation composites anyway; say so explicitly (MSM default).
-  GAMESCOPE_ARGS+=(--use-rotation-shader --force-composition)
+  GAMESCOPE_ARGS+=(--force-composition-rotation --force-orientation right --force-composition)
 fi
 if [[ "$MANGOAPP" == 1 ]]; then
   GAMESCOPE_ARGS+=(--mangoapp)
