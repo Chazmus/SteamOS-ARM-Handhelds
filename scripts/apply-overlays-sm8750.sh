@@ -115,6 +115,26 @@ install_file "$OVL/usr/share/wayland-sessions/plasma.desktop" \
 install_file "$OVL/usr/lib/systemd/user/sm8550-plasma-env.service" \
   "$R/usr/lib/systemd/user/sm8550-plasma-env.service" 0644
 
+# Clean handheld RUNSTEAM.sh (handheld flags only, no VR headset flags)
+backup "$R/usr/share/deckard/RUNSTEAM.sh" "$STOCK/usr/share/deckard/RUNSTEAM.sh"
+install_file "$OVL/usr/share/deckard/RUNSTEAM.sh" \
+  "$R/usr/share/deckard/RUNSTEAM.sh" 0755
+
+# Systemd user drop-ins (includes 99-odin.conf with TimeoutStartSec=600, BindsTo gamescope, etc.)
+if [[ -d "$OVL/usr/lib/systemd/user" ]]; then
+  mkdir -p "$R/usr/lib/systemd/user"
+  cp -a "$OVL/usr/lib/systemd/user/." "$R/usr/lib/systemd/user/"
+fi
+
+# Expand home partition service on first boot
+install_file "$OVL/usr/lib/steamos/steamos-sm8550-expand-home" \
+  "$R/usr/lib/steamos/steamos-sm8550-expand-home" 0755
+install_file "$OVL/usr/lib/systemd/system/steamos-sm8550-expand-home.service" \
+  "$R/usr/lib/systemd/system/steamos-sm8550-expand-home.service" 0644
+mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
+ln -sfn /usr/lib/systemd/system/steamos-sm8550-expand-home.service \
+  "$R/etc/systemd/system/multi-user.target.wants/steamos-sm8550-expand-home.service"
+
 # VR crash services cleanup (disable Valve Headset daemons)
 for svc in \
   vrcompositor.service vrserver.service steamos-headset-adb.service \
@@ -138,6 +158,39 @@ do
         "$R/etc/systemd/user/default.target.wants/${svc}" 2>/dev/null || true
   mkdir -p "$R/etc/systemd/system"
   ln -sfn /dev/null "$R/etc/systemd/system/${svc}"
+done
+
+# Set boot target to graphical.target (SDDM autologin into Gamescope)
+mkdir -p "$R/etc/systemd/system"
+ln -sfn /usr/lib/systemd/system/graphical.target "$R/etc/systemd/system/default.target"
+
+# User-level service masking (steamos-manager requires tracefs not in 7.2.0; steamvr services)
+mkdir -p "$R/etc/systemd/user"
+for usvc in steamvr.service steamvr-proxmicmute.service steamvr-v4l2cam.service \
+            steamos-manager.service steamos-manager-session-cleanup.service; do
+  ln -sfn /dev/null "$R/etc/systemd/user/${usvc}"
+done
+
+# User 'steamos' in seat group (GID 974) for seatd / DRM master
+if grep -q '^seat:' "$R/etc/group" 2>/dev/null; then
+  sed -i '/^seat:/ s/$/,steamos/; s/:,/:/' "$R/etc/group"
+else
+  echo "seat:x:974:steamos" >> "$R/etc/group"
+fi
+
+# Low-latency SSH (disable reverse DNS lookup timeout)
+mkdir -p "$R/etc/ssh/sshd_config.d"
+echo "UseDNS no" > "$R/etc/ssh/sshd_config.d/99-odin-dns.conf"
+
+# Disable core dump loops from crashing VR audio plugins
+mkdir -p "$R/etc/sysctl.d"
+echo "kernel.core_pattern = |/bin/false" > "$R/etc/sysctl.d/99-disable-coredump.conf"
+
+# Disable Deckard VR spatial audio modules in WirePlumber
+for wpconf in 60-spatial-audio.conf 70-spatial-node-config.conf; do
+  if [[ -f "$R/etc/wireplumber/wireplumber.conf.d/$wpconf" ]]; then
+    mv "$R/etc/wireplumber/wireplumber.conf.d/$wpconf" "$R/etc/wireplumber/wireplumber.conf.d/${wpconf}.disabled"
+  fi
 done
 
 # Enable persistent journal logging and boot debug
