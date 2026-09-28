@@ -1,11 +1,25 @@
 # SteamOS ARM for handhelds
 
-This is Valve's official SteamOS for ARM (the one made for the Steam Frame) running on Snapdragon handhelds. Right now that's the KONKR Pocket FIT, plus initial support for the AYANEO Pocket S2 and S2 Pro, and more chips are planned. The Pocket FIT uses the same Snapdragon 8 Gen 3 as the Frame, so Valve's own graphics drivers just work on it. You get the proper Game Mode and the proper KDE desktop, same as on a Steam Deck.
+This is Valve's official SteamOS for ARM (the one made for the Steam Frame) running on Snapdragon handhelds. You get the proper Game Mode and the proper KDE desktop, same as on a Steam Deck.
+
+## Devices
+
+There's one image per chip. Pick your device in the ABL menu and the system sets itself up for it.
+
+**Snapdragon 8 Gen 3 (SM8650):** KONKR Pocket FIT, plus initial support for the AYANEO Pocket S2 and S2 Pro. The Pocket FIT uses the same chip as the Frame, so Valve's own graphics drivers just work on it.
+
+**Snapdragon 8 Gen 2 (SM8550), in beta:**
+
+- AYN Odin 2, Odin 2 Mini, Odin 2 Portal, Thor
+- AYANEO Pocket ACE, Pocket DMG, Pocket DS, Pocket EVO, Pocket S 1K, Pocket S 2K
+- Retroid Pocket 6 (both versions), Retroid Pocket Nova
+
+I don't own any of the 8 Gen 2 devices, so if you do, please tell me what works and what doesn't (open an issue and say which device you have).
 
 The kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution), and some of the groundwork for putting SteamOS ARM on a handheld came from [MaSi's SM8550 project](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550). Huge thanks to both, full list in [CREDITS.md](CREDITS.md).
 
 > [!WARNING]
-> Initial support for the AYANEO Pocket S2 and S2 Pro is in (same chip and screen, so they share a setup). I don't have one myself, so if you do, please tell me what works and what doesn't. On the S2 Pro, pick AYANEO Pocket S2 as the device model in the ABL menu.
+> The 8 Gen 2 image and the AYANEO Pocket S2 support haven't been tested by me on real hardware. On the S2 Pro, pick AYANEO Pocket S2 as the device model in the ABL menu.
 > First boot takes a couple of minutes, don't panic.
 
 ## What's working
@@ -27,6 +41,12 @@ Pretty much everything you'd expect:
 - updating in place without reflashing (SteamOS Update app)
 - Android apps with the Google Play Store
 - Discover and the on-screen keyboard in desktop mode
+
+## Two screens (AYN Thor, AYANEO Pocket DS)
+
+On the dual screen devices the game stays on the top screen and the bottom screen gets its own dashboard in Game Mode: Steam, Quick Access, keyboard and screenshot buttons that open on the top screen, performance profiles and fan boost, brightness for each screen, volume, live temps and battery, and any apps you pin (they run full screen down there while you play). Swipe up from the bottom edge to get back to the dashboard. As far as I know this is the first time Valve's own SteamOS uses the second screen in Game Mode.
+
+In Desktop Mode both screens are one desktop, each touchscreen on its own screen. To turn the dashboard off, set `"enabled": false` in `~/.config/steamos-arm/bottom-screen.json`.
 
 ## Why this one
 
@@ -53,9 +73,9 @@ Switch with the Performance button, the KONKR Control plugin, or `konkrctl profi
 
 ## Installing
 
-1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer to `abl_a` and `abl_b`. Android still boots from its menu.
-2. Download all three `.7z` parts from the [v1.2 release](../../releases/tag/v1.2), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
-3. Hold Volume Down while turning it on, go to Set device model, pick KONKR Pocket FIT (or AYANEO Pocket S2), set boot mode to Linux and hit START.
+1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer for your chip (`abl_signed-SM8650.elf` or `abl_signed-SM8550.elf`) to `abl_a` and `abl_b`. Android still boots from its menu.
+2. Download all the `.7z` parts for your chip from [Releases](../../releases) (8 Gen 3: [v1.2](../../releases/tag/v1.2), 8 Gen 2: the latest beta), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to a 32GB+ microSD card with balenaEtcher or Rufus.
+3. Hold Volume Down while turning it on, go to Set device model, pick your device, set boot mode to Linux and hit START.
 
 First boot takes a couple of minutes, then sign in to Steam and you're good to go. After that, apply the [v1.2.1 hotfix](../../releases/tag/v1.2.1), it only takes a minute.
 
@@ -63,7 +83,7 @@ The Linux user is `steamos` and has no password until you set one: open Konsole 
 
 ### Internal storage
 
-Once it runs from the SD card you can move it to the internal storage: open **Easy UFS Installer** in Desktop Mode, pick how much space Android keeps, and choose whether your games come along. This erases Android's user data (Android itself stays and sets itself up again), and the old partition table is saved on the SD card so you can give the space back later. When it's done, set **Boot source** to **Internal** in the ABL menu. If you installed an older version to internal before, run **UNINSTALL CFW** in the ABL menu first. Details in [external-and-mods/ufs-install](external-and-mods/ufs-install/README.md).
+Right now this is for the Pocket FIT and Pocket S2 only, 8 Gen 2 devices run from the SD card for now. Once it runs from the SD card you can move it to the internal storage: open **Easy UFS Installer** in Desktop Mode, pick how much space Android keeps, and choose whether your games come along. This erases Android's user data (Android itself stays and sets itself up again), and the old partition table is saved on the SD card so you can give the space back later. When it's done, set **Boot source** to **Internal** in the ABL menu. If you installed an older version to internal before, run **UNINSTALL CFW** in the ABL menu first. Details in [external-and-mods/ufs-install](external-and-mods/ufs-install/README.md).
 
 ## Updating
 
@@ -113,7 +133,7 @@ If something else breaks for you, open an issue and I'll add it here.
 
 ## Building
 
-I build everything in an arm64 Linux VM (Colima on a Mac). Kernel is in `external-and-mods/kernel-sm8650/`, gamescope in `external-and-mods/gamescope/`, and `make-steamos-sm8650.sh` makes the image. More notes in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+I build everything in an arm64 Linux VM (Colima on a Mac). Kernels are built with `external-and-mods/kernel-sm8650/build.sh` and `external-and-mods/kernel-sm8550/build.sh` (shared script in `kernel-common/`), gamescope lives in `external-and-mods/gamescope/`, and `make-steamos-sm8650.sh` makes the image (`SOC=sm8550` for the 8 Gen 2 one). More notes in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 Valve's files and the Steam client aren't in this repo, the build downloads them.
 
