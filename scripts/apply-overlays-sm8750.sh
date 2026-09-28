@@ -120,7 +120,13 @@ for svc in \
   vrcompositor.service vrserver.service steamos-headset-adb.service \
   steamos-headset-adb.path steamos-headset-usb-gadget.service \
   steamos-headset-usb-gadget.path deckard-factory-recovery.service \
-  steamos-headset-fpga-config.service steamos-power-monitor.service
+  steamos-headset-fpga-config.service steamos-power-monitor.service \
+  deckard-boot-images.service deckard-fan-control.service \
+  deckard-fpga.service deckard-led-control.service \
+  deckard-typec-logger.service dsp_service.service \
+  iris-driver-rebind.service steamvr-program-ble.service \
+  steamvr-set-kernel-thread-priorities.service \
+  steamvr-v4l2loopback.service
 do
   rm -f "$R/etc/systemd/system/multi-user.target.wants/${svc}" \
         "$R/etc/systemd/system/default.target.wants/${svc}" \
@@ -128,6 +134,15 @@ do
   mkdir -p "$R/etc/systemd/system"
   ln -sfn /dev/null "$R/etc/systemd/system/${svc}"
 done
+
+# Enable persistent journal logging and boot debug
+mkdir -p "$R/var/log/journal" "$R/etc/systemd/journald.conf.d"
+chmod 2755 "$R/var/log/journal" 2>/dev/null || true
+cat <<'JRNL' >"$R/etc/systemd/journald.conf.d/99-persist.conf"
+[Journal]
+Storage=persistent
+SyncIntervalSec=5s
+JRNL
 
 # ---------------------------------------------------------------------------
 # 4. Turnip / Mesa Driver (Adreno 830)
