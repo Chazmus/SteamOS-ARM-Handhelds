@@ -251,8 +251,9 @@ pack_kernel_img() {
   # Placeholder root; the image builder patches the real PARTUUID in.
   local cmdline
   cmdline="$(bash -c "source '${SOC_DIR}/soc.env'; source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
+  # shellcheck disable=SC2086  # BOOTIMG_ARGS (soc.env) is a word list
   python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" --ramdisk "$INITRD" \
-    --cmdline "$cmdline" --out "$out"
+    --cmdline "$cmdline" ${BOOTIMG_ARGS:-} --out "$out"
   rm -f "$payload"
   md5sum "$out" | awk '{print $1"  KERNEL"}' >"$(dirname "$out")/KERNEL.md5"
 }

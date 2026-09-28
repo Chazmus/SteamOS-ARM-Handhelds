@@ -5,6 +5,11 @@ Same layout ROCKNIX produces with AOSP mkbootimg.py:
   --kernel_offset 0 --ramdisk_offset 0 --tags_offset 0 --header_version 0
   (base 0x10000000), ramdisk = b"dummy", os_version 12.0.0.
 ABL decompresses the gzip kernel and scans the DTBs appended after it.
+
+With a real ramdisk the load addresses matter: everything at the base means
+the ramdisk sits where the kernel gets decompressed. SM8550 uses the layout
+MaSi's SM8550 build boots with (kernel +0x8000, ramdisk +0x6000000, tags
++0x100), see kernel-sm8550/soc.env.
 """
 from __future__ import annotations
 
@@ -35,6 +40,9 @@ def main() -> None:
     ap.add_argument("--ramdisk")
     ap.add_argument("--cmdline", default="")
     ap.add_argument("--pagesize", type=int, default=2048)
+    ap.add_argument("--kernel-addr", type=lambda v: int(v, 0), default=BASE)
+    ap.add_argument("--ramdisk-addr", type=lambda v: int(v, 0), default=BASE)
+    ap.add_argument("--tags-addr", type=lambda v: int(v, 0), default=BASE)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -53,10 +61,10 @@ def main() -> None:
     hdr = struct.pack(
         "<8s10I16s512s32s1024s",
         BOOT_MAGIC,
-        len(kernel), BASE + 0x0,       # kernel size / addr
-        len(ramdisk), BASE + 0x0,      # ramdisk size / addr
+        len(kernel), a.kernel_addr,    # kernel size / addr
+        len(ramdisk), a.ramdisk_addr,  # ramdisk size / addr
         0, BASE + 0x00F00000,          # second size / addr
-        BASE + 0x0,                    # tags addr
+        a.tags_addr,                   # tags addr
         a.pagesize,
         0,                             # header_version
         os_version_field(12, 0, 0, today.year, today.month),
