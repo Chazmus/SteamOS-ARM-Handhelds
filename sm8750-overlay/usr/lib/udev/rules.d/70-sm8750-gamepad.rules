@@ -1,0 +1,21 @@
+# Native AYN Odin 3 rsinput pad (kernel joystick) + Valve hidraw from deck-uhid.
+# InputPlumber: deck-uhid + keyboard (OSK haptic). USB/BT HID is ignored.
+
+KERNEL=="uhid", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="000[356]:28DE:*", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Physical rsinput is InputPlumber-only (root). Steam must not enumerate it
+# next to the virtual Valve controller.
+SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Gamepad", \
+  ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_KEYBOARD}="", \
+  ENV{ID_INPUT_TOUCHPAD}="", \
+  MODE="0600", GROUP="root", TAG+="systemd"
+
+SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Gamepad Motion Sensors", \
+  ENV{ID_INPUT_ACCELEROMETER}="1", ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_MOUSE}="", MODE="0660", GROUP="input"
+SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Motion", \
+  ENV{ID_INPUT_ACCELEROMETER}="1", ENV{ID_INPUT_JOYSTICK}="", MODE="0660", GROUP="input"
+SUBSYSTEM=="input", ATTRS{name}=="AYN Odin3 Gamepad Touchpad", \
+  ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_MOUSE}="", MODE="0660", GROUP="input"
+
+KERNEL=="js[0-9]*", SUBSYSTEM=="input", MODE="0660", GROUP="input", TAG+="uaccess"

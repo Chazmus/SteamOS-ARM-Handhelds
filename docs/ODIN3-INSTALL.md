@@ -1,0 +1,85 @@
+# SteamOS ARM on AYN Odin 3 (SM8750)
+
+This document covers how to install and run SteamOS ARM on the **AYN Odin 3** (Snapdragon 8 Elite / Dragonwing Q8, SM8750 with Adreno 830).
+
+---
+
+## Prerequisites
+
+1. **AYN Odin 3** handheld.
+2. **MicroSD Card**: 32 GB or larger (A2 rated recommended for fast I/O).
+3. **Flashing tool**: [balenaEtcher](https://etcher.balena.io/), [Rufus](https://rufus.ie/), or `dd` on Linux/macOS.
+4. **Bootloader files**: Located in `external-and-mods/kernel-sm8750/bootloader/` in this repo.
+
+---
+
+## Step 1: Bootloader Backup & Flash (One-Time Setup)
+
+The Odin 3 needs the custom signed Android Bootloader (ROCKNIX ABL) to enable booting Linux from the microSD card. Android remains fully functional on internal UFS storage.
+
+### Method A: Directly on Android (Root / Termux)
+
+1. Copy the folder `external-and-mods/kernel-sm8750/bootloader/` to the root of your Odin 3 internal storage and rename it `rocknix_abl` (path: `/sdcard/rocknix_abl/`).
+2. Open **Termux** (or any terminal emulator) on Android.
+3. Switch to root and backup your stock ABL partitions:
+   ```bash
+   su
+   sh /sdcard/rocknix_abl/backup_abl.sh
+   ```
+   > [!IMPORTANT]
+   > Verify that `abl_a.img` and `abl_b.img` have been created inside `/sdcard/rocknix_abl/`. Store a copy of these backup files safely on your PC or cloud storage!
+4. Flash the new ABL:
+   ```bash
+   sh /sdcard/rocknix_abl/flash_abl.sh
+   ```
+
+### Method B: Via Fastboot from PC
+
+If your device's bootloader is unlocked:
+```bash
+adb reboot bootloader
+fastboot flash abl_a external-and-mods/kernel-sm8750/bootloader/abl_signed-SM8750.elf
+fastboot flash abl_b external-and-mods/kernel-sm8750/bootloader/abl_signed-SM8750.elf
+fastboot reboot
+```
+
+---
+
+## Step 2: Flash the SteamOS Image to MicroSD
+
+1. Insert your microSD card into your computer.
+2. Flash `sm8750-work/steamos-odin3.img` using BalenaEtcher or terminal `dd`:
+   ```bash
+   sudo dd if=sm8750-work/steamos-odin3.img of=/dev/sdX bs=4M status=progress conv=fsync
+   ```
+   *(Replace `/dev/sdX` with your actual microSD card device path).*
+
+---
+
+## Step 3: Booting SteamOS
+
+1. Insert the flashed microSD card into your Odin 3.
+2. Power on the device while holding **Volume Down** until the bootloader menu appears.
+3. Use the Volume keys to navigate:
+   * **Boot Mode:** Switch to **Linux**
+4. Press the **Power** button (or START) to boot.
+
+> [!NOTE]
+> The first boot takes approximately 2–3 minutes while the system expands the user partition and initializes Steam Deck services. Do not power off during this process.
+
+---
+
+## What to Expect in SteamOS
+
+* **Game Mode:** The official Steam Gamepad UI will launch. Log in with your Steam account.
+* **Controller:** The built-in controller is mapped via InputPlumber as a native Steam Deck controller (`deck-uhid`). Analog sticks, triggers, D-pad, and face buttons work in Steam Input.
+* **Display:** 1080x1920 AMOLED panel running at 60 Hz or 120 Hz with dynamic frame limiting.
+* **Graphics:** Accelerated Vulkan via Mesa Freedreno Turnip (Adreno 830).
+* **Audio:** ALSA UCM profiles route audio to the internal stereo speakers and headphone jack.
+* **Desktop Mode:** Switch to desktop mode via Steam Menu -> Power -> Switch to Desktop to access KDE Plasma 6.
+
+### Sudo Password
+The default user is `steamos`. It has no password by default. To set one for `sudo` commands:
+1. Switch to Desktop Mode.
+2. Open **Konsole**.
+3. Type `passwd` and enter your desired password.

@@ -1,0 +1,60 @@
+#!/bin/bash
+# Bring up AYN Odin 3 playback clocks and initial mixers.
+set +e
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+log() { echo "sm8750-audio-setup: $*" >&2; }
+
+if [[ -d /usr/share/alsa/ucm2/AYN ]]; then
+  find /usr/share/alsa/ucm2/AYN /usr/share/alsa/ucm2/conf.d/sm8750 \
+    /usr/share/alsa/ucm2/codecs /usr/share/alsa/ucm2/lib \
+    -type d -exec chmod 0755 {} + 2>/dev/null
+  find /usr/share/alsa/ucm2/AYN /usr/share/alsa/ucm2/conf.d/sm8750 \
+    /usr/share/alsa/ucm2/codecs /usr/share/alsa/ucm2/lib \
+    -type f -exec chmod 0644 {} + 2>/dev/null
+fi
+
+wait_card() {
+  local i
+  for i in $(seq 1 80); do
+    if grep -qiE 'AYN|Odin3|SM8750' /proc/asound/cards 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+if ! wait_card; then
+  log "no ASoC card yet"
+  cat /proc/asound/cards >&2 || true
+  exit 0
+fi
+
+card_id="$(awk 'BEGIN{IGNORECASE=1} /AYN|Odin3|SM8750/{print $1; exit}' /proc/asound/cards)"
+card_id="${card_id:-0}"
+log "card ${card_id}: $(tr '\n' ' ' </proc/asound/cards 2>/dev/null)"
+
+if command -v alsaucm >/dev/null 2>&1; then
+  if alsaucm -c AYN-Odin3 set _verb HiFi set _enadev Speaker >/tmp/sm8750-alsaucm.log 2>&1; then
+    log "alsaucm AYN-Odin3 HiFi Speaker ok"
+  elif alsaucm -c SM8750-AYN set _verb HiFi set _enadev Speaker >>/tmp/sm8750-alsaucm.log 2>&1; then
+    log "alsaucm SM8750-AYN HiFi Speaker ok"
+  elif alsaucm -c "hw:${card_id}" set _verb HiFi set _enadev Speaker >>/tmp/sm8750-alsaucm.log 2>&1; then
+    log "alsaucm hw:${card_id} HiFi Speaker ok"
+  else
+    log "alsaucm failed (mixers still applied)"
+    cat /tmp/sm8750-alsaucm.log >&2 || true
+  fi
+fi
+
+# Enable mixers for Odin 3 speaker amps
+amixer -c "${card_id}" set 'SECONDARY_MI2S_RX Audio Mixer MultiMedia1' 1 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'RX_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' 1 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'MultiMedia3 Mixer TX_CODEC_DMA_TX_3' 1 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'RX_RX0 Digital Volume' 84 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'RX_RX1 Digital Volume' 84 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'HPHL Volume' 20 >/dev/null 2>&1 || true
+amixer -c "${card_id}" set 'HPHR Volume' 20 >/dev/null 2>&1 || true
+
+log "sm8750 audio initialization complete"
