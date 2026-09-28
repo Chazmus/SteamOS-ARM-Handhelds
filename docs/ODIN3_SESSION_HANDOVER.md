@@ -38,6 +38,10 @@ In today's marathon session, the AYN Odin 3 transitioned from an unbootable, bla
    * Storage I/O queues stall whenever Linux flushes dirty page caches to flash, placing processes into `D-state` (Uninterruptible Sleep).
    * Recommended upgrade to an **Application Performance Class A2** MicroSD card (e.g., Samsung EVO/PRO Plus or SanDisk Extreme) to eliminate I/O stutter.
 
+6. **x86 Emulation & Compatibility Pipeline Verified:**
+   * Tested launching *Mina the Hollower* (x86_64).
+   * Verified that Valve's ARM compatibility stack (`SteamLinuxRuntime_sniper` + `FEX-Emu`) installed automatically, invoked `pressure-vessel-arm64`, and successfully captured host Turnip Vulkan drivers (`libvulkan_freedreno.so`) for the guest x86 container.
+
 ---
 
 ## 2. Key Issues Diagnosed & Solutions Applied
