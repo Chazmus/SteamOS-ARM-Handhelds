@@ -286,10 +286,7 @@ EOF
   sudo_run mkdir -p "${MNT}/boot/boot"
   repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/KERNEL" "${disk_id}-02"
   sudo_run cp "${MNT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL"
-  if [[ -f "${KOUT}/boot/KERNEL.md5" ]]; then
-    sudo_run cp "${KOUT}/boot/KERNEL.md5" "${MNT}/boot/KERNEL.md5"
-    sudo_run cp "${KOUT}/boot/KERNEL.md5" "${MNT}/boot/boot/KERNEL.md5"
-  fi
+  sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL | tee KERNEL.md5 boot/KERNEL.md5 >/dev/null"
 
   log "Writing p2 root"
   sudo_run rsync -aHAX --numeric-ids \
@@ -297,6 +294,14 @@ EOF
     --exclude='/home/*' \
     "${R}/" "${MNT}/root/"
   restore_image_suid "${MNT}/root"
+
+  log "Writing fstab for 3-partition layout"
+  sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
+# SteamOS Odin 3 (SM8750) — SD card layout
+LABEL=root         /      ext4  defaults,noatime                               0 1
+LABEL=BOOT         /boot  vfat  defaults,umask=0077,nofail                     0 2
+LABEL=home         /home  ext4  defaults,noatime,commit=30,x-systemd.growfs   0 2
+EOF
 
   log "Writing p3 home"
   if [[ -d "${R}/home/steamos" ]]; then
