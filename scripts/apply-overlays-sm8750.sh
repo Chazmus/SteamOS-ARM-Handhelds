@@ -164,12 +164,17 @@ done
 mkdir -p "$R/etc/systemd/system"
 ln -sfn /usr/lib/systemd/system/graphical.target "$R/etc/systemd/system/default.target"
 
-# User-level service masking (steamos-manager requires tracefs not in 7.2.0; steamvr services)
+# User-level service masking (steamos-manager requires tracefs not in 7.2.0; steamvr services; wireplumber crash loop; missing sm8550 services)
 mkdir -p "$R/etc/systemd/user"
 for usvc in steamvr.service steamvr-proxmicmute.service steamvr-v4l2cam.service \
-            steamos-manager.service steamos-manager-session-cleanup.service; do
+            steamos-manager.service steamos-manager-session-cleanup.service \
+            wireplumber.service sm8550-audio-pipewire.service sm8550-volume-keys.service; do
   ln -sfn /dev/null "$R/etc/systemd/user/${usvc}"
 done
+
+# Disable steamos-log-submitter to prevent coredump storm on errors
+mkdir -p "$R/etc/systemd/system"
+ln -sfn /dev/null "$R/etc/systemd/system/steamos-log-submitter.service"
 
 # User 'steamos' in seat group (GID 974) for seatd / DRM master
 if grep -q '^seat:' "$R/etc/group" 2>/dev/null; then
@@ -177,6 +182,11 @@ if grep -q '^seat:' "$R/etc/group" 2>/dev/null; then
 else
   echo "seat:x:974:steamos" >> "$R/etc/group"
 fi
+
+# Passwordless sudo for steamos user
+mkdir -p "$R/etc/sudoers.d"
+echo 'steamos ALL=(ALL) NOPASSWD: ALL' > "$R/etc/sudoers.d/99-steamos-nopasswd"
+chmod 0440 "$R/etc/sudoers.d/99-steamos-nopasswd"
 
 # Low-latency SSH (disable reverse DNS lookup timeout)
 mkdir -p "$R/etc/ssh/sshd_config.d"
