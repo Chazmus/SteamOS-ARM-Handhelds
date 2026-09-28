@@ -1,6 +1,6 @@
 # SteamOS ARM for handhelds
 
-This is Valve's official SteamOS for ARM, the build they made for the Steam Frame, running on Snapdragon handhelds. You get Game Mode and the KDE desktop just like on a Steam Deck. I've spent a lot of time fixing the stuff that makes the stock Frame image annoying on a handheld (battery, fan, lag, broken overlay etc.), so it should feel a lot better than just flashing the Frame image.
+This is Valve's official SteamOS for ARM, the build they made for the Steam Frame, running on Snapdragon handhelds. You get Game Mode and the KDE desktop just like on a Steam Deck. The Frame software is made for a VR headset though, so I've spent a lot of time on the stuff that makes it annoying on a handheld (battery, fan, lag, broken overlay etc.).
 
 ## Supported chips
 
@@ -39,9 +39,9 @@ I only own a Pocket FIT, so if you have one of the others please [let me know ho
 
 Found a bug? [Open an issue](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/issues).
 
-## Why not just use the Frame image?
+## What's different from other ARM builds
 
-It's made for a VR headset. Out of the box a bunch of Frame services keep crashing in the background (that's a big part of why standby drains so fast), games and the Steam UI end up on the slow little cores so menus lag, the GPU doesn't clock as high as on Android, and things like the overlay and some ARM64 Proton games just don't work. I turned off what's useless on a handheld and fixed the rest, the long version is in [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Most other builds ship the Frame software pretty much as it is, and it's made for a VR headset. Out of the box a bunch of Frame services keep crashing in the background (that's a big part of why standby drains so fast), games and the Steam UI end up on the slow little cores so menus lag, the GPU doesn't clock as high as on Android, and things like the overlay and some ARM64 Proton games just don't work. I turned off what's useless on a handheld and fixed the rest, the long version is in [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## Supporting the project
 
