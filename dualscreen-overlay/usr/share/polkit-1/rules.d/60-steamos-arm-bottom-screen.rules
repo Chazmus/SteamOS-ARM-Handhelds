@@ -1,0 +1,11 @@
+// The bottom-screen dashboard presses Quick Access / Steam / keyboard /
+// screenshot on the virtual Deck pad. It runs as a user service (outside the
+// login session), so InputPlumber's default auth_admin would ask for the
+// admin password on every button. Only the button actions, only steamos.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.shadowblip.Input.CompositeDevice.SendButtonChord" ||
+         action.id == "org.shadowblip.Input.CompositeDevice.SendEvent") &&
+        subject.user == "steamos") {
+        return polkit.Result.YES;
+    }
+});

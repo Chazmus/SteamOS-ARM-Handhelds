@@ -795,6 +795,31 @@ class Hotkeys:
         return keys
 
 
+# -------------------------------------------------------------- requests ----
+# The bottom-screen dashboard (runs as the user) asks for the same actions the
+# extra buttons trigger. Only these names are accepted; nothing else.
+REQUEST_SOCK = "/run/konkrd/request"
+REQUEST_ACTIONS = {"profile-next", "profile-silent", "profile-balanced",
+                   "profile-turbo", "fan-boost", "rgb-next", "sticks-toggle"}
+
+
+def open_request_socket():
+    import socket
+    try:
+        os.makedirs(os.path.dirname(REQUEST_SOCK), exist_ok=True)
+        if os.path.exists(REQUEST_SOCK):
+            os.unlink(REQUEST_SOCK)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.bind(REQUEST_SOCK)
+        sock.setblocking(False)
+        os.chown(REQUEST_SOCK, 0, 1000)      # the steamos user's group
+        os.chmod(REQUEST_SOCK, 0o660)
+        return sock
+    except OSError as exc:
+        log(f"request socket: {exc}")
+        return None
+
+
 # ----------------------------------------------------------------- main ----
 class Daemon:
     def __init__(self):
@@ -806,6 +831,7 @@ class Daemon:
         self.keys = Hotkeys()
         self.touch = TouchBoost()
         self.reload = False
+        self.requests = open_request_socket()
         signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))
         signal.signal(signal.SIGTERM, self.stop)
         self.apply_profile(flash=False)
@@ -898,6 +924,15 @@ class Daemon:
                     act = self.st.get("buttons", {}).get(name) or \
                         self.conf.get("buttons", name, fallback="none")
                     self.action(act)
+            while self.requests is not None:
+                try:
+                    req = self.requests.recv(64).decode(errors="replace").strip()
+                except (BlockingIOError, InterruptedError):
+                    break
+                except OSError:
+                    break
+                if req in REQUEST_ACTIONS and not os.path.exists(STANDBY_FLAG):
+                    self.action(req)
             if (power_down_at is not None and not power_long_sent
                     and time.monotonic() - power_down_at >= LONG_PRESS_S):
                 power_press(long=True)

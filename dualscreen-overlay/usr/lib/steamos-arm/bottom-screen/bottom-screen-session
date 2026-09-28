@@ -1,0 +1,35 @@
+#!/bin/bash
+# Second gamescope for the bottom panel (AYN Thor, AYANEO Pocket DS).
+#
+# The Game Mode gamescope (gamescope-session) keeps the bottom connector out
+# of its own output and lends it through a DRM lease on $BOTTOM_SOCKET. This
+# gamescope runs on that lease: no logind session of its own (libseat noop),
+# only the bottom touchscreen as input, and the dashboard as its client.
+# bottom-screen.env is written by gamescope-session; no file = no second panel.
+set -u
+ENV_FILE="${XDG_RUNTIME_DIR}/bottom-screen.env"
+[[ -f "$ENV_FILE" ]] || { echo "bottom-screen: no second panel this session"; exit 0; }
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+# Nothing from the Game Mode session: its sockets, displays and Steam flags.
+unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY GAMESCOPE_LEASE_CONNECTOR \
+  GAMESCOPE_LEASE_SOCKET GAMESCOPE_IGNORE_TOUCH GAMESCOPE_STATS STEAM_USE_MANGOAPP \
+  MANGOHUD_CONFIGFILE NOTIFY_SOCKET SteamDeck ENABLE_GAMESCOPE_WSI
+
+export GAMESCOPE_DRM_LEASE_SOCKET="$BOTTOM_SOCKET"
+export LIBSEAT_BACKEND=noop
+# Only this panel's touchscreen ("none" = no input at all, e.g. an external
+# monitor used for testing).
+export GAMESCOPE_INPUT_ONLY="${BOTTOM_TOUCH:-none}"
+export GAMESCOPE_HOME_GESTURE="${XDG_RUNTIME_DIR}/bottom-screen.home"
+export XCURSOR_THEME=steam
+
+echo "bottom-screen: ${BOTTOM_CONNECTOR} (touch: ${GAMESCOPE_INPUT_ONLY})"
+exec gamescope \
+  --backend drm \
+  --xwayland-count 1 \
+  --default-touch-mode 4 \
+  --hide-cursor-delay 1000 \
+  --force-composition \
+  -- /usr/lib/steamos-arm/bottom-screen/dashboard

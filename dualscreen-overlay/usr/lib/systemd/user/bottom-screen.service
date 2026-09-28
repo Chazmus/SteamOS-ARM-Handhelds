@@ -1,0 +1,15 @@
+[Unit]
+Description=Bottom screen dashboard (second panel in Game Mode)
+PartOf=gamescope-session.target
+After=gamescope-session.service
+ConditionUser=!root
+
+[Service]
+ExecStart=/usr/lib/steamos-arm/bottom-screen/bottom-screen-session
+Restart=on-failure
+RestartSec=3
+# Leaves the panel dark if the main session goes away (the lease dies with it).
+TimeoutStopSec=5
+
+[Install]
+WantedBy=gamescope-session.target

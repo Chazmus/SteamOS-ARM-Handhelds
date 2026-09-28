@@ -9,9 +9,15 @@
 #include <string.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <ctime>
 #include <fstream>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <xf86drm.h>
 #include <sys/eventfd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include <linux/input-event-codes.h>
 
@@ -530,9 +536,66 @@ static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *da
 	free( touch );
 }
 
+// SteamOS-ARM: dual-screen handhelds (AYN Thor, AYANEO Pocket DS) have a
+// second touchscreen on the panel the main gamescope does not drive. Both are
+// I2C, so the heuristic above would map the second one onto the main screen and
+// every touch on it would land in Steam.
+//   GAMESCOPE_IGNORE_TOUCH  comma separated touch devices to leave alone
+//                           (main gamescope)
+//   GAMESCOPE_INPUT_ONLY    comma separated input devices to use, all others
+//                           are left alone (bottom-screen gamescope: only
+//                           its own touchscreen, not the pad or keyboards)
+static std::vector<std::string> wlserver_name_list( const char *pszEnv )
+{
+	std::vector<std::string> list;
+	const char *env = getenv( pszEnv );
+	if ( !env )
+		return list;
+	std::string_view rest = env;
+	while ( !rest.empty() )
+	{
+		size_t comma = rest.find( ',' );
+		std::string_view item = rest.substr( 0, comma );
+		if ( !item.empty() )
+			list.emplace_back( item );
+		if ( comma == std::string_view::npos )
+			break;
+		rest.remove_prefix( comma + 1 );
+	}
+	return list;
+}
+
+static bool wlserver_name_listed( const std::vector<std::string> &list, const char *name )
+{
+	for ( const std::string &item : list )
+	{
+		if ( name && item == name )
+			return true;
+	}
+	return false;
+}
+
+static bool wlserver_touch_ignored( const char *name )
+{
+	static const std::vector<std::string> s_Ignored = wlserver_name_list( "GAMESCOPE_IGNORE_TOUCH" );
+	return wlserver_name_listed( s_Ignored, name );
+}
+
+static bool wlserver_input_excluded( const char *name )
+{
+	static const std::vector<std::string> s_Only = wlserver_name_list( "GAMESCOPE_INPUT_ONLY" );
+	return !s_Only.empty() && !wlserver_name_listed( s_Only, name );
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
+
+	if ( wlserver_input_excluded( device->name ) )
+	{
+		wl_log.infof( "ignoring input device %s (not in GAMESCOPE_INPUT_ONLY)", device->name );
+		return;
+	}
 
 	switch ( device->type )
 	{
@@ -581,6 +644,11 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
+			if ( wlserver_touch_ignored( device->name ) )
+			{
+				wl_log.infof( "ignoring touch input device %s (GAMESCOPE_IGNORE_TOUCH)", device->name );
+				break;
+			}
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
 			touch->wlr = wlr_touch_from_input_device( device );
@@ -1948,7 +2016,58 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 	nudge_steamcompmgr();
 }
 
+// SteamOS-ARM second screen: the main gamescope lends us one panel through a
+// DRM lease (GAMESCOPE_LEASE_CONNECTOR there). The lease fd is already the
+// DRM master for that panel; no session device to open.
+static int s_nLeaseKmsFd = -1;
+
+static int wlsession_receive_lease( const char *pszSocket )
+{
+	for ( int nTry = 0; nTry < 150; nTry++ )  // up to ~30 s: the main gamescope may still be starting
+	{
+		int nSock = socket( AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0 );
+		if ( nSock < 0 )
+			return -1;
+		struct sockaddr_un addr = {};
+		addr.sun_family = AF_UNIX;
+		strncpy( addr.sun_path, pszSocket, sizeof( addr.sun_path ) - 1 );
+		if ( connect( nSock, (struct sockaddr *) &addr, sizeof( addr ) ) == 0 )
+		{
+			char szConnector[ 64 ] = {};
+			struct iovec iov = { .iov_base = szConnector, .iov_len = sizeof( szConnector ) - 1 };
+			char control[ CMSG_SPACE( sizeof( int ) ) ] = {};
+			struct msghdr msg = {};
+			msg.msg_iov = &iov;
+			msg.msg_iovlen = 1;
+			msg.msg_control = control;
+			msg.msg_controllen = sizeof( control );
+			ssize_t n = recvmsg( nSock, &msg, MSG_CMSG_CLOEXEC );
+			close( nSock );
+			struct cmsghdr *cmsg = n > 0 ? CMSG_FIRSTHDR( &msg ) : nullptr;
+			if ( cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS )
+			{
+				int fd = -1;
+				memcpy( &fd, CMSG_DATA( cmsg ), sizeof( int ) );
+				wl_log.infof( "Got a DRM lease for %s from %s", szConnector, pszSocket );
+				return fd;
+			}
+			wl_log.errorf( "Lease socket %s sent no fd", pszSocket );
+			return -1;
+		}
+		close( nSock );
+		usleep( 200 * 1000 );
+	}
+	wl_log.errorf( "No DRM lease on %s", pszSocket );
+	return -1;
+}
+
 int wlsession_open_kms( const char *device_name ) {
+	if ( const char *pszLeaseSocket = getenv( "GAMESCOPE_DRM_LEASE_SOCKET" ); pszLeaseSocket && *pszLeaseSocket )
+	{
+		s_nLeaseKmsFd = wlsession_receive_lease( pszLeaseSocket );
+		return s_nLeaseKmsFd;
+	}
+
 	if ( device_name != nullptr )
 	{
 		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
@@ -1978,6 +2097,12 @@ int wlsession_open_kms( const char *device_name ) {
 
 void wlsession_close_kms()
 {
+	if ( s_nLeaseKmsFd >= 0 )
+	{
+		close( s_nLeaseKmsFd );
+		s_nLeaseKmsFd = -1;
+		return;
+	}
 	if ( wlserver.wlr.device )
 	{
 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
@@ -3375,6 +3500,62 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
 	*y = ty;
 }
 
+// SteamOS-ARM bottom screen: GAMESCOPE_HOME_GESTURE=<file>. A swipe up from
+// the bottom edge never reaches the app; it touches <file>, and the
+// bottom-screen dashboard (watching it) brings itself back to the front.
+static const char *s_pszHomeGestureFile = getenv( "GAMESCOPE_HOME_GESTURE" );
+static int s_nHomeGestureTouch = -1;
+static double s_flHomeGestureStartY = 0.0;
+static constexpr double k_flHomeEdge = 0.04;
+static constexpr double k_flHomeTravel = 0.12;
+
+static void home_gesture_orient( double *x, double *y, gamescope::IBackendConnector *connector )
+{
+	if ( connector )
+		apply_touchscreen_orientation( connector->GetCurrentOrientation(), x, y );
+}
+
+static bool home_gesture_down( double x, double y, int touch_id, gamescope::IBackendConnector *connector )
+{
+	if ( !s_pszHomeGestureFile || !*s_pszHomeGestureFile )
+		return false;
+	home_gesture_orient( &x, &y, connector );
+	if ( y < 1.0 - k_flHomeEdge )
+		return false;
+	s_nHomeGestureTouch = touch_id;
+	s_flHomeGestureStartY = y;
+	return true;
+}
+
+static bool home_gesture_motion( double x, double y, int touch_id, gamescope::IBackendConnector *connector )
+{
+	if ( touch_id != s_nHomeGestureTouch )
+		return false;
+	home_gesture_orient( &x, &y, connector );
+	if ( s_flHomeGestureStartY - y >= k_flHomeTravel )
+	{
+		int fd = open( s_pszHomeGestureFile, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600 );
+		if ( fd >= 0 )
+		{
+			char buf[ 32 ];
+			int n = snprintf( buf, sizeof( buf ), "%u\n", (unsigned) time( nullptr ) );
+			if ( write( fd, buf, n ) < 0 ) {}
+			close( fd );
+		}
+		wl_log.infof( "home gesture" );
+		s_flHomeGestureStartY = -1.0;  // fire once per swipe
+	}
+	return true;
+}
+
+static bool home_gesture_up( int touch_id )
+{
+	if ( touch_id != s_nHomeGestureTouch )
+		return false;
+	s_nHomeGestureTouch = -1;
+	return true;
+}
+
 // konkr: Android (Lepton) wants real touch — scrolling, swipes, pinch — not
 // Steam's click emulation, which non-Steam titles get by default.
 static gamescope::TouchClickMode wlserver_touch_click_mode()
@@ -3391,6 +3572,9 @@ static gamescope::TouchClickMode wlserver_touch_click_mode()
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )
 {
 	assert( wlserver_is_lock_held() );
+
+	if ( home_gesture_motion( x, y, touch_id, connector ) )
+		return;
 
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
@@ -3452,6 +3636,9 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 {
 	assert( wlserver_is_lock_held() );
 
+	if ( home_gesture_down( x, y, touch_id, connector ) )
+		return;
+
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
 		double tx = x;
@@ -3510,6 +3697,9 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 void wlserver_touchup( int touch_id, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
+
+	if ( home_gesture_up( touch_id ) )
+		return;
 
 	// Release whatever the touch pressed even if its surface is gone, or the seat keeps the button down.
 	bool bReleasedAny = false;

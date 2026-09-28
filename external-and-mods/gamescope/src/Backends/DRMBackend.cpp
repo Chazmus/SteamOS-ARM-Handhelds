@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include <atomic>
 #include <cassert>
@@ -857,6 +859,21 @@ void flip_handler_thread_run(void)
 	drm_log.debugf("page_flip_handler_thread exiting");
 }
 
+// SteamOS-ARM second screen: see create_connector_lease().
+static const char *s_pszLeaseConnector = getenv( "GAMESCOPE_LEASE_CONNECTOR" );
+static int s_nLeaseFd = -1;
+static uint32_t s_uLeasedConnectorId = 0;
+
+static bool is_lease_connector( const drmModeConnector *pConnector )
+{
+	if ( !s_pszLeaseConnector || !*s_pszLeaseConnector )
+		return false;
+	char szName[ 64 ];
+	const char *pszType = drmModeGetConnectorTypeName( pConnector->connector_type );
+	snprintf( szName, sizeof( szName ), "%s-%d", pszType ? pszType : "Unknown", pConnector->connector_type_id );
+	return strcmp( szName, s_pszLeaseConnector ) == 0;
+}
+
 static bool refresh_state( drm_t *drm )
 {
 	drmModeRes *pResources = drmModeGetResources( drm->fd );
@@ -885,6 +902,13 @@ static bool refresh_state( drm_t *drm )
 				drmModeFreeConnector( pConnector );
 				continue;
 			}
+		}
+
+		// SteamOS-ARM: lent to the second-screen compositor.
+		if ( uConnectorId == s_uLeasedConnectorId || ( s_nLeaseFd >= 0 && is_lease_connector( pConnector ) ) )
+		{
+			drmModeFreeConnector( pConnector );
+			continue;
 		}
 
 		if ( !drm->connectors.contains( uConnectorId ) )
@@ -1535,6 +1559,180 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const 
 	liftoff_log_scope.vlogf(priority, fmt, args);
 }
 
+// ---------------------------------------------------------------------------
+// SteamOS-ARM: second screen (AYN Thor, AYANEO Pocket DS).
+//
+// GAMESCOPE_LEASE_CONNECTOR=<name> keeps that connector out of this gamescope
+// and lends it, together with a spare CRTC and primary plane, to another
+// compositor through a DRM lease. The lease fd is handed out over the unix
+// socket GAMESCOPE_LEASE_SOCKET (SCM_RIGHTS); the bottom-screen gamescope
+// picks it up with GAMESCOPE_DRM_LEASE_SOCKET (see wlsession_open_kms).
+// The lease lives as long as this gamescope, so the second instance can be
+// restarted at will.
+// ---------------------------------------------------------------------------
+static void lease_socket_thread( std::string sPath, std::string sConnector )
+{
+	pthread_setname_np( pthread_self(), "gamescope-lease" );
+
+	int nListen = socket( AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0 );
+	if ( nListen < 0 )
+	{
+		drm_log.errorf_errno( "lease: socket" );
+		return;
+	}
+	struct sockaddr_un addr = {};
+	addr.sun_family = AF_UNIX;
+	if ( sPath.size() >= sizeof( addr.sun_path ) )
+	{
+		drm_log.errorf( "lease: socket path too long: %s", sPath.c_str() );
+		close( nListen );
+		return;
+	}
+	memcpy( addr.sun_path, sPath.c_str(), sPath.size() + 1 );
+	unlink( sPath.c_str() );
+	if ( bind( nListen, (struct sockaddr *) &addr, sizeof( addr ) ) != 0 || listen( nListen, 4 ) != 0 )
+	{
+		drm_log.errorf_errno( "lease: bind/listen %s", sPath.c_str() );
+		close( nListen );
+		return;
+	}
+	chmod( sPath.c_str(), 0600 );
+	drm_log.infof( "lease: serving %s on %s", sConnector.c_str(), sPath.c_str() );
+
+	for ( ;; )
+	{
+		int nClient = accept4( nListen, nullptr, nullptr, SOCK_CLOEXEC );
+		if ( nClient < 0 )
+		{
+			if ( errno == EINTR || errno == ECONNABORTED )
+				continue;
+			drm_log.errorf_errno( "lease: accept" );
+			break;
+		}
+
+		struct iovec iov = { .iov_base = (void *) sConnector.c_str(), .iov_len = sConnector.size() + 1 };
+		char control[ CMSG_SPACE( sizeof( int ) ) ] = {};
+		struct msghdr msg = {};
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = control;
+		msg.msg_controllen = sizeof( control );
+		struct cmsghdr *cmsg = CMSG_FIRSTHDR( &msg );
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
+		memcpy( CMSG_DATA( cmsg ), &s_nLeaseFd, sizeof( int ) );
+		if ( sendmsg( nClient, &msg, MSG_NOSIGNAL ) < 0 )
+			drm_log.errorf_errno( "lease: sendmsg" );
+		else
+			drm_log.infof( "lease: handed %s to a client", sConnector.c_str() );
+		close( nClient );
+	}
+	close( nListen );
+}
+
+// Called between get_resources() and liftoff setup: whatever is leased is
+// removed from drm->crtcs / drm->planes, so this gamescope never uses it.
+static void create_connector_lease( struct drm_t *drm )
+{
+	if ( !s_pszLeaseConnector || !*s_pszLeaseConnector )
+		return;
+
+	drmModeRes *pResources = drmModeGetResources( drm->fd );
+	if ( !pResources )
+		return;
+	defer( drmModeFreeResources( pResources ) );
+
+	uint32_t uConnectorId = 0, uPossibleCRTCs = 0;
+	for ( int i = 0; i < pResources->count_connectors && !uConnectorId; i++ )
+	{
+		drmModeConnector *pConnector = drmModeGetConnector( drm->fd, pResources->connectors[ i ] );
+		if ( !pConnector )
+			continue;
+		if ( is_lease_connector( pConnector ) )
+		{
+			uConnectorId = pConnector->connector_id;
+			for ( int e = 0; e < pConnector->count_encoders; e++ )
+			{
+				drmModeEncoder *pEncoder = drmModeGetEncoder( drm->fd, pConnector->encoders[ e ] );
+				if ( pEncoder )
+				{
+					uPossibleCRTCs |= pEncoder->possible_crtcs;
+					drmModeFreeEncoder( pEncoder );
+				}
+			}
+		}
+		drmModeFreeConnector( pConnector );
+	}
+	if ( !uConnectorId )
+	{
+		drm_log.errorf( "lease: connector %s not found, not leasing", s_pszLeaseConnector );
+		return;
+	}
+
+	// Last compatible CRTC: this gamescope takes the first one it finds.
+	auto crtcIter = drm->crtcs.end();
+	for ( auto it = drm->crtcs.begin(); it != drm->crtcs.end(); ++it )
+	{
+		if ( (*it)->GetCRTCMask() & uPossibleCRTCs )
+			crtcIter = it;
+	}
+	if ( crtcIter == drm->crtcs.end() || drm->crtcs.size() < 2 )
+	{
+		drm_log.errorf( "lease: no spare CRTC for %s", s_pszLeaseConnector );
+		return;
+	}
+	const uint32_t uCRTCMask = ( *crtcIter )->GetCRTCMask();
+	const uint32_t uCRTCId = ( *crtcIter )->GetObjectId();
+
+	// A primary plane for it, preferring the one already on that CRTC.
+	auto planeIter = drm->planes.end();
+	int nPrimaries = 0;
+	for ( auto it = drm->planes.begin(); it != drm->planes.end(); ++it )
+	{
+		if ( ( *it )->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_PRIMARY )
+			continue;
+		nPrimaries++;
+		if ( !( ( *it )->GetModePlane()->possible_crtcs & uCRTCMask ) )
+			continue;
+		if ( planeIter == drm->planes.end() || ( *it )->GetModePlane()->crtc_id == uCRTCId )
+			planeIter = it;
+	}
+	if ( planeIter == drm->planes.end() || nPrimaries < 2 )
+	{
+		drm_log.errorf( "lease: no spare primary plane for %s", s_pszLeaseConnector );
+		return;
+	}
+	const uint32_t uPlaneId = ( *planeIter )->GetObjectId();
+
+	// Blank it until the other compositor takes over (else the panel keeps
+	// showing the boot console).
+	drmModeSetCrtc( drm->fd, uCRTCId, 0, 0, 0, nullptr, 0, nullptr );
+
+	uint32_t objects[] = { uConnectorId, uCRTCId, uPlaneId };
+	uint32_t uLesseeId = 0;
+	s_nLeaseFd = drmModeCreateLease( drm->fd, objects, 3, O_CLOEXEC, &uLesseeId );
+	if ( s_nLeaseFd < 0 )
+	{
+		drm_log.errorf_errno( "lease: drmModeCreateLease(%s)", s_pszLeaseConnector );
+		s_nLeaseFd = -1;
+		return;
+	}
+	drm_log.infof( "lease: %s leased (connector %u, crtc %u, plane %u, lessee %u)",
+		s_pszLeaseConnector, uConnectorId, uCRTCId, uPlaneId, uLesseeId );
+
+	s_uLeasedConnectorId = uConnectorId;
+	drm->planes.erase( planeIter );
+	drm->crtcs.erase( crtcIter );
+	drm->connectors.erase( uConnectorId );
+
+	const char *pszSocket = getenv( "GAMESCOPE_LEASE_SOCKET" );
+	if ( pszSocket && *pszSocket )
+		std::thread( lease_socket_thread, std::string( pszSocket ), std::string( s_pszLeaseConnector ) ).detach();
+	else
+		drm_log.errorf( "lease: GAMESCOPE_LEASE_SOCKET not set, nobody can pick up %s", s_pszLeaseConnector );
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1625,11 +1823,25 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	}
 
+	create_connector_lease( drm );
+
 	drm->lo_device = liftoff_device_create( drm->fd );
 	if ( drm->lo_device == nullptr )
 		return false;
-	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
-		return false;
+	if ( s_nLeaseFd < 0 )
+	{
+		if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
+			return false;
+	}
+	else
+	{
+		// Only our planes; the leased one belongs to the other compositor.
+		for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+		{
+			if ( !liftoff_plane_create( drm->lo_device, pPlane->GetObjectId() ) )
+				return false;
+		}
+	}
 	
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )

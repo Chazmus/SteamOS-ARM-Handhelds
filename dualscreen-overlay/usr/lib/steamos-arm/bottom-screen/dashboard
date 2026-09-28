@@ -1,0 +1,555 @@
+#!/usr/bin/env python3
+"""Bottom screen dashboard (AYN Thor, AYANEO Pocket DS, or any second panel).
+
+Runs inside the bottom-screen gamescope (bottom-screen-session), which drives
+the second panel through a DRM lease from the Game Mode gamescope. This file is
+the backend: a small HTTP API on 127.0.0.1 for the QML UI (qml/Main.qml), which
+it starts and restarts.
+
+  Steam buttons   press Quick Access / Steam / keyboard / screenshot on the
+                  virtual Deck pad (InputPlumber SendButtonChord), so Steam's
+                  menus open on the main screen
+  controls        performance profile + fan boost (konkrd request socket),
+                  brightness of both panels (logind), volume (wpctl)
+  stats           battery, temperatures, fan, GPU clock
+  apps            any desktop app, pinned or from the list, runs full screen
+                  on the bottom panel; a swipe up from the bottom edge (or the
+                  app switcher) comes back here
+
+Settings: ~/.config/steamos-arm/bottom-screen.json
+"""
+from __future__ import annotations
+
+import glob
+import json
+import os
+import re
+import secrets
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+QML = HERE / "qml" / "Main.qml"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "steamos-arm"
+CONFIG = CONFIG_DIR / "bottom-screen.json"
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+HOME_GESTURE = Path(os.environ.get("GAMESCOPE_HOME_GESTURE", RUNTIME / "bottom-screen.home"))
+KONKRD_SOCK = "/run/konkrd/request"
+KONKRD_STATE = "/var/lib/konkrd/state.json"
+WINDOW_TITLE = "SteamOS Bottom Screen"
+
+STEAM_BUTTONS = {
+    "qam": ["Gamepad:Button:QuickAccess"],
+    "steam": ["Gamepad:Button:Guide"],
+    "keyboard": ["Gamepad:Button:Keyboard"],
+    "screenshot": ["Gamepad:Button:Screenshot"],
+}
+KONKRD_ACTIONS = {"profile-silent", "profile-balanced", "profile-turbo", "fan-boost"}
+DEFAULT_CONFIG = {"pinned": [], "show_stats": True}
+
+# Which backlight is which panel (else: listed by name).
+BACKLIGHT_NAMES = {
+    "AYN Thor": {"ae96000.dsi.0": "Top screen", "ae94000.dsi.0": "Bottom screen"},
+    "AYANEO Pocket DS": {"ae94000.dsi.0": "Top screen", "sy7758-backlight": "Bottom screen"},
+}
+
+
+def log(msg: str) -> None:
+    print(f"bottom-screen: {msg}", file=sys.stderr, flush=True)
+
+
+def rd(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def run(*cmd: str, timeout: float = 5.0) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+MODEL = rd("/sys/firmware/devicetree/base/model").rstrip("\0")
+
+
+# ---------------------------------------------------------------- config ----
+def load_config() -> dict:
+    try:
+        cfg = json.loads(CONFIG.read_text())
+        if isinstance(cfg, dict):
+            return {**DEFAULT_CONFIG, **cfg}
+    except (OSError, ValueError):
+        pass
+    return dict(DEFAULT_CONFIG)
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2))
+    os.replace(tmp, CONFIG)
+
+
+# ----------------------------------------------------------------- stats ----
+def battery() -> dict:
+    for b in glob.glob("/sys/class/power_supply/*"):
+        if rd(f"{b}/type") == "Battery":
+            try:
+                return {"percent": int(rd(f"{b}/capacity", "0")), "status": rd(f"{b}/status")}
+            except ValueError:
+                pass
+    return {"percent": -1, "status": ""}
+
+
+def temperatures() -> dict:
+    cpu = gpu = 0.0
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        t = rd(f"{z}/type")
+        try:
+            v = int(rd(f"{z}/temp", "0")) / 1000.0
+        except ValueError:
+            continue
+        if t.startswith("cpu"):
+            cpu = max(cpu, v)
+        elif t.startswith("gpu") or "gpuss" in t:
+            gpu = max(gpu, v)
+    return {"cpu": round(cpu), "gpu": round(gpu)}
+
+
+def fan_percent() -> int:
+    for d in glob.glob("/sys/class/hwmon/hwmon*"):
+        if rd(f"{d}/name") == "pwmfan":
+            try:
+                return round(int(rd(f"{d}/pwm1", "0")) * 100 / 255)
+            except ValueError:
+                return -1
+    return -1
+
+
+def gpu_mhz() -> int:
+    for d in glob.glob("/sys/class/devfreq/*"):
+        if "gpu" in os.path.basename(d) or "3d00000" in d:
+            try:
+                return int(rd(f"{d}/cur_freq", "0")) // 1_000_000
+            except ValueError:
+                return 0
+    return 0
+
+
+def konkrd_state() -> dict:
+    try:
+        st = json.loads(rd(KONKRD_STATE, "{}"))
+    except ValueError:
+        st = {}
+    return {"profile": st.get("profile", "balanced"),
+            "fan_boost": bool(st.get("fan", {}).get("boost"))}
+
+
+# --------------------------------------------------------------- display ----
+def backlights() -> list[dict]:
+    names = BACKLIGHT_NAMES.get(MODEL, {})
+    out = []
+    for d in sorted(glob.glob("/sys/class/backlight/*")):
+        name = os.path.basename(d)
+        try:
+            cur, mx = int(rd(f"{d}/brightness", "0")), int(rd(f"{d}/max_brightness", "1"))
+        except ValueError:
+            continue
+        out.append({"id": name, "label": names.get(name, name),
+                    "percent": round(cur * 100 / max(mx, 1))})
+    out.sort(key=lambda b: (b["label"] != "Top screen", b["label"]))
+    return out
+
+
+def session_path() -> str | None:
+    sid = run("loginctl", "show-seat", "seat0", "-p", "ActiveSession", "--value").strip()
+    if not sid:
+        return None
+    m = re.search(r'"(/org/freedesktop/login1/session/[^"]+)"',
+                  run("busctl", "call", "org.freedesktop.login1", "/org/freedesktop/login1",
+                      "org.freedesktop.login1.Manager", "GetSession", "s", sid))
+    return m.group(1) if m else None
+
+
+def set_brightness(name: str, percent: int) -> bool:
+    d = f"/sys/class/backlight/{name}"
+    if not os.path.isdir(d) or "/" in name:
+        return False
+    try:
+        mx = int(rd(f"{d}/max_brightness", "0"))
+    except ValueError:
+        return False
+    value = max(1, round(mx * max(1, min(100, percent)) / 100))
+    path = session_path()
+    if not path:
+        return False
+    run("busctl", "call", "org.freedesktop.login1", path, "org.freedesktop.login1.Session",
+        "SetBrightness", "ssu", "backlight", name, str(value))
+    return True
+
+
+def volume() -> dict:
+    out = run("wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@")
+    m = re.search(r"Volume:\s*([0-9.]+)", out)
+    return {"percent": round(float(m.group(1)) * 100) if m else -1, "muted": "MUTED" in out}
+
+
+def set_volume(percent: int | None = None, mute: str | None = None) -> None:
+    if percent is not None:
+        run("wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{max(0, min(100, percent))}%")
+    if mute in ("toggle", "1", "0"):
+        run("wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", mute)
+
+
+# ----------------------------------------------------------------- steam ----
+def composite_devices() -> list[str]:
+    tree = run("busctl", "tree", "--list", "org.shadowblip.InputPlumber")
+    return sorted(set(re.findall(r"/org/shadowblip/InputPlumber/CompositeDevice\d+", tree)),
+                  key=lambda p: int(re.search(r"\d+$", p).group()))
+
+
+def steam_button(action: str) -> bool:
+    chord = STEAM_BUTTONS.get(action)
+    if not chord:
+        return False
+    for dev in composite_devices():   # the built-in pad is the first one made at boot
+        r = subprocess.run(["busctl", "call", "org.shadowblip.InputPlumber", dev,
+                            "org.shadowblip.Input.CompositeDevice", "SendButtonChord",
+                            "as", str(len(chord)), *chord],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            return True
+        log(f"SendButtonChord on {dev}: {r.stderr.strip()}")
+    return False
+
+
+def konkrd(action: str) -> bool:
+    if action not in KONKRD_ACTIONS:
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.sendto(action.encode(), KONKRD_SOCK)
+        return True
+    except OSError as exc:
+        log(f"konkrd: {exc}")
+        return False
+
+
+# ------------------------------------------------------------------ apps ----
+APP_DIRS = [Path.home() / ".local/share/applications", Path("/usr/local/share/applications"),
+            Path("/usr/share/applications"), Path("/var/lib/flatpak/exports/share/applications"),
+            Path.home() / ".local/share/flatpak/exports/share/applications"]
+SKIP_CATEGORIES = {"Settings", "System"}
+# Would fight the Game Mode session (a second Steam, session switches) or are
+# dev/debug tools with no place on a handheld's second screen.
+SKIP_APPS = {"steam", "steamos-gamemode", "deckard-nested-desktop", "bssh", "bvnc",
+             "avahi-discover", "cmake-gui", "qv4l2", "qvidcap", "renderdoc", "vim", "gvim",
+             "org.kde.plasma.emojier"}
+
+
+def parse_desktop(path: Path) -> dict | None:
+    entry, section = {}, None
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+            continue
+        if section != "[Desktop Entry]" or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        entry.setdefault(k.strip(), v.strip())
+    if entry.get("Type") != "Application" or entry.get("NoDisplay") == "true" \
+            or entry.get("Hidden") == "true" or entry.get("Terminal") == "true" \
+            or not entry.get("Exec") or path.stem in SKIP_APPS:
+        return None
+    if "OnlyShowIn" in entry and "KDE" not in entry["OnlyShowIn"]:
+        return None
+    return {"id": path.stem, "name": entry.get("Name", path.stem), "icon": entry.get("Icon", ""),
+            "exec": entry["Exec"], "categories": entry.get("Categories", "")}
+
+
+def list_apps() -> list[dict]:
+    seen: dict[str, dict] = {}
+    for d in APP_DIRS:
+        for f in sorted(d.glob("*.desktop")) if d.is_dir() else []:
+            if f.stem in seen:
+                continue
+            app = parse_desktop(f)
+            if app and not SKIP_CATEGORIES & set(app["categories"].split(";")):
+                app["path"] = str(f)
+                seen[f.stem] = app
+    return sorted(seen.values(), key=lambda a: a["name"].lower())
+
+
+def app_by_id(app_id: str) -> dict | None:
+    return next((a for a in list_apps() if a["id"] == app_id), None)
+
+
+class Apps:
+    """Apps started on the bottom panel and their X11 windows."""
+
+    def __init__(self):
+        self.procs: dict[str, subprocess.Popen] = {}
+        self.lock = threading.Lock()
+
+    def launch(self, app_id: str) -> bool:
+        with self.lock:
+            p = self.procs.get(app_id)
+            if p and p.poll() is None:
+                return focus_app(app_id, self)
+            app = app_by_id(app_id)
+            if not app:
+                return False
+            argv = [a for a in shlex.split(app["exec"]) if not re.fullmatch(r"%[a-zA-Z]", a)]
+            env = dict(os.environ)
+            # Plain X11 on the bottom gamescope's Xwayland, never the Game Mode one.
+            env.update(QT_QPA_PLATFORM="xcb", GDK_BACKEND="x11", SDL_VIDEODRIVER="x11",
+                       MOZ_ENABLE_WAYLAND="0", ELECTRON_OZONE_PLATFORM_HINT="x11")
+            env.pop("WAYLAND_DISPLAY", None)
+            try:
+                self.procs[app_id] = subprocess.Popen(argv, env=env, start_new_session=True,
+                                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as exc:
+                log(f"launch {app_id}: {exc}")
+                return False
+            log(f"launched {app_id} ({argv[0]})")
+            set_base_window(None)       # newest window gets the screen
+            return True
+
+    def running(self) -> list[str]:
+        with self.lock:
+            return [a for a, p in self.procs.items() if p.poll() is None]
+
+    def close(self, app_id: str) -> bool:
+        with self.lock:
+            p = self.procs.get(app_id)
+            if not p or p.poll() is not None:
+                return False
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+            except OSError:
+                return False
+        show_dashboard()
+        return True
+
+    def pids(self, app_id: str) -> set[int]:
+        with self.lock:
+            p = self.procs.get(app_id)
+        if not p or p.poll() is not None:
+            return set()
+        return {p.pid} | descendants(p.pid)
+
+
+def descendants(pid: int) -> set[int]:
+    children: dict[int, list[int]] = {}
+    for stat in glob.glob("/proc/[0-9]*/stat"):
+        try:
+            fields = Path(stat).read_text().rsplit(")", 1)[1].split()
+            children.setdefault(int(fields[1]), []).append(int(stat.split("/")[2]))
+        except (OSError, IndexError, ValueError):
+            continue
+    out, todo = set(), [pid]
+    while todo:
+        for c in children.get(todo.pop(), []):
+            if c not in out:
+                out.add(c)
+                todo.append(c)
+    return out
+
+
+# --------------------------------------------------------------- windows ----
+def toplevel_windows() -> list[tuple[str, str]]:
+    """(id, title) of mapped top-level windows on this Xwayland."""
+    out = []
+    for line in run("xwininfo", "-root", "-children").splitlines():
+        m = re.match(r'\s+(0x[0-9a-f]+) "([^"]*)"', line)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def window_pid(wid: str) -> int:
+    m = re.search(r"= (\d+)", run("xprop", "-id", wid, "_NET_WM_PID"))
+    return int(m.group(1)) if m else -1
+
+
+def set_base_window(wid: str | None) -> None:
+    if wid:
+        run("xprop", "-root", "-f", "GAMESCOPECTRL_BASELAYER_WINDOW", "32c",
+            "-set", "GAMESCOPECTRL_BASELAYER_WINDOW", str(int(wid, 16)))
+    else:
+        run("xprop", "-root", "-remove", "GAMESCOPECTRL_BASELAYER_WINDOW")
+
+
+def show_dashboard() -> None:
+    for wid, title in toplevel_windows():
+        if title == WINDOW_TITLE:
+            set_base_window(wid)
+            return
+
+
+def focus_app(app_id: str, apps: Apps) -> bool:
+    pids = apps.pids(app_id)
+    for wid, title in toplevel_windows():
+        if title and title != WINDOW_TITLE and window_pid(wid) in pids:
+            set_base_window(wid)
+            return True
+    return False
+
+
+def watch_home_gesture() -> None:
+    last = HOME_GESTURE.stat().st_mtime if HOME_GESTURE.exists() else 0.0
+    while True:
+        time.sleep(0.15)
+        try:
+            m = HOME_GESTURE.stat().st_mtime
+        except OSError:
+            continue
+        if m != last:
+            last = m
+            show_dashboard()
+
+
+# ------------------------------------------------------------------ http ----
+TOKEN = secrets.token_hex(16)
+APPS = Apps()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def reply(self, obj, code: int = 200) -> None:
+        data = json.dumps(obj).encode()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass                    # the UI went away mid-request (restart/quit)
+
+    def authorised(self) -> bool:
+        if self.headers.get("X-Token") != TOKEN:
+            self.reply({"error": "forbidden"}, 403)
+            return False
+        return True
+
+    def body(self) -> dict:
+        n = int(self.headers.get("Content-Length", "0") or 0)
+        try:
+            return json.loads(self.rfile.read(n) or b"{}") if n else {}
+        except ValueError:
+            return {}
+
+    def do_GET(self):
+        if not self.authorised():
+            return
+        if self.path == "/state":
+            cfg = load_config()
+            apps = {a["id"]: a for a in list_apps()}
+            self.reply({
+                "model": MODEL,
+                "time": time.strftime("%H:%M"),
+                "battery": battery(),
+                "temps": temperatures(),
+                "fan": fan_percent(),
+                "gpu_mhz": gpu_mhz(),
+                **konkrd_state(),
+                "backlights": backlights(),
+                "volume": volume(),
+                "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
+                "running": [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
+                            for i in APPS.running() if i in apps],
+                "show_stats": cfg.get("show_stats", True),
+            })
+        elif self.path == "/apps":
+            pinned = set(load_config()["pinned"])
+            self.reply([{"id": a["id"], "name": a["name"], "icon": a["icon"], "pinned": a["id"] in pinned}
+                        for a in list_apps()])
+        else:
+            self.reply({"error": "not found"}, 404)
+
+    def do_POST(self):
+        if not self.authorised():
+            return
+        b, ok = self.body(), True
+        path = self.path.strip("/").split("/")
+        if path[0] == "steam" and len(path) == 2:
+            ok = steam_button(path[1])
+        elif path[0] == "konkrd" and len(path) == 2:
+            ok = konkrd(path[1])
+        elif path == ["brightness"]:
+            ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
+        elif path == ["volume"]:
+            set_volume(b.get("percent"), b.get("mute"))
+        elif path == ["launch"]:
+            ok = APPS.launch(str(b.get("id", "")))
+        elif path == ["focus"]:
+            ok = focus_app(str(b.get("id", "")), APPS)
+        elif path == ["close"]:
+            ok = APPS.close(str(b.get("id", "")))
+        elif path == ["home"]:
+            show_dashboard()
+        elif path == ["pin"]:
+            cfg = load_config()
+            app_id = str(b.get("id", ""))
+            pinned = [p for p in cfg["pinned"] if p != app_id]
+            if b.get("pinned") and app_by_id(app_id):
+                pinned.append(app_id)
+            cfg["pinned"] = pinned
+            save_config(cfg)
+        elif path == ["settings"]:
+            cfg = load_config()
+            if "show_stats" in b:
+                cfg["show_stats"] = bool(b["show_stats"])
+            save_config(cfg)
+        else:
+            self.reply({"error": "not found"}, 404)
+            return
+        self.reply({"ok": bool(ok)})
+
+
+def main() -> int:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=watch_home_gesture, daemon=True).start()
+    log(f"api on 127.0.0.1:{port}, model {MODEL!r}")
+    # The UI reads the API address + token from a private file (argv and the
+    # environment are readable by other users through /proc).
+    api_file = RUNTIME / "bottom-screen.api"
+    fd = os.open(api_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump({"url": f"http://127.0.0.1:{port}", "token": TOKEN}, fh)
+    # KDE platform theme: Breeze icons for the buttons and apps.
+    env = dict(os.environ, QT_QPA_PLATFORM="xcb", QT_QUICK_CONTROLS_MOBILE="1",
+               QML_XHR_ALLOW_FILE_READ="1", QT_QPA_PLATFORMTHEME="kde",
+               XDG_CURRENT_DESKTOP="KDE")
+    env.pop("WAYLAND_DISPLAY", None)
+    while True:
+        started = time.monotonic()
+        ui = subprocess.run(["qml6", str(QML), "--", str(api_file)], env=env)
+        if time.monotonic() - started < 3:
+            log(f"UI exited right away ({ui.returncode}), retrying in 5 s")
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
