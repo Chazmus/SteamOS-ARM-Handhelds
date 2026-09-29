@@ -465,6 +465,17 @@ EOF
   # vfat cannot store Unix owner/mode — cp -a fails with EPERM
   sudo_run install -m0644 "${ktmp}" "${MNT}/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL > KERNEL.md5"
+  # Optional second kernel on BOOT for testers to swap in by renaming
+  # (TEST_KERNEL_OUT; its modules must be in KERNEL_OUT too). SM8550: our own
+  # ROCKNIX build, so it gets the ROCKNIX cmdline.
+  if [[ -n "${TEST_KERNEL_OUT:-}" ]]; then
+    local ttmp
+    ttmp="$(mktemp)"
+    ( export SM8550_KERNEL=rocknix; repack_kernel_partuuid "${TEST_KERNEL_OUT}/boot/KERNEL" "${ttmp}" "${disk_id}-02" )
+    sudo_run install -m0644 "${ttmp}" "${MNT}/boot/${TEST_KERNEL_NAME:-KERNEL-own}"
+    rm -f "${ttmp}"
+    log "test kernel on BOOT: ${TEST_KERNEL_NAME:-KERNEL-own}"
+  fi
   rm -f "${ktmp}"
 
   sudo_run mkdir -p "${MNT}/root/opt/steamos-sm8650"

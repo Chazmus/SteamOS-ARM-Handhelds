@@ -79,16 +79,20 @@ for k in "${KOUTS[@]}"; do
   kr="$(basename "$k")"
   rm -rf "$R/usr/lib/modules/$kr"
   cp -a "$k/modules/$kr" "$R/usr/lib/modules/$kr"
-  # Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
-  # vendor-signed ADSP/CDSP/zap live under qcom/<soc>/<vendor>/...).
-  # Wi-Fi (WCN7850) never overwrites: the SoC sets only differ in regdb.bin,
-  # and the Pocket FIT has always run with the Frame's copy.
+  mkdir -p "$R/opt/steamos-sm8650/$kr"
+  cp -a "$k/config-$kr" "$k/dtbs" "$R/opt/steamos-sm8650/$kr/" 2>/dev/null || true
+done
+# Merge firmware without wiping Frame blobs (Frame ships SM8650 GPU fw too;
+# vendor-signed ADSP/CDSP/zap live under qcom/<soc>/<vendor>/...). Last kernel
+# in KERNEL_OUT first, so the image's own kernel (the first) wins where they
+# differ. Wi-Fi (WCN7850) never overwrites: the SoC sets only differ in
+# regdb.bin, and the Pocket FIT has always run with the Frame's copy.
+for ((i = ${#KOUTS[@]} - 1; i >= 0; i--)); do
+  k="${KOUTS[$i]}"
   rsync -a --exclude=/ath12k/ "$k/firmware/" "$R/usr/lib/firmware/"
   if [[ -d "$k/firmware/ath12k" ]]; then
     rsync -a --ignore-existing "$k/firmware/ath12k/" "$R/usr/lib/firmware/ath12k/"
   fi
-  mkdir -p "$R/opt/steamos-sm8650/$kr"
-  cp -a "$k/config-$kr" "$k/dtbs" "$R/opt/steamos-sm8650/$kr/" 2>/dev/null || true
 done
 # Frame supplies the exact upstream VPU33 firmware (SM8650) under its vendor
 # name. Iris requests the upstream alias. Verify before creating that alias.

@@ -82,7 +82,7 @@ prepare_source() {
   local tarball="${CACHE}/linux-${KVER}.tar.xz"
   fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
   local patch_digest
-  patch_digest="$( { echo "$PATCH_DIRS"; find "${SOC_DIR}" -path "${SOC_DIR}/patches/*" -type f -o -path "${SOC_DIR}/dts/*" -type f | sort | xargs -r sha256sum | cut -d" " -f1; } | sha256sum | cut -d" " -f1)"
+  patch_digest="$( { echo "$PATCH_DIRS ${PATCH_SKIP:-}"; find "${SOC_DIR}" -path "${SOC_DIR}/patches/*" -type f -o -path "${SOC_DIR}/dts/*" -type f | sort | xargs -r sha256sum | cut -d" " -f1; } | sha256sum | cut -d" " -f1)"
   if [[ -f "${SRC}/.${SOC}-patched" && "$(cat "${SRC}/.${SOC}-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
@@ -106,6 +106,9 @@ prepare_source() {
       case "$(basename "$p")" in
         9900-i915-10bit-hack.patch) continue ;;  # x86 only
       esac
+      if [[ " ${PATCH_SKIP:-} " == *" $(basename "$p") "* ]]; then
+        log "skip $(basename "$p") (PATCH_SKIP)"; continue
+      fi
       log "patch $(basename "$d")/$(basename "$p")"
       patch -d "$SRC" -p1 -N --no-backup-if-mismatch -s <"$p" \
         || die "patch failed: $p"
