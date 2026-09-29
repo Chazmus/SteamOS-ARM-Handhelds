@@ -1,8 +1,16 @@
 # SteamOS ARM for handhelds
 
-This is Valve's official SteamOS for ARM (the one made for the Steam Frame) running on Snapdragon handhelds. Right now that's the KONKR Pocket FIT, plus initial support for the AYANEO Pocket S2 and S2 Pro, and more chips are planned. The Pocket FIT uses the same Snapdragon 8 Gen 3 as the Frame, so Valve's own graphics drivers just work on it. You get the proper Game Mode and the proper KDE desktop, same as on a Steam Deck.
+This is Valve's official SteamOS for ARM (the one made for the Steam Frame) running on Snapdragon handhelds:
+- **AYN Odin 3** (Snapdragon 8 Elite / SM8750, Adreno 830 GPU)
+- **KONKR Pocket FIT** (Snapdragon 8 Gen 3 / SM8650)
+- **AYANEO Pocket S2 & S2 Pro** (Snapdragon 8 Gen 3 / SM8650)
+
+The Pocket FIT uses the same Snapdragon 8 Gen 3 as the Frame, so Valve's own graphics drivers just work on it. The Odin 3 uses the Snapdragon 8 Elite with custom Mesa Freedreno Turnip drivers for the Adreno 830 GPU. You get the proper Game Mode and the proper KDE desktop, same as on a Steam Deck.
 
 The kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution), and some of the groundwork for putting SteamOS ARM on a handheld came from [MaSi's SM8550 project](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550). Huge thanks to both, full list in [CREDITS.md](CREDITS.md).
+
+> [!NOTE]
+> For dedicated installation instructions for the **AYN Odin 3**, see [docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md).
 
 > [!WARNING]
 > Initial support for the AYANEO Pocket S2 and S2 Pro is in (same chip and screen, so they share a setup). I don't have one myself, so if you do, please tell me what works and what doesn't. On the S2 Pro, pick AYANEO Pocket S2 as the device model in the ABL menu.
@@ -113,9 +121,13 @@ If something else breaks for you, open an issue and I'll add it here.
 
 ## Building
 
-I build everything in an arm64 Linux VM (Colima on a Mac). Kernel is in `external-and-mods/kernel-sm8650/`, gamescope in `external-and-mods/gamescope/`, and `make-steamos-sm8650.sh` makes the image. More notes in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Build scripts are provided for each SoC target:
+- **AYN Odin 3 (SM8750):** Run `./make-steamos-sm8750.sh` to generate `sm8750-work/steamos-odin3.img`. Kernel is in `external-and-mods/kernel-sm8750/`.
+- **KONKR Pocket FIT / AYANEO Pocket S2 (SM8650):** Run `./make-steamos-sm8650.sh`. Kernel is in `external-and-mods/kernel-sm8650/`.
 
-Valve's files and the Steam client aren't in this repo, the build downloads them.
+Gamescope source is in `external-and-mods/gamescope/`. More notes in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) and [docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md).
+
+Valve's files and the Steam client aren't in this repo, the build downloads them automatically.
 
 ## Supporting the project
 
