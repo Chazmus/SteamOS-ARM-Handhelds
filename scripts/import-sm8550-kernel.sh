@@ -116,5 +116,36 @@ python3 "$kc/mkbootimg-v0.py" --kernel "$work/kernel.bin" --ramdisk "$rd/initrd.
   --kernel-addr 0x10008000 --ramdisk-addr 0x16000000 --tags-addr 0x10000100 \
   --cmdline "root=PARTUUID=00000000-02" --out "$out/boot/KERNEL"
 (cd "$out/boot" && md5sum KERNEL >KERNEL.md5)
+# Extra modules this kernel lacks, built against a vanilla tree of the same
+# release with its own config (no MODVERSIONS/signing, so vermagic is all it
+# checks): sgm3804 powers the Pocket DMG / ACE panel (ROCKNIX's driver).
+kver="${krel%%-*}"
+ksrc="/work/sgm/linux-$kver"
+if [[ ! -d "$ksrc" ]]; then
+  mkdir -p /work/sgm
+  curl -sfL "https://cdn.kernel.org/pub/linux/kernel/v${kver%%.*}.x/linux-$kver.tar.xz" | tar -xJ -C /work/sgm
+fi
+cp "$out/config-$krel" "$ksrc/.config" 2>/dev/null || python3 - "$work/boot/KERNEL" "$ksrc/.config" <<'PY'
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+ks, = struct.unpack_from("<I", d, 8); ps, = struct.unpack_from("<I", d, 36)
+img = zlib.decompressobj(31).decompress(d[ps:ps + ks])
+i = img.find(b"IKCFG_ST")
+open(sys.argv[2], "wb").write(zlib.decompressobj(31).decompress(img[i + 8:]))
+PY
+make -s -C "$ksrc" olddefconfig >/dev/null
+make -s -C "$ksrc" -j"$(nproc)" modules_prepare
+[[ "$(cat "$ksrc/include/config/kernel.release")" == "$krel" ]] || { echo "extra modules: release mismatch" >&2; exit 1; }
+for m in "$repo"/external-and-mods/kernel-sm8550/extra-modules/*/; do
+  b="$work/extra-$(basename "$m")"; cp -r "$m" "$b"
+  make -s -C "$ksrc" M="$b" KBUILD_MODPOST_WARN=1 modules 2>/dev/null
+  for ko in "$b"/*.ko; do
+    strip --strip-debug "$ko"
+    install -D -m0644 "$ko" "$out/modules/$krel/extra/$(basename "$ko")"
+    echo "extra module: $(basename "$ko")"
+  done
+done
+mkdir -p "$work/dm/lib" && ln -sfn "$out/modules" "$work/dm/lib/modules"
+depmod -b "$work/dm" "$krel"
 chown -R -h root:root "$out"
 du -sh "$out"/* "$out"/boot/* | sed "s|$out/||"
