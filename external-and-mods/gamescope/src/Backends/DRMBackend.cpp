@@ -1631,6 +1631,72 @@ static void lease_socket_thread( std::string sPath, std::string sConnector )
 	close( nListen );
 }
 
+// Before a lease, switch off every CRTC that touches the leased connector,
+// CRTC or plane (and whatever else hangs off those CRTCs) in one atomic
+// commit. At boot the console lights both panels, each on some CRTC; leasing
+// only a spare CRTC left the second panel attached to the CRTC this gamescope
+// then used for the main panel, so every main-panel commit asked one CRTC to
+// drive two DSI panels (EINVAL, black Thor), and the lessee taking its panel
+// yanked it off our CRTC. Same rule as OGC gamescope's
+// drm_detach_lease_resources: a lease must not split a pipeline.
+static bool detach_lease_resources( struct drm_t *drm, gamescope::CDRMConnector *pLeaseConnector,
+	gamescope::CDRMCRTC *pLeaseCRTC, gamescope::CDRMPlane *pLeasePlane )
+{
+	std::unordered_set< uint64_t > affected = {
+		pLeaseCRTC->GetObjectId(),
+		pLeaseConnector->GetProperties().CRTC_ID->GetCurrentValue(),
+		pLeasePlane->GetProperties().CRTC_ID->GetCurrentValue(),
+	};
+	affected.erase( 0 );
+
+	drmModeAtomicReq *pRequest = drmModeAtomicAlloc();
+	if ( !pRequest )
+		return false;
+	defer( drmModeAtomicFree( pRequest ) );
+
+	std::vector< gamescope::CDRMAtomicProperty * > changed;
+	bool bValid = true;
+	auto Set = [&]( gamescope::CDRMAtomicProperty &prop, uint64_t ulValue )
+	{
+		if ( prop.SetPendingValue( pRequest, ulValue, true ) < 0 )
+			bValid = false;
+		else
+			changed.push_back( &prop );
+	};
+
+	for ( auto &iter : drm->connectors )
+	{
+		if ( affected.contains( iter.second.GetProperties().CRTC_ID->GetCurrentValue() ) )
+			Set( *iter.second.GetProperties().CRTC_ID, 0 );
+	}
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		if ( affected.contains( pPlane->GetProperties().CRTC_ID->GetCurrentValue() ) )
+		{
+			Set( *pPlane->GetProperties().FB_ID, 0 );
+			Set( *pPlane->GetProperties().CRTC_ID, 0 );
+		}
+	}
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+	{
+		if ( affected.contains( pCRTC->GetObjectId() ) )
+		{
+			Set( *pCRTC->GetProperties().ACTIVE, 0 );
+			Set( *pCRTC->GetProperties().MODE_ID, 0 );
+		}
+	}
+
+	if ( !bValid || drmModeAtomicCommit( drm->fd, pRequest, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
+	{
+		for ( gamescope::CDRMAtomicProperty *pProp : changed )
+			pProp->Rollback();
+		return false;
+	}
+	for ( gamescope::CDRMAtomicProperty *pProp : changed )
+		pProp->OnCommit();
+	return true;
+}
+
 // Called between get_resources() and liftoff setup: whatever is leased is
 // removed from drm->crtcs / drm->planes, so this gamescope never uses it.
 static void create_connector_lease( struct drm_t *drm )
@@ -1638,46 +1704,37 @@ static void create_connector_lease( struct drm_t *drm )
 	if ( !s_pszLeaseConnector || !*s_pszLeaseConnector )
 		return;
 
-	drmModeRes *pResources = drmModeGetResources( drm->fd );
-	if ( !pResources )
-		return;
-	defer( drmModeFreeResources( pResources ) );
-
-	uint32_t uConnectorId = 0, uPossibleCRTCs = 0;
-	for ( int i = 0; i < pResources->count_connectors && !uConnectorId; i++ )
+	gamescope::CDRMConnector *pLeaseConnector = nullptr;
+	gamescope::CDRMConnector *pMainConnector = nullptr;
+	for ( auto &iter : drm->connectors )
 	{
-		drmModeConnector *pConnector = drmModeGetConnector( drm->fd, pResources->connectors[ i ] );
-		if ( !pConnector )
-			continue;
-		if ( is_lease_connector( pConnector ) )
-		{
-			uConnectorId = pConnector->connector_id;
-			for ( int e = 0; e < pConnector->count_encoders; e++ )
-			{
-				drmModeEncoder *pEncoder = drmModeGetEncoder( drm->fd, pConnector->encoders[ e ] );
-				if ( pEncoder )
-				{
-					uPossibleCRTCs |= pEncoder->possible_crtcs;
-					drmModeFreeEncoder( pEncoder );
-				}
-			}
-		}
-		drmModeFreeConnector( pConnector );
+		if ( is_lease_connector( iter.second.GetModeConnector() ) )
+			pLeaseConnector = &iter.second;
+		else if ( !pMainConnector && iter.second.GetModeConnector()->connection == DRM_MODE_CONNECTED )
+			pMainConnector = &iter.second;
 	}
-	if ( !uConnectorId )
+	if ( !pLeaseConnector )
 	{
 		drm_log.errorf( "lease: connector %s not found, not leasing", s_pszLeaseConnector );
 		return;
 	}
+	const uint32_t uConnectorId = pLeaseConnector->GetObjectId();
 
-	// Last compatible CRTC: this gamescope takes the first one it finds.
+	// Never the CRTC the main panel will take (find_crtc_for_connector picks
+	// the first compatible one).
+	gamescope::CDRMCRTC *pMainCRTC = pMainConnector ? find_crtc_for_connector( drm, pMainConnector ) : nullptr;
 	auto crtcIter = drm->crtcs.end();
 	for ( auto it = drm->crtcs.begin(); it != drm->crtcs.end(); ++it )
 	{
-		if ( (*it)->GetCRTCMask() & uPossibleCRTCs )
+		if ( it->get() == pMainCRTC )
+			continue;
+		if ( pLeaseConnector->GetPossibleCRTCMask() & ( *it )->GetCRTCMask() )
+		{
 			crtcIter = it;
+			break;
+		}
 	}
-	if ( crtcIter == drm->crtcs.end() || drm->crtcs.size() < 2 )
+	if ( crtcIter == drm->crtcs.end() )
 	{
 		drm_log.errorf( "lease: no spare CRTC for %s", s_pszLeaseConnector );
 		return;
@@ -1685,18 +1742,24 @@ static void create_connector_lease( struct drm_t *drm )
 	const uint32_t uCRTCMask = ( *crtcIter )->GetCRTCMask();
 	const uint32_t uCRTCId = ( *crtcIter )->GetObjectId();
 
-	// A primary plane for it, preferring the one already on that CRTC.
+	// A primary plane for it: one that only fits that CRTC if there is one, so
+	// the main panel keeps every primary it could use.
 	auto planeIter = drm->planes.end();
 	int nPrimaries = 0;
+	bool bExclusive = false;
 	for ( auto it = drm->planes.begin(); it != drm->planes.end(); ++it )
 	{
 		if ( ( *it )->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_PRIMARY )
 			continue;
 		nPrimaries++;
-		if ( !( ( *it )->GetModePlane()->possible_crtcs & uCRTCMask ) )
+		const uint32_t uPossible = ( *it )->GetModePlane()->possible_crtcs;
+		if ( !( uPossible & uCRTCMask ) || bExclusive )
 			continue;
-		if ( planeIter == drm->planes.end() || ( *it )->GetModePlane()->crtc_id == uCRTCId )
+		if ( planeIter == drm->planes.end() || uPossible == uCRTCMask )
+		{
 			planeIter = it;
+			bExclusive = ( uPossible == uCRTCMask );
+		}
 	}
 	if ( planeIter == drm->planes.end() || nPrimaries < 2 )
 	{
@@ -1705,9 +1768,11 @@ static void create_connector_lease( struct drm_t *drm )
 	}
 	const uint32_t uPlaneId = ( *planeIter )->GetObjectId();
 
-	// Blank it until the other compositor takes over (else the panel keeps
-	// showing the boot console).
-	drmModeSetCrtc( drm->fd, uCRTCId, 0, 0, 0, nullptr, 0, nullptr );
+	if ( !detach_lease_resources( drm, pLeaseConnector, crtcIter->get(), planeIter->get() ) )
+	{
+		drm_log.errorf_errno( "lease: could not free %s's pipeline, not leasing", s_pszLeaseConnector );
+		return;
+	}
 
 	uint32_t objects[] = { uConnectorId, uCRTCId, uPlaneId };
 	uint32_t uLesseeId = 0;
@@ -1718,8 +1783,8 @@ static void create_connector_lease( struct drm_t *drm )
 		s_nLeaseFd = -1;
 		return;
 	}
-	drm_log.infof( "lease: %s leased (connector %u, crtc %u, plane %u, lessee %u)",
-		s_pszLeaseConnector, uConnectorId, uCRTCId, uPlaneId, uLesseeId );
+	drm_log.infof( "lease: %s leased (connector %u, crtc %u, %s plane %u, lessee %u)",
+		s_pszLeaseConnector, uConnectorId, uCRTCId, bExclusive ? "exclusive" : "shared", uPlaneId, uLesseeId );
 
 	s_uLeasedConnectorId = uConnectorId;
 	drm->planes.erase( planeIter );
