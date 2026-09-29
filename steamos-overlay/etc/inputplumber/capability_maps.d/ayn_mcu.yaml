@@ -86,7 +86,9 @@ mapping:
       gamepad:
         button: QuickAccess
 
-  # Thor's AYN key (gpio-keys-ayn). Screenshot, like the second AYANEO key.
+  # Thor's AYN key (gpio-keys-ayn): brings the bottom-screen dashboard to the
+  # front (konkrd sees F24 on the InputPlumber keyboard). The dashboard has
+  # its own Screenshot button.
   - name: AYN Key
     source_events:
       - evdev:
@@ -94,8 +96,7 @@ mapping:
           event_code: KEY_F24
           value_type: button
     target_event:
-      gamepad:
-        button: Screenshot
+      keyboard: KeyF24
 
   - name: Right Trigger
     source_events:

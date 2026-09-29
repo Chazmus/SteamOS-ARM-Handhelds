@@ -112,6 +112,59 @@ def battery() -> dict:
     return {"percent": -1, "status": ""}
 
 
+def power_watts() -> float | None:
+    """Battery draw in W (voltage x current), None when unknown."""
+    for b in glob.glob("/sys/class/power_supply/*"):
+        if rd(f"{b}/type") == "Battery":
+            try:
+                w = int(rd(f"{b}/voltage_now")) * int(rd(f"{b}/current_now")) / 1e12
+            except ValueError:
+                return None
+            return round(abs(w), 1)
+    return None
+
+
+def memory() -> dict:
+    info = {}
+    for line in rd("/proc/meminfo").splitlines():
+        k, _, v = line.partition(":")
+        if v.split():
+            info[k] = int(v.split()[0])
+    total = info.get("MemTotal", 0)
+    used = total - info.get("MemAvailable", total)
+    return {"used_gb": round(used / 1048576, 1), "total_gb": round(total / 1048576, 1)}
+
+
+class FpsReader:
+    """Game frame rate from gamescope's stats FIFO ("fps=<float>" lines).
+    None once no game has drawn for a few seconds (desktop apps, Steam UI)."""
+    def __init__(self):
+        self.fps: float | None = None
+        self.at = 0.0
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        link = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "gamescope-stats")
+        while True:
+            try:
+                with open(os.path.join(os.path.realpath(link), "stats.pipe")) as pipe:
+                    for line in pipe:
+                        if line.startswith("fps="):
+                            try:
+                                self.fps, self.at = float(line[4:]), time.monotonic()
+                            except ValueError:
+                                pass
+            except OSError:
+                pass
+            time.sleep(2)
+
+    def get(self) -> float | None:
+        return round(self.fps) if self.fps is not None and time.monotonic() - self.at < 3 else None
+
+
+FPS = FpsReader()
+
+
 def temperatures() -> dict:
     cpu = gpu = 0.0
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
@@ -471,6 +524,9 @@ class Handler(BaseHTTPRequestHandler):
                 "temps": temperatures(),
                 "fan": fan_percent(),
                 "gpu_mhz": gpu_mhz(),
+                "fps": FPS.get(),
+                "power_w": power_watts(),
+                "memory": memory(),
                 **konkrd_state(),
                 "backlights": backlights(),
                 "volume": volume(),

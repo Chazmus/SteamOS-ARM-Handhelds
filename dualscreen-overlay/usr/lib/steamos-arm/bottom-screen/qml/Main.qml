@@ -254,6 +254,9 @@ Window {
                 Item { Layout.fillWidth: true }
                 Repeater {
                     model: st.show_stats === false ? [] : [
+                        st.fps ? st.fps + " FPS" : "",
+                        st.power_w ? st.power_w + " W" : "",
+                        st.memory && st.memory.total_gb ? "RAM " + st.memory.used_gb + "/" + st.memory.total_gb + " GB" : "",
                         st.temps ? "CPU " + st.temps.cpu + "°" : "",
                         st.temps ? "GPU " + st.temps.gpu + "°" : "",
                         st.gpu_mhz ? st.gpu_mhz + " MHz" : "",

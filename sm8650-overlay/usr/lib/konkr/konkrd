@@ -80,6 +80,7 @@ PROFILE_RGB = {"silent": (0, 90, 255), "balanced": (0, 255, 60), "turbo": (255, 
 
 EV_KEY = 1
 KEY_F13, KEY_F14, KEY_F15 = 183, 184, 185
+KEY_F24 = 194                      # AYN Thor: AYN key (InputPlumber keyboard)
 INPUT_EVENT = struct.Struct("llHHi")
 
 
@@ -905,6 +906,19 @@ class Daemon:
             save_state(self.st)
             self.apply_profile()
             notify_desktop(PROFILE_LABEL[self.st["profile"]], "Performance profile")
+        elif name == "bottom-home":
+            # Bottom-screen dashboard to the front (it watches this file's mtime).
+            try:
+                import pwd
+                uid = pwd.getpwnam("steamos").pw_uid
+                path = f"/run/user/{uid}/bottom-screen.home"
+                if os.path.isdir(os.path.dirname(path)):
+                    with open(path, "a"):
+                        pass
+                    os.utime(path, None)
+                    os.chown(path, uid, uid)
+            except (KeyError, OSError) as e:
+                log(f"bottom-home: {e}")
         elif name == "fan-boost":
             self.st["fan"]["boost"] = not self.st["fan"].get("boost")
             save_state(self.st)
@@ -933,7 +947,7 @@ class Daemon:
                 self.leds.flash(rgb)
 
     def run(self) -> None:
-        keymap = {KEY_F13: "F13", KEY_F14: "F14", KEY_F15: "F15"}
+        keymap = {KEY_F13: "F13", KEY_F14: "F14", KEY_F15: "F15", KEY_F24: "F24"}
         next_slow = 0.0
         next_ui_check = 0.0
         power_down_at = None
@@ -963,7 +977,8 @@ class Daemon:
                 name = keymap.get(code)
                 if name and value == 1:
                     act = self.st.get("buttons", {}).get(name) or \
-                        self.conf.get("buttons", name, fallback="none")
+                        self.conf.get("buttons", name,
+                                      fallback="bottom-home" if name == "F24" else "none")
                     self.action(act)
             while self.requests is not None:
                 try:
