@@ -209,7 +209,10 @@ DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
 # first backlight: the bottom panel on both of these.
 case "$DEVICE_MODEL" in
   "AYN Thor")
-    export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen}"
+    # ROCKNIX names it bottom_touchscreen; the 7.0.14 kernel calls both
+    # "generic ft5x06 (8d)", so also match the bottom one's I2C address
+    # (top is 4-0038 on i2c4, bottom 1-0038, same as Armada's Thor tree).
+    export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen,path:/1-0038/}"
     TOP_BACKLIGHT=/sys/class/backlight/ae96000.dsi.0 ;;
   "AYANEO Pocket DS")
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-Goodix Capacitive TouchScreen}"
@@ -220,6 +223,13 @@ esac
 if [[ -z "${GAMESCOPE_BACKLIGHT_PATH:-}" && -n "${TOP_BACKLIGHT:-}" && -e "$TOP_BACKLIGHT" ]]; then
   export GAMESCOPE_BACKLIGHT_PATH="$TOP_BACKLIGHT"
 fi
+
+# Panel orientation override (GAMESCOPE_ORIENTATION=left|right|normal|
+# upsidedown). MaSi's 7.2.8 session forces left on the RP6 / Odin 2 Portal
+# (their trees say rotation 270, the Odin 2 says 90) and right on the Thor.
+# Not forced here yet: our auto already shows the Thor right, and the RP6
+# report is mirrored touch, not an upside-down picture.
+PANEL_ORIENT="${GAMESCOPE_ORIENTATION:-}"
 
 # Bottom screen (bottom-screen.service): lend the second panel to its own
 # gamescope through a DRM lease, where the dashboard runs. Off with
@@ -281,6 +291,9 @@ if [[ "$KMS_ROTATION" != 1 ]]; then
   # Shader rotation composites anyway; say so explicitly (MSM default).
   GAMESCOPE_ARGS+=(--use-rotation-shader --force-composition)
 fi
+if [[ -n "$PANEL_ORIENT" ]]; then
+  GAMESCOPE_ARGS+=(--force-orientation "$PANEL_ORIENT")
+fi
 if [[ "$MANGOAPP" == 1 ]]; then
   GAMESCOPE_ARGS+=(--mangoapp)
 fi
@@ -300,6 +313,6 @@ fi
 env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE)=' \
   >"$XDG_RUNTIME_DIR/gamescope-steam.env" 2>/dev/null || true
 
-echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} max=${MAX_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION} ignore_touch=${GAMESCOPE_IGNORE_TOUCH:-} bottom=${GAMESCOPE_LEASE_CONNECTOR:-none}"
+echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} max=${MAX_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION} ignore_touch=${GAMESCOPE_IGNORE_TOUCH:-} bottom=${GAMESCOPE_LEASE_CONNECTOR:-none} orientation=${PANEL_ORIENT:-auto}"
 
 exec gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/lib/steamos/gamescope-onready ${WATCH_SERVICE:-}

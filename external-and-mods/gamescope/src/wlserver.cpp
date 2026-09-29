@@ -565,8 +565,29 @@ static std::vector<std::string> wlserver_name_list( const char *pszEnv )
 	return list;
 }
 
-static bool wlserver_name_listed( const std::vector<std::string> &list, const char *name )
+// An item is a device name, or "path:<text>" to match its sysfs path (the
+// 7.0.14 kernel names both Thor touchscreens "generic ft5x06 (8d)"; only the
+// I2C address tells them apart, e.g. path:1-0038 / path:4-0038).
+static bool wlserver_name_listed( const std::vector<std::string> &list, struct wlr_input_device *device )
 {
+	const char *name = device->name;
+	const char *syspath = nullptr;
+	if ( wlr_input_device_is_libinput( device ) )
+	{
+		struct libinput_device *lidev = wlr_libinput_get_device_handle( device );
+		struct udev_device *udev = lidev ? libinput_device_get_udev_device( lidev ) : nullptr;
+		syspath = udev ? udev_device_get_syspath( udev ) : nullptr;
+		bool bFound = false;
+		for ( const std::string &item : list )
+		{
+			if ( syspath && item.rfind( "path:", 0 ) == 0 && strstr( syspath, item.c_str() + 5 ) )
+				bFound = true;
+		}
+		if ( udev )
+			udev_device_unref( udev );
+		if ( bFound )
+			return true;
+	}
 	for ( const std::string &item : list )
 	{
 		if ( name && item == name )
@@ -575,23 +596,23 @@ static bool wlserver_name_listed( const std::vector<std::string> &list, const ch
 	return false;
 }
 
-static bool wlserver_touch_ignored( const char *name )
+static bool wlserver_touch_ignored( struct wlr_input_device *device )
 {
 	static const std::vector<std::string> s_Ignored = wlserver_name_list( "GAMESCOPE_IGNORE_TOUCH" );
-	return wlserver_name_listed( s_Ignored, name );
+	return wlserver_name_listed( s_Ignored, device );
 }
 
-static bool wlserver_input_excluded( const char *name )
+static bool wlserver_input_excluded( struct wlr_input_device *device )
 {
 	static const std::vector<std::string> s_Only = wlserver_name_list( "GAMESCOPE_INPUT_ONLY" );
-	return !s_Only.empty() && !wlserver_name_listed( s_Only, name );
+	return !s_Only.empty() && !wlserver_name_listed( s_Only, device );
 }
 
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
 
-	if ( wlserver_input_excluded( device->name ) )
+	if ( wlserver_input_excluded( device ) )
 	{
 		wl_log.infof( "ignoring input device %s (not in GAMESCOPE_INPUT_ONLY)", device->name );
 		return;
@@ -644,7 +665,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
-			if ( wlserver_touch_ignored( device->name ) )
+			if ( wlserver_touch_ignored( device ) )
 			{
 				wl_log.infof( "ignoring touch input device %s (GAMESCOPE_IGNORE_TOUCH)", device->name );
 				break;
