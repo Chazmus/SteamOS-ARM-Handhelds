@@ -265,12 +265,21 @@ fi
 GAMESCOPE_SESSION_TARGET="${GAMESCOPE_SESSION_TARGET:-gamescope-session.target}"
 WATCH_SERVICE=""
 
+IS_ODIN3=0
+if grep -aqE "ayn,odin3|qcom,sm8750" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  IS_ODIN3=1
+fi
+
 # DRM backend = Wayland compositor + Xwayland. Steam paints on X11 (:0 / xcb).
 # --backend wayland/sdl would nest inside another compositor and drop the panel.
 GAMESCOPE_ARGS=(
   --backend drm
   --prefer-output "$OUTPUT"
-  --force-internal
+)
+if [[ "$IS_ODIN3" != 1 ]]; then
+  GAMESCOPE_ARGS+=(--force-internal)
+fi
+GAMESCOPE_ARGS+=(
   --scaler fit
   --filter linear
   --steam
@@ -291,7 +300,11 @@ GAMESCOPE_ARGS=(
 
 if [[ "$KMS_ROTATION" != 1 ]]; then
   # Shader rotation composites anyway; say so explicitly (MSM default).
-  GAMESCOPE_ARGS+=(--use-rotation-shader --force-composition)
+  if [[ "$IS_ODIN3" == 1 ]]; then
+    GAMESCOPE_ARGS+=(--force-composition-rotation --force-composition)
+  else
+    GAMESCOPE_ARGS+=(--use-rotation-shader --force-composition)
+  fi
 fi
 if [[ -n "$PANEL_ORIENT" ]]; then
   GAMESCOPE_ARGS+=(--force-orientation "$PANEL_ORIENT")

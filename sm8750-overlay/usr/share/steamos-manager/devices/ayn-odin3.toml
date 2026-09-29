@@ -1,0 +1,8 @@
+[[device]]
+dt.compatible = "ayn,odin3"
+device = "ayn_odin3"
+variant = "Odin3"
+friendly_name = "AYN Odin 3"
+
+[inputplumber]
+target_devices = ["deck-uhid"]
