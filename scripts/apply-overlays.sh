@@ -655,6 +655,45 @@ find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/AYANEO" "$R/usr/share/
   "$R/etc/inputplumber" "$R/var/lib/overlays/etc/upper/inputplumber" 2>/dev/null \
   \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 chmod 0644 "$R/usr/lib/udev/hwdb.d/10-ayaneo.hwdb"
+# 8 Gen 2 image: Wi-Fi firmware from upstream linux-firmware (pinned tag and
+# hashes). The Frame's WCN7850 board file only has the Frame's own 2 boards,
+# so the 8 Gen 2 handhelds fell back to generic radio data; upstream has 67
+# and newer firmware (WLAN.HMT.1.1.c7). regdb.bin stays as it is. The 8 Gen 3
+# images keep the Frame's set, which is what the Pocket FIT was tuned on.
+WIFI_FW_TAG=20260916
+WIFI_FW_CACHE="${WORKDIR}/kernel-sm8550/cache/lfw-ath12k-${WIFI_FW_TAG}/WCN7850/hw2.0"
+declare -A WIFI_FW_SHA=(
+  [amss.bin]=43aadfd3df887f27de74020273aee484bac6a31dd53068f91baf2a9b094d6a68
+  [m3.bin]=0e72f44df7defc269fe92dcea25d4d409046c04b77d41c510c52879b3dfc1055
+  [board-2.bin]=1abee7132dbccb523cca44a8de4e8968aa7bf5a5fcc032c338f687f94ea5bf4e
+  [Notice.txt]=515bf4c9d620a87458e4447fe01a0e9bc384d1c3e0037cc4c3d2037b1ff25525
+)
+WIFI_FW_DST="$R/usr/lib/firmware/ath12k/WCN7850/hw2.0"
+if [[ "${SOC:-sm8650}" == sm8550 ]]; then
+  mkdir -p "$WIFI_FW_CACHE"
+  for f in "${!WIFI_FW_SHA[@]}"; do
+    if [[ ! -f "$WIFI_FW_CACHE/$f" ]] || ! echo "${WIFI_FW_SHA[$f]}  $WIFI_FW_CACHE/$f" | sha256sum -c --quiet 2>/dev/null; then
+      curl -sfL -o "$WIFI_FW_CACHE/$f" \
+        "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/ath12k/WCN7850/hw2.0/$f?h=${WIFI_FW_TAG}" \
+        || die "Wi-Fi firmware download failed: $f"
+    fi
+    echo "${WIFI_FW_SHA[$f]}  $WIFI_FW_CACHE/$f" | sha256sum -c --quiet || die "Wi-Fi firmware hash mismatch: $f"
+  done
+  mkdir -p "$STOCK/wcn7850-frame"
+  for f in amss.bin m3.bin board-2.bin; do
+    [[ -f "$WIFI_FW_DST/$f" && ! -f "$STOCK/wcn7850-frame/$f" ]] && cp -a "$WIFI_FW_DST/$f" "$STOCK/wcn7850-frame/$f"
+    install -m0644 "$WIFI_FW_CACHE/$f" "$WIFI_FW_DST/$f"
+  done
+  install -m0644 "$WIFI_FW_CACHE/Notice.txt" "$WIFI_FW_DST/Notice.txt"
+  log "== Wi-Fi: upstream WCN7850 firmware ${WIFI_FW_TAG}"
+elif [[ -d "$STOCK/wcn7850-frame" ]]; then
+  # An 8 Gen 3 build on a rootfs that had the 8 Gen 2 set: put the Frame's back.
+  for f in amss.bin m3.bin board-2.bin; do
+    [[ -f "$STOCK/wcn7850-frame/$f" ]] && install -m0644 "$STOCK/wcn7850-frame/$f" "$WIFI_FW_DST/$f"
+  done
+  rm -f "$WIFI_FW_DST/Notice.txt"
+fi
+
 # 8 Gen 2 image only (zram, cpuidle, UFS, backlight, mic): sm8550-image-overlay.
 # The rootfs is reused between builds, so an 8 Gen 3 build removes them again.
 IMG_OVL="${ROOT}/sm8550-image-overlay"
