@@ -65,6 +65,18 @@ fi
 # Force-off leaves Chrome singleton locks + a half-written htmlcache.
 # Then index.html paints and never pulls libraries.js (no Gamepad window).
 htmlcache="${STEAMROOT}/config/htmlcache"
+is_odin3=0
+if grep -aqE "ayn,odin3|qcom,sm8750" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  is_odin3=1
+fi
+if [[ "$is_odin3" -eq 1 ]]; then
+  ram_cache="/tmp/steam-htmlcache-${USER:-steamos}"
+  mkdir -p "${ram_cache}" 2>/dev/null || true
+  if [[ ! -L "${htmlcache}" ]]; then
+    rm -rf "${htmlcache}" 2>/dev/null || true
+    ln -sfn "${ram_cache}" "${htmlcache}" 2>/dev/null || true
+  fi
+fi
 if [[ -L "${htmlcache}/SingletonLock" || -e "${htmlcache}/SingletonLock" ]]; then
   rm -f "${htmlcache}/SingletonLock" "${htmlcache}/SingletonCookie" \
         "${htmlcache}/SingletonSocket" 2>/dev/null || true
@@ -97,6 +109,11 @@ if [[ -d "${STEAMROOT}/linuxarm64" && -d "${STEAMROOT}/steamrtarm64" ]]; then
   unset _lib _src _dst
 fi
 echo "RUNSTEAM: DISPLAY=${DISPLAY} GAMESCOPE_WAYLAND_DISPLAY=${GAMESCOPE_WAYLAND_DISPLAY} QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
+
+if [[ "$is_odin3" -eq 1 && -f /etc/sdl2/qcom-gamecontrollerdb.txt ]]; then
+  export SDL_GAMECONTROLLERCONFIG_FILE=/etc/sdl2/qcom-gamecontrollerdb.txt
+  export SDL_GAMECONTROLLERCONFIG="$(grep -v '^#' /etc/sdl2/qcom-gamecontrollerdb.txt | tr '\n' ',' 2>/dev/null || true)"
+fi
 
 function ln_for_real()
 {

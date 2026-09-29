@@ -11,6 +11,8 @@
 /backups/
 /out/
 /odin-apply.log
+/odin3-apply.log
+/sm8750-work/
 
 # Host tools downloaded next to the tree
 /tools/casync.deb
