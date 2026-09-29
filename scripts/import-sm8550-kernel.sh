@@ -105,7 +105,7 @@ ps, = struct.unpack_from("<I", d, 36)
 open(sys.argv[2], "wb").write(d[ps:ps + ks])
 PY
 rd="$work/initramfs"
-mkdir -p "$rd/root/bin"
+mkdir -p "$rd/root/bin" "$rd/root/dev" "$rd/root/proc" "$rd/root/sys"
 cp /bin/busybox "$rd/root/bin/busybox"
 file -L /bin/busybox | grep -q "statically linked" || { echo "need static busybox" >&2; exit 1; }
 install -m0755 "$kc/initramfs/init" "$rd/root/init"
