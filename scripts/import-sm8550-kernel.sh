@@ -102,7 +102,20 @@ d = open(sys.argv[1], "rb").read()
 assert d[:8] == b"ANDROID!"
 ks, = struct.unpack_from("<I", d, 8)
 ps, = struct.unpack_from("<I", d, 36)
-open(sys.argv[2], "wb").write(d[ps:ps + ks])
+k = d[ps:ps + ks]
+# The appended DTBs follow the gzipped Image. Its AYANEO Pocket trees give
+# the GPU "qcom,adreno-43050a00", which Mesa takes for an Adreno A32 (G3x
+# Gen 2), so Turnip drove the 740 wrong and the screen stayed black (EVO,
+# beta 5). The AYN/Retroid trees and upstream sm8550.dtsi use 43050a01.
+# Same length, so a byte swap keeps every DTB intact.
+import zlib
+z = zlib.decompressobj(31); z.decompress(k)
+img_len = len(k) - len(z.unused_data)
+bad, good = b"qcom,adreno-43050a00", b"qcom,adreno-43050a01"
+n = k[img_len:].count(bad)
+k = k[:img_len] + k[img_len:].replace(bad, good)
+print(f"dtb fixup: {n} x {bad.decode()} -> {good.decode()}")
+open(sys.argv[2], "wb").write(k)
 PY
 rd="$work/initramfs"
 mkdir -p "$rd/root/bin" "$rd/root/dev" "$rd/root/proc" "$rd/root/sys"
