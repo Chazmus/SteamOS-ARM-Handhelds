@@ -55,4 +55,18 @@ amixer -c "$card_id" cset name='RX_RX0 Digital Volume' 84 >/dev/null 2>&1
 amixer -c "$card_id" cset name='RX_RX1 Digital Volume' 84 >/dev/null 2>&1
 
 log "card ${card_id} speaker mixers applied"
+
+# AYN Thor: its built-in mic is DMIC3 through the TX macro into capture
+# PCM 2. The UCM "Mic" device would switch that path on, but PipeWire runs the
+# card in pro-audio, so nothing does. Capture then fails with EIO and PipeWire
+# spins on it until it gets killed, taking all sound with it. Set the path up
+# here; any control this kernel names differently just fails quietly.
+if grep -qa 'ayn,thor' /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  for c in "MultiMedia3 Mixer TX_CODEC_DMA_TX_3=1" "TX DEC0 MUX=SWR_MIC" \
+           "TX SMIC MUX0=SWR_MIC7" "DMIC3 Switch=1" "DMIC3_MIXER Switch=1" \
+           "TX_AIF1_CAP Mixer DEC0=1" "DEC0 MODE=ADC_DEFAULT" "TX_DEC0 Volume=100"; do
+    amixer -c "$card_id" cset name="${c%%=*}" "${c#*=}" >/dev/null 2>&1
+  done
+  log "card ${card_id} Thor mic path applied"
+fi
 exit 0

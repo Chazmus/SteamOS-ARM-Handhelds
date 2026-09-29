@@ -1,0 +1,5 @@
+# Keep the UFS link in hibernate over system sleep (spm_lvl 3, what runtime PM
+# already uses) instead of powering it off (5). Coming back from "off" after a
+# long sleep can leave the UFS PHY failing to calibrate, and every later
+# suspend then fails. spm_lvl only exists once the driver is bound.
+ACTION=="add|bind", SUBSYSTEM=="platform", DRIVER=="ufshcd-qcom", ATTR{spm_lvl}="3"

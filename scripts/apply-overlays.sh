@@ -651,6 +651,16 @@ find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/AYANEO" "$R/usr/share/
   "$R/etc/inputplumber" "$R/var/lib/overlays/etc/upper/inputplumber" 2>/dev/null \
   \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 chmod 0644 "$R/usr/lib/udev/hwdb.d/10-ayaneo.hwdb"
+# 8 Gen 2 image only (zram, cpuidle, UFS, backlight, mic): sm8550-image-overlay.
+# The rootfs is reused between builds, so an 8 Gen 3 build removes them again.
+IMG_OVL="${ROOT}/sm8550-image-overlay"
+mapfile -t _img_files < <(cd "$IMG_OVL" && find usr -type f)
+if [[ "${SOC:-sm8650}" == sm8550 ]]; then
+  log "== SM8550 image-only files (${#_img_files[@]})"
+  for f in "${_img_files[@]}"; do install -D -m0644 "$IMG_OVL/$f" "$R/$f"; done
+else
+  for f in "${_img_files[@]}"; do rm -f "$R/$f"; done
+fi
 # Log collector behind the BOOT "debug" file, also for kernels that don't
 # run our initramfs (it is the same script our initramfs installs).
 install -D -m0755 "$MOD/kernel-common/initramfs/bootdebug" "$R/usr/lib/steamos-arm/bootdebug"

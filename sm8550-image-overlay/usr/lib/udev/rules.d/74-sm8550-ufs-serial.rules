@@ -1,0 +1,9 @@
+# Some UFS chips (the RP6's among them) put raw bytes at the start of their
+# SCSI serial, which isn't valid UTF-8. udisksd then logs an error for every
+# UFS LUN each time anything lists the drives. The UFS controller has the
+# serial as a proper string too, use that. Whole disks only (partitions copy
+# it from their disk), since each read is a UFS query.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", \
+  SUBSYSTEMS=="platform", DRIVERS=="ufshcd-qcom", \
+  ATTRS{string_descriptors/serial_number}=="?*", \
+  ENV{ID_SCSI_SERIAL}="$attr{string_descriptors/serial_number}"

@@ -21,6 +21,7 @@ R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
 MOD="${ROOT}/external-and-mods"
 OVL="${ROOT}/steamos-overlay"
 SOC="${SOC:-sm8650}"
+export SOC   # apply-overlays: 8 Gen 2-only files
 case "$SOC" in
   sm8650) _kdef="${WORKDIR}/kernel-release/current" ;;
   sm8550)
