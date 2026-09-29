@@ -94,6 +94,8 @@ install_file "$OVL/usr/lib/steamos/gamescope-onready" \
   "$R/usr/lib/steamos/gamescope-onready" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-steam-focus" \
   "$R/usr/lib/steamos/sm8550-steam-focus" 0755
+install_file "$OVL/usr/lib/steamos/sm8550-volume-keys" \
+  "$R/usr/lib/steamos/sm8550-volume-keys" 0755
 install_file "$OVL/usr/lib/steamos/odin-bin/steamvr" \
   "$R/usr/lib/steamos/odin-bin/steamvr" 0755
 backup "$R/usr/bin/steamos-select-branch" "$STOCK/usr/bin/steamos-select-branch"
@@ -164,13 +166,21 @@ done
 mkdir -p "$R/etc/systemd/system"
 ln -sfn /usr/lib/systemd/system/graphical.target "$R/etc/systemd/system/default.target"
 
-# User-level service masking (steamos-manager requires tracefs not in 7.2.0; steamvr services; wireplumber crash loop; missing sm8550 services)
+# User-level service masking (steamos-manager requires tracefs not in 7.2.0; steamvr services)
 mkdir -p "$R/etc/systemd/user"
 for usvc in steamvr.service steamvr-proxmicmute.service steamvr-v4l2cam.service \
             steamos-manager.service steamos-manager-session-cleanup.service \
-            wireplumber.service sm8550-audio-pipewire.service sm8550-volume-keys.service; do
+            sm8550-audio-pipewire.service; do
   ln -sfn /dev/null "$R/etc/systemd/user/${usvc}"
 done
+rm -f "$R/etc/systemd/user/wireplumber.service" "$R/etc/systemd/user/sm8550-volume-keys.service" 2>/dev/null || true
+
+# Volume keys daemon for Odin 3 (handles gpio-keys VOLUP and pmic_resin VOLDOWN)
+mkdir -p "$R/usr/lib/systemd/user/default.target.wants" "$R/etc/systemd/user/default.target.wants"
+ln -sfn /usr/lib/systemd/user/sm8550-volume-keys.service \
+  "$R/usr/lib/systemd/user/default.target.wants/sm8550-volume-keys.service"
+ln -sfn /usr/lib/systemd/user/sm8550-volume-keys.service \
+  "$R/etc/systemd/user/default.target.wants/sm8550-volume-keys.service"
 
 # Disable steamos-log-submitter to prevent coredump storm on errors
 mkdir -p "$R/etc/systemd/system"
@@ -203,12 +213,15 @@ vm.dirty_writeback_centisecs = 1500
 vm.dirty_expire_centisecs = 3000
 SYSCTL
 
-# Disable Deckard VR spatial audio modules in WirePlumber
-for wpconf in 60-spatial-audio.conf 70-spatial-node-config.conf; do
-  if [[ -f "$R/etc/wireplumber/wireplumber.conf.d/$wpconf" ]]; then
-    mv "$R/etc/wireplumber/wireplumber.conf.d/$wpconf" "$R/etc/wireplumber/wireplumber.conf.d/${wpconf}.disabled"
-  fi
-done
+# Clean up Deckard VR headset WirePlumber configs and SteamVR dependency
+# Stock Deckard VR configs (40-mic-processing, 60-spatial-audio, etc.) crash WirePlumber with SIGSEGV
+# because the VR multi-mic beamforming array and spatializer hardware do not exist on Odin 3.
+# Removing them lets WirePlumber use standard ALSA UCM device discovery in /usr/share/wireplumber/.
+rm -f "$R/usr/lib/systemd/user/wireplumber.service.d/wireplumber-steamvr.conf" 2>/dev/null || true
+if [[ -d "$R/etc/wireplumber/wireplumber.conf.d" ]]; then
+  rm -rf "$R/etc/wireplumber/wireplumber.conf.d"
+  mkdir -p "$R/etc/wireplumber/wireplumber.conf.d"
+fi
 
 # Enable persistent journal logging and boot debug
 mkdir -p "$R/var/log/journal" "$R/etc/systemd/journald.conf.d"
