@@ -122,7 +122,11 @@ prepare_source() {
   for app in "${SOC_DIR}"/dts/*.append; do
     [[ -e "$app" ]] || continue
     log "append $(basename "$app")"
-    cat "$app" >>"${SRC}/arch/arm64/boot/dts/qcom/$(basename "$app" .append).dts"
+    # <name>.dts.append goes onto <name>.dts (this used to write <name>.dts.dts,
+    # which nothing compiles: the Thor fixes never made it in).
+    local target="${SRC}/arch/arm64/boot/dts/qcom/$(basename "$app" .append)"
+    [[ -f "$target" ]] || die "append target missing: $target"
+    cat "$app" >>"$target"
   done
   local mk="${SRC}/arch/arm64/boot/dts/qcom/Makefile" dtb
   for dtb in $DTBS; do

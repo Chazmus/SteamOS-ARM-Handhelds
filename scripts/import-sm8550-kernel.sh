@@ -113,6 +113,58 @@ bad, good = b"qcom,adreno-43050a00", b"qcom,adreno-43050a01"
 n = k[img_len:].count(bad)
 k = k[:img_len] + k[img_len:].replace(bad, good)
 print(f"dtb fixup: {n} x {bad.decode()} -> {good.decode()}")
+
+# Touch: the RP6 and Thor trees pre-rotate their touchscreens (swapped-x-y +
+# inverted-x) for a compositor that doesn't rotate touch itself. gamescope
+# and KWin rotate touch by the panel orientation, so it got rotated twice
+# (RP6 tester: taps land in the wrong place). Keep panel-native coordinates
+# like Armada's trees: the RP6 keeps inverted-y (its sensor is flipped),
+# the Odin 2 Mini keeps its flags (its sensor is mounted sideways).
+import re, subprocess, tempfile
+TOUCH_FIX = {b"Retroid Pocket 6", b"AYN Thor"}
+DROP = ("touchscreen-swapped-x-y;", "touchscreen-inverted-x;")
+dtbs, rest, i = [], k[img_len:], 0
+while True:
+    a = rest.find(b"\xd0\x0d\xfe\xed", i)
+    if a < 0:
+        break
+    size = int.from_bytes(rest[a + 4:a + 8], "big")
+    dtbs.append(rest[a:a + size]); i = a + size
+out = []
+for b in dtbs:
+    names = set(re.findall(rb"(AYN Thor|Retroid Pocket 6)(?=[\x00 ])", b))
+    if not names & TOUCH_FIX:
+        out.append(b); continue
+    with tempfile.TemporaryDirectory() as td:
+        open(f"{td}/in.dtb", "wb").write(b)
+        dts = subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", f"{td}/in.dtb"], check=True, capture_output=True, text=True).stdout
+        new, dropped = [], 0
+        in_ts = 0
+        for line in dts.splitlines():
+            if re.match(r"\s*touchscreen@[0-9a-f]+ \{", line):
+                in_ts = 1
+            elif in_ts and line.strip() == "};":
+                in_ts = 0
+            if in_ts and line.strip() in DROP:
+                dropped += 1; continue
+            new.append(line)
+        open(f"{td}/out.dts", "w").write("\n".join(new) + "\n")
+        subprocess.run(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", f"{td}/out.dtb", f"{td}/out.dts"], check=True)
+        nb = open(f"{td}/out.dtb", "rb").read()
+        # Only those lines may differ: round-trip the untouched tree the same
+        # way (dtc prints some byte strings differently the second time).
+        def rt(dts_text, name):
+            open(f"{td}/{name}.dts", "w").write(dts_text)
+            subprocess.run(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", f"{td}/{name}.dtb", f"{td}/{name}.dts"], check=True)
+            return subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", f"{td}/{name}.dtb"], check=True, capture_output=True, text=True).stdout.splitlines()
+        before, after = rt(dts, "orig"), rt("\n".join(new) + "\n", "check")
+        gone = [l for l in before if l not in after]
+        assert len(before) - len(after) == dropped and all(l.strip() in DROP for l in gone), \
+            "dtb round trip changed more than the touch flags"
+    print(f"touch fixup: {', '.join(x.decode() for x in names)}: dropped {dropped} flags")
+    out.append(nb)
+assert sum(map(len, dtbs)) == len(rest), "unexpected data between the DTBs"
+k = k[:img_len] + b"".join(out)
 open(sys.argv[2], "wb").write(k)
 PY
 rd="$work/initramfs"
