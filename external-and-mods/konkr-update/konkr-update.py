@@ -185,7 +185,9 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     image = module.BootImg(src.read_bytes())
     if image.id != image.expected_id(): raise ValueError('KERNEL header checksum mismatch')
-    raw = module.ramdisk_bytes(image.ramdisk)
+    # Older installed helpers only know the bootimg ramdisk.
+    initramfs = getattr(module, 'initramfs_bytes', lambda img: module.ramdisk_bytes(img.ramdisk))
+    raw = initramfs(image)
     if b'konkr-update-recover' not in raw: raise ValueError('KERNEL has no update recovery hook')
     dst.write_bytes(image.build(module.retarget(image.cmdline, rootarg)))
 

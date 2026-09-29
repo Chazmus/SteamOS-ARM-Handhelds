@@ -98,7 +98,22 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
       /newroot/usr/lib/systemd/system/steamos-arm-bootdebug.service
   fi
   snap "root mounted from $rootdev, switch_root"
-  umount /boot 2>/dev/null
+  if [ "$debug" = 1 ] && mountpoint -q /boot; then
+    # Live log: keeps copying the kernel log to BOOT every 2 s for 5 minutes
+    # after the handover, so a hang or a system that never starts bootdebug
+    # still leaves one. It keeps this initramfs as its root (and /boot with
+    # it); busybox lives on a tmpfs because switch_root empties the rest.
+    # Two files in turn, so a hang in the middle of a write loses only one.
+    mkdir -p /live && mount -t tmpfs live /live && cp /bin/busybox /live/busybox &&
+      /live/busybox sh -c 'b=/live/busybox; i=0
+        while [ $i -lt 150 ]; do
+          $b sleep 2; i=$((i + 1)); f=/boot/bootlog-live-$((i % 2)).txt
+          { echo "=== live $i  uptime $($b cat /proc/uptime)"; $b dmesg; } >$f 2>&1
+          $b sync
+        done' </dev/null >/dev/null 2>&1 &
+  else
+    umount /boot 2>/dev/null
+  fi
   exec switch_root /newroot /sbin/init
 fi
 snap "FAILED to mount root ($rootdev)"

@@ -18,6 +18,7 @@ import gzip
 import hashlib
 import lzma
 import struct
+import zlib
 import sys
 from pathlib import Path
 
@@ -89,9 +90,18 @@ def ramdisk_bytes(rd: bytes) -> bytes:
     return rd                                   # plain cpio (or the "dummy" ramdisk)
 
 
-def partlabel_capable(img: BootImg) -> bool:
+def initramfs_bytes(img: BootImg) -> bytes:
+    """The initramfs: the bootimg ramdisk, or with a dummy ramdisk (SM8550,
+    like ROCKNIX) the uncompressed cpio built into the gzipped kernel Image."""
     raw = ramdisk_bytes(img.ramdisk)
-    return b"070701" in raw[:6] and b"PARTLABEL=" in raw
+    if raw[:6] == b"070701" or img.kernel[:2] != b"\x1f\x8b":
+        return raw
+    return zlib.decompressobj(31).decompress(img.kernel)
+
+
+def partlabel_capable(img: BootImg) -> bool:
+    raw = initramfs_bytes(img)
+    return b"070701" in raw and b"PARTLABEL=" in raw
 
 
 def retarget(cmdline: str, root: str) -> str:

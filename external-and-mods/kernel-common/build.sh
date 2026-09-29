@@ -15,7 +15,8 @@
 # Output: output/<release>/{boot/KERNEL, modules/<release>, firmware/}
 #
 # KERNEL is a ROCKNIX-ABL bootimg (header v0): gzip(Image) + appended DTBs
-# + a busybox initramfs (initramfs/init). ABL v1.1.8+ reads `model` from each
+# + a busybox initramfs (initramfs/init), as the bootimg ramdisk or, with
+# EMBED_INITRAMFS=1 in soc.env, built into the Image like ROCKNIX does. ABL v1.1.8+ reads `model` from each
 # DTB and boots the one matching "Set device model".
 # The image builder patches the real root=PARTUUID= into the cmdline.
 #
@@ -169,12 +170,25 @@ configure() {
   [[ -f "$cfg" ]] || die "missing ROCKNIX config $cfg"
   cp "$cfg" "${SRC}/.config"
   local sc="${SRC}/scripts/config --file ${SRC}/.config"
-  # ROCKNIX embeds its own initramfs through this placeholder; we boot without one.
-  $sc --set-str INITRAMFS_SOURCE ""
+  # ROCKNIX embeds its own initramfs through this placeholder; ours goes
+  # there too with EMBED_INITRAMFS (uncompressed: the whole Image is gzipped
+  # for ABL anyway, and konkr-update can then find the recovery hook in it).
+  if [[ "${EMBED_INITRAMFS:-0}" == 1 ]]; then
+    $sc --set-str INITRAMFS_SOURCE "$INITRD_CPIO"
+    $sc --enable INITRAMFS_COMPRESSION_NONE
+  else
+    $sc --set-str INITRAMFS_SOURCE ""
+  fi
   $sc --set-str LOCALVERSION "$LOCALVERSION"
   $sc --disable LOCALVERSION_AUTO
-  $sc --set-str EXTRA_FIRMWARE "$(cat "${WORK}/extra-firmware.list")"
-  $sc --set-str EXTRA_FIRMWARE_DIR "external-firmware"
+  # FW_BUILTIN=0 (soc.env): like ROCKNIX, nothing built in; the same files
+  # still go to the rootfs (install_output) and load from there.
+  if [[ "${FW_BUILTIN:-1}" == 1 ]]; then
+    $sc --set-str EXTRA_FIRMWARE "$(cat "${WORK}/extra-firmware.list")"
+    $sc --set-str EXTRA_FIRMWARE_DIR "external-firmware"
+  else
+    $sc --set-str EXTRA_FIRMWARE ""
+  fi
   # Merge the SteamOS fragment (see steamos.config for why each is needed),
   # then the SoC's own (kernel-<soc>/steamos.config), if any.
   local frag="${WORK}/steamos.config.merged"
@@ -235,8 +249,10 @@ build_initramfs() {
   install -m0755 "${HERE}/initramfs/init" "$d/root/init"
   install -m0755 "${HERE}/initramfs/konkr-update-recover" "$d/root/konkr-update-recover"
   install -m0755 "${HERE}/initramfs/bootdebug" "$d/root/bootdebug"
-  (cd "$d/root" && find . | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9) >"$d/initrd.gz"
+  (cd "$d/root" && find . | cpio -o -H newc --owner=0:0 2>/dev/null) >"$d/initrd.cpio"
+  gzip -9 -n -c "$d/initrd.cpio" >"$d/initrd.gz"
   INITRD="$d/initrd.gz"
+  INITRD_CPIO="$d/initrd.cpio"
 }
 
 pack_kernel_img() {
@@ -251,9 +267,10 @@ pack_kernel_img() {
   # Placeholder root; the image builder patches the real PARTUUID in.
   local cmdline
   cmdline="$(bash -c "source '${SOC_DIR}/soc.env'; source '${HERE}/cmdline.sh'; build_cmdline 00000000-02")"
-  # shellcheck disable=SC2086  # BOOTIMG_ARGS (soc.env) is a word list
-  python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" --ramdisk "$INITRD" \
-    --cmdline "$cmdline" ${BOOTIMG_ARGS:-} --out "$out"
+  local rd=(--ramdisk "$INITRD")
+  [[ "${EMBED_INITRAMFS:-0}" == 1 ]] && rd=()  # dummy ramdisk, like ROCKNIX
+  python3 "${HERE}/mkbootimg-v0.py" --kernel "$payload" "${rd[@]}" \
+    --cmdline "$cmdline" --out "$out"
   rm -f "$payload"
   md5sum "$out" | awk '{print $1"  KERNEL"}' >"$(dirname "$out")/KERNEL.md5"
 }
@@ -292,6 +309,7 @@ main() {
     KREL="$(make -s -C "$SRC" kernelrelease)"
     [[ -d "$OUT_BASE/$KREL" ]] || die "no previously built kernel output"
     build_initramfs
+    [[ "${EMBED_INITRAMFS:-0}" == 1 ]] && make -C "$SRC" -j"$JOBS" Image
     pack_kernel_img "$OUT_BASE/$KREL/boot/KERNEL"
     log "repacked initramfs: $OUT_BASE/$KREL/boot/KERNEL"
     return
@@ -302,10 +320,10 @@ main() {
   mkdir -p "$CACHE"
   prepare_source
   stage_builtin_firmware
+  build_initramfs
   configure
   build_kernel
   build_tddi
-  build_initramfs
   install_output
 }
 

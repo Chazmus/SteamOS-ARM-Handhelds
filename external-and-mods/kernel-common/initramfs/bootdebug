@@ -1,15 +1,19 @@
 #!/bin/sh
 # Debug log collector for testers without a Linux PC. Installed into the
 # root filesystem by the initramfs when the cmdline has steamos.debug=1 (the
-# debug KERNEL) or a file called "debug" sits on the FAT boot partition.
-# Every 20 s for 3 minutes it writes the logs to BOOT/debug-logs/, which
+# debug KERNEL) or a file called "debug" sits on the FAT boot partition. The
+# SM8550 image also ships it as steamos-arm-bootdebug-file.service, for
+# kernels that bring their own initramfs.
+# Right away, then every 20 s for 3 minutes, it writes the logs to BOOT/debug-logs/, which
 # any PC can read.
 out=/boot/debug-logs
 mountpoint -q /boot || mount /boot 2>/dev/null
 mkdir -p "$out" || exit 0
 i=0
-while [ "$i" -lt 9 ]; do
-  sleep 20
+# First pass straight away (a hang shortly after boot still leaves logs),
+# then every 20 s.
+while [ "$i" -lt 10 ]; do
+  [ "$i" -gt 0 ] && sleep 20
   i=$((i + 1))
   {
     echo "=== pass $i  uptime $(cat /proc/uptime)"

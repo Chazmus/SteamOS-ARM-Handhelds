@@ -6,10 +6,8 @@ Same layout ROCKNIX produces with AOSP mkbootimg.py:
   (base 0x10000000), ramdisk = b"dummy", os_version 12.0.0.
 ABL decompresses the gzip kernel and scans the DTBs appended after it.
 
-With a real ramdisk the load addresses matter: everything at the base means
-the ramdisk sits where the kernel gets decompressed. SM8550 uses the layout
-MaSi's SM8550 build boots with (kernel +0x8000, ramdisk +0x6000000, tags
-+0x100), see kernel-sm8550/soc.env.
+Without --ramdisk it writes that dummy ramdisk (the initramfs is then built
+into the kernel, EMBED_INITRAMFS in soc.env).
 """
 from __future__ import annotations
 

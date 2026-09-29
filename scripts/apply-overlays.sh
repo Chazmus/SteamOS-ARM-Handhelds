@@ -647,6 +647,10 @@ find "$R/usr/share/alsa/ucm2/AYN" "$R/usr/share/alsa/ucm2/AYANEO" "$R/usr/share/
   "$R/etc/inputplumber" "$R/var/lib/overlays/etc/upper/inputplumber" 2>/dev/null \
   \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
 chmod 0644 "$R/usr/lib/udev/hwdb.d/10-ayaneo.hwdb"
+# Log collector behind the BOOT "debug" file, also for kernels that don't
+# run our initramfs (it is the same script our initramfs installs).
+install -D -m0755 "$MOD/kernel-common/initramfs/bootdebug" "$R/usr/lib/steamos-arm/bootdebug"
+chmod 0644 "$R/usr/lib/systemd/system/steamos-arm-bootdebug-file.service"
 if command -v systemd-hwdb >/dev/null; then
   systemd-hwdb update --root "$R" --usr
 else

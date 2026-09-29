@@ -23,7 +23,12 @@ OVL="${ROOT}/steamos-overlay"
 SOC="${SOC:-sm8650}"
 case "$SOC" in
   sm8650) _kdef="${WORKDIR}/kernel-release/current" ;;
-  sm8550) _kdef="${WORKDIR}/kernel-sm8550/output/current" ;;
+  sm8550)
+    if [[ "${SM8550_KERNEL:-masi}" == masi ]]; then
+      _kdef="${WORKDIR}/kernel-masi/7.0.14-edge-sm8550"
+    else
+      _kdef="${WORKDIR}/kernel-sm8550/output/current"
+    fi ;;
   *) echo "ERROR: unknown SOC=${SOC} (sm8650|sm8550)" >&2; exit 1 ;;
 esac
 # KOUT: this image's kernel. KERNEL_OUT (apply-overlays) may list several

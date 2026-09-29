@@ -1,0 +1,11 @@
+[Unit]
+Description=Copy boot logs to the FAT partition when BOOT has a debug file
+After=local-fs.target
+
+[Service]
+Type=simple
+# Our initramfs installs steamos-arm-bootdebug.service itself; this one is for
+# kernels with their own initramfs. Runs only with a debug/debug.txt file on
+# BOOT or steamos.debug=1 on the cmdline.
+ExecCondition=/bin/sh -c '[ ! -e /usr/lib/systemd/system/steamos-arm-bootdebug.service ] || exit 1; mountpoint -q /boot || mount /boot 2>/dev/null; [ -e /boot/debug ] || [ -e /boot/debug.txt ] || grep -qw steamos.debug=1 /proc/cmdline'
+ExecStart=/usr/lib/steamos-arm/bootdebug
