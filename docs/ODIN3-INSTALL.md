@@ -64,8 +64,12 @@ fastboot reboot
    * **Boot Mode:** Switch to **Linux**
 4. Press the **Power** button (or START) to boot.
 
-> [!NOTE]
-> The first boot takes approximately 2–3 minutes while the system expands the user partition and initializes Steam Deck services. Do not power off during this process.
+> [!IMPORTANT]
+> **Boot Time & Initial Black Screen ("Gotcha"):**
+> On every cold boot, SteamOS launches Gamescope immediately while Steam takes ~2 to 2.5 minutes in the background to initialize its daemons, query the Adreno 830 GPU topology via Turnip, and start `steamwebhelper`. **The screen will remain black for up to 2.5 minutes before the SteamOS logo splash and Sign-In UI appear.** Do not panic or force power-off during this period!
+> 
+> **Idle Screen Blackout:**
+> If left inactive on the login screen for a couple of minutes, Steam's built-in screensaver automatically blanks the display to protect the AMOLED screen. Tap any button on the gamepad (like **A** or the **D-pad**) or touch the screen to wake it back up immediately.
 
 ---
 

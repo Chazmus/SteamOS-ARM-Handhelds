@@ -12,9 +12,12 @@ The kernel and device support come from [ROCKNIX](https://github.com/ROCKNIX/dis
 > [!NOTE]
 > For dedicated installation instructions for the **AYN Odin 3**, see [docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md).
 
+> [!IMPORTANT]
+> **Boot Time & Black Screen Gotcha:**
+> On cold boots, Steam takes ~2 to 2.5 minutes in the background to initialize services, query the GPU, and launch the Gamepad UI. The screen will remain black during this period before the Steam UI paints. If left idle without input, Steam's built-in screensaver will black out the screen to protect OLED panels — press any controller button or tap the screen to wake it.
+
 > [!WARNING]
 > Initial support for the AYANEO Pocket S2 and S2 Pro is in (same chip and screen, so they share a setup). I don't have one myself, so if you do, please tell me what works and what doesn't. On the S2 Pro, pick AYANEO Pocket S2 as the device model in the ABL menu.
-> First boot takes a couple of minutes, don't panic.
 
 ## What's working
 

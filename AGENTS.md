@@ -93,3 +93,7 @@ sudo dd if=sm8750-work/steamos-odin3.img of=/dev/sdX bs=4M status=progress conv=
 * **User:** `steamos` with passwordless sudo via `/etc/sudoers.d/99-steamos-nopasswd`.
 * **sshd:** Enabled out-of-the-box via symlink in `/etc/systemd/system/multi-user.target.wants/sshd.service`.
 * Wi-Fi configurations reside in `/etc/NetworkManager/system-connections/` (mode `0600`).
+
+### G. Startup Latency & Screen Blanking Gotchas
+* **Cold Boot Startup Time:** Cold boots take ~2 to 2.5 minutes before the Gamepad UI paints. Gamescope starts first and holds a black screen while `steam` initializes the Adreno 830 GPU topology via Turnip, starts IPC daemons, and launches `steamwebhelper`. This is normal behavior on ARM64 handhelds and not a freeze.
+* **Idle Screensaver Blackout:** When sitting on the login screen or menus without user input, Steam's built-in screensaver activates (`Screensaver_uid2`), turning the screen completely black to prevent OLED burn-in. Gamepad buttons or touchscreen input wake it up immediately.
