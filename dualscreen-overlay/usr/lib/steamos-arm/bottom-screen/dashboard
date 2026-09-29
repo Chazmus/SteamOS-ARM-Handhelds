@@ -56,7 +56,7 @@ DEFAULT_CONFIG = {"pinned": [], "show_stats": True}
 
 # Which backlight is which panel (else: listed by name).
 BACKLIGHT_NAMES = {
-    "AYN Thor": {"ae96000.dsi.0": "Top screen", "ae94000.dsi.0": "Bottom screen"},
+    "AYN Thor": {"ae94000.dsi.0": "Top screen", "ae96000.dsi.0": "Bottom screen"},
     "AYANEO Pocket DS": {"ae94000.dsi.0": "Top screen", "sy7758-backlight": "Bottom screen"},
 }
 
