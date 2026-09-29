@@ -749,15 +749,26 @@ if [[ -n "${MESA_STACK:-}" ]]; then
   # mangoapp runs on the system Turnip (it matches our zink), no pin.
   rm -rf "$R/usr/lib/steamos-sm8650/frame-turnip" \
     "$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json"
+  # Our 26.2.3 has no msm DRI driver and, unlike Valve's 26.3-devel, doesn't
+  # fall back to zink on its own: Xwayland got "msm: driver missing", no GBM,
+  # and Steam crash-looped behind a black screen (Odin 2 tester, beta 3).
+  # environment.d reaches the whole user session (gamescope, Xwayland, Steam,
+  # Plasma) and games, including FEX's x86 Mesa.
+  mkdir -p "$R/usr/lib/environment.d"
+  printf '# SM8550 image (our Mesa): GL goes through zink on Turnip, like the Frame.\nMESA_LOADER_DRIVER_OVERRIDE=zink\n' \
+    >"$R/usr/lib/environment.d/60-sm8550-zink.conf"
+  chmod 0644 "$R/usr/lib/environment.d/60-sm8550-zink.conf"
   for f in "$R/usr/lib/libgallium-"*.so "$GUEST/usr/lib/libgallium-"*.so \
            "$GUEST/usr/lib32/libgallium-"*.so "$R/$ANDROID_VENDOR/libgallium_dri.so"; do
     log "   ${f#$R}: $(grep -a -o -m1 'Mesa [0-9][0-9.]*' "$f" || echo '?')"
   done
 elif [[ -n "$MESA_SO" ]]; then
+  rm -f "$R/usr/lib/environment.d/60-sm8550-zink.conf"
   log "== Mesa override $MESA_SO"
   backup "$R/usr/lib/libvulkan_freedreno.so" "$STOCK/usr/lib/libvulkan_freedreno.so"
   install_file "$MESA_SO" "$R/usr/lib/libvulkan_freedreno.so" 0755
 else
+  rm -f "$R/usr/lib/environment.d/60-sm8550-zink.conf"
   log "== Mesa: keeping Frame Turnip (Adreno 750 = this SoC)"
 fi
 
