@@ -210,11 +210,16 @@ DEVICE_MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)"
 case "$DEVICE_MODEL" in
   "AYN Thor")
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen}"
-    export GAMESCOPE_BACKLIGHT_PATH="${GAMESCOPE_BACKLIGHT_PATH:-/sys/class/backlight/ae96000.dsi.0}" ;;
+    TOP_BACKLIGHT=/sys/class/backlight/ae96000.dsi.0 ;;
   "AYANEO Pocket DS")
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-Goodix Capacitive TouchScreen}"
-    export GAMESCOPE_BACKLIGHT_PATH="${GAMESCOPE_BACKLIGHT_PATH:-/sys/class/backlight/ae94000.dsi.0}" ;;
+    TOP_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 ;;
 esac
+# Only point gamescope at it when this kernel's device tree has that name
+# (the paths are ROCKNIX's); otherwise leave gamescope's default.
+if [[ -z "${GAMESCOPE_BACKLIGHT_PATH:-}" && -n "${TOP_BACKLIGHT:-}" && -e "$TOP_BACKLIGHT" ]]; then
+  export GAMESCOPE_BACKLIGHT_PATH="$TOP_BACKLIGHT"
+fi
 
 # Bottom screen (bottom-screen.service): lend the second panel to its own
 # gamescope through a DRM lease, where the dashboard runs. Off with
@@ -230,6 +235,8 @@ except Exception:
 print(0 if cfg.get("enabled") is False else 1, cfg.get("connector") or "")
 PY
 )
+# "nobottomscreen" file on BOOT (bottom-screen-bootflag.service)
+[[ -e /run/steamos-arm/bottom-screen-off ]] && BOTTOM_ENABLED=0
 if [[ "${BOTTOM_ENABLED:-1}" == 1 ]]; then
   if [[ -z "${BOTTOM_CONNECTOR:-}" ]]; then
     BOTTOM_CONNECTOR="$(/usr/lib/steamos/panel-modes 2>/dev/null | awk -v o="$OUTPUT" '$1 != o {print $1; exit}')"

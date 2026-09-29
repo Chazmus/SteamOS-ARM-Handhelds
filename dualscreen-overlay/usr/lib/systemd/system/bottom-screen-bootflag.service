@@ -1,0 +1,15 @@
+[Unit]
+Description=Bottom screen off switch on the BOOT drive
+# BOOT is root-only (umask 0077), so the session can't look there itself.
+# A file called "nobottomscreen" (or nobottomscreen.txt) on BOOT turns the
+# bottom-screen handoff off for this boot.
+After=local-fs.target
+Before=display-manager.service graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'rm -f /run/steamos-arm/bottom-screen-off; mountpoint -q /boot || mount /boot 2>/dev/null; if [ -e /boot/nobottomscreen ] || [ -e /boot/nobottomscreen.txt ]; then mkdir -p /run/steamos-arm && touch /run/steamos-arm/bottom-screen-off; fi; exit 0'
+
+[Install]
+WantedBy=multi-user.target

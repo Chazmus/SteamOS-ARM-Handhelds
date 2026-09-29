@@ -625,7 +625,11 @@ chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
   "$R/usr/lib/steamos-arm/bottom-screen/dashboard"
 chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/Main.qml" \
   "$R/usr/lib/systemd/user/bottom-screen.service" \
+  "$R/usr/lib/systemd/system/bottom-screen-bootflag.service" \
   "$R/usr/share/polkit-1/rules.d/60-steamos-arm-bottom-screen.rules"
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../bottom-screen-bootflag.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/bottom-screen-bootflag.service"
 # /etc is an overlay mounted after systemd reads units: enable under /usr.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
 ln -sfn ../bottom-screen.service \
