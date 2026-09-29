@@ -188,13 +188,20 @@ mkdir -p "$R/etc/sudoers.d"
 echo 'steamos ALL=(ALL) NOPASSWD: ALL' > "$R/etc/sudoers.d/99-steamos-nopasswd"
 chmod 0440 "$R/etc/sudoers.d/99-steamos-nopasswd"
 
-# Low-latency SSH (disable reverse DNS lookup timeout)
+# Low-latency SSH (disable reverse DNS lookup timeout) and enable sshd
 mkdir -p "$R/etc/ssh/sshd_config.d"
 echo "UseDNS no" > "$R/etc/ssh/sshd_config.d/99-odin-dns.conf"
+mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
+ln -sfn /usr/lib/systemd/system/sshd.service "$R/etc/systemd/system/multi-user.target.wants/sshd.service"
 
 # Disable core dump loops from crashing VR audio plugins
 mkdir -p "$R/etc/sysctl.d"
 echo "kernel.core_pattern = |/bin/false" > "$R/etc/sysctl.d/99-disable-coredump.conf"
+cat <<'SYSCTL' >"$R/etc/sysctl.d/99-sm8750-io.conf"
+# SD card writeback tuning: batch dirty page flushes to eliminate random I/O stalls
+vm.dirty_writeback_centisecs = 1500
+vm.dirty_expire_centisecs = 3000
+SYSCTL
 
 # Disable Deckard VR spatial audio modules in WirePlumber
 for wpconf in 60-spatial-audio.conf 70-spatial-node-config.conf; do

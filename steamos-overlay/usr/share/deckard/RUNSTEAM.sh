@@ -65,6 +65,12 @@ fi
 # Force-off leaves Chrome singleton locks + a half-written htmlcache.
 # Then index.html paints and never pulls libraries.js (no Gamepad window).
 htmlcache="${STEAMROOT}/config/htmlcache"
+ram_cache="/tmp/steam-htmlcache-${USER:-steamos}"
+mkdir -p "${ram_cache}" 2>/dev/null || true
+if [[ ! -L "${htmlcache}" ]]; then
+  rm -rf "${htmlcache}" 2>/dev/null || true
+  ln -sfn "${ram_cache}" "${htmlcache}" 2>/dev/null || true
+fi
 if [[ -L "${htmlcache}/SingletonLock" || -e "${htmlcache}/SingletonLock" ]]; then
   rm -f "${htmlcache}/SingletonLock" "${htmlcache}/SingletonCookie" \
         "${htmlcache}/SingletonSocket" 2>/dev/null || true

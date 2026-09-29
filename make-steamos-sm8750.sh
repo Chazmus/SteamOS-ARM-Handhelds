@@ -124,8 +124,8 @@ apply_mods() {
   [[ "$SKIP_APPLY" -eq 1 ]] && { log "Skipping apply-overlays"; return 0; }
   [[ -x "${SCRIPTS}/apply-overlays-sm8750.sh" ]] || die "missing scripts/apply-overlays-sm8750.sh"
   log "Applying SM8750 Odin 3 kernel / Turnip Adreno 830 / overlays"
-  KERNEL_OUT="${KOUT}" STEAMOS_ROOTFS="${R}" STEAMOS_WORK="${WORKDIR}" \
-    sudo_run "${SCRIPTS}/apply-overlays-sm8750.sh"
+  sudo_run env KERNEL_OUT="${KOUT}" STEAMOS_ROOTFS="${R}" STEAMOS_WORK="${WORKDIR}" \
+    "${SCRIPTS}/apply-overlays-sm8750.sh"
 }
 
 repack_kernel_partuuid() {
@@ -227,7 +227,7 @@ build_image() {
     local home_mib
     home_mib="$(sudo_run du -sm "${R}/home" 2>/dev/null | awk '{print $1}')"
     home_mib="${home_mib:-1}"
-    HOME_MIB=$((home_mib + 256 + home_mib / 100 + 32))
+    HOME_MIB=$((home_mib + 4096))
     log "home auto-size ${HOME_MIB} MiB (payload ${home_mib} MiB; grows on first boot)"
   fi
 
@@ -303,7 +303,7 @@ EOF
   sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
 # SteamOS Odin 3 (SM8750) — SD card layout
 LABEL=root         /      ext4  defaults,noatime                               0 1
-LABEL=BOOT         /boot  vfat  defaults,umask=0077,nofail                     0 2
+LABEL=BOOT         /boot  vfat  ro,defaults,umask=0077,nofail                  0 2
 LABEL=home         /home  ext4  defaults,noatime,commit=30,x-systemd.growfs   0 2
 EOF
 
