@@ -37,6 +37,11 @@ fi
 
 export XCURSOR_THEME="${XCURSOR_THEME:-steam}"
 
+if grep -aq "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  export MESA_LOADER_DRIVER_OVERRIDE=zink
+  export GAMESCOPE_MANGOAPP="${GAMESCOPE_MANGOAPP:-0}"
+fi
+
 # Performance overlay (mangoapp). mangoapp is GL; GL on the Frame image is
 # zink-on-Turnip only, and zink must run on the Turnip it was built with.
 # The SM8550 port swapped Turnip, mangoapp crashed, so it switched the
