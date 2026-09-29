@@ -24,8 +24,8 @@ SOC="${SOC:-sm8650}"
 case "$SOC" in
   sm8650) _kdef="${WORKDIR}/kernel-release/current" ;;
   sm8550)
-    if [[ "${SM8550_KERNEL:-masi}" == masi ]]; then
-      _kdef="${WORKDIR}/kernel-masi/7.0.14-edge-sm8550"
+    if [[ "${SM8550_KERNEL:-prebuilt}" == prebuilt ]]; then
+      _kdef="${WORKDIR}/kernel-prebuilt/7.0.14-edge-sm8550"
     else
       _kdef="${WORKDIR}/kernel-sm8550/output/current"
     fi ;;

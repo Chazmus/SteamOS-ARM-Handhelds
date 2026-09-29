@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# Import MaSi's prebuilt SM8550 kernel (KERNEL + modules + firmware) from
-# their released image into a kernel output dir that make-steamos-sm8650.sh /
+# Import a prebuilt SM8550 kernel (KERNEL + modules + firmware) from
+# a released image into a kernel output dir that make-steamos-sm8650.sh /
 # apply-overlays.sh take like one of ours:
 #   <out>/<krel>/boot/KERNEL(.md5)  modules/<krel>  firmware/  config-<krel>
 # Usage (as root, in the build VM):
 #   scripts/import-sm8550-kernel.sh <SteamOS-ARM-sm8550.img[.gz]> [out-parent]
-# Source: github.com/MaSieS4Fun/SteamOS-ARM-SM8550 v1.1.0 (MediaFire link in
-# the release notes).
 set -euo pipefail
 
 src="${1:?image (.img or .img.gz)}"
-parent="${2:-/work/kernel-masi}"
-work="$(mktemp -d /work/.masi-import.XXXX)"
+parent="${2:-/work/kernel-prebuilt}"
+work="$(mktemp -d /work/.kernel-import.XXXX)"
 loop=""
 cleanup() {
   umount "$work/boot" "$work/root" 2>/dev/null || true
@@ -75,11 +73,11 @@ for f in qcom/sm8550 qcom/a740_sqe.fw qcom/gmu_gen70200.bin qcom/vpu; do
   done
 done
 
-# MaSi links whole device dirs to the Odin 2's files (ayaneo -> ayn/odin2,
+# The image links whole device dirs to the Odin 2's files (ayaneo -> ayn/odin2,
 # ayn/odin2mini|odin2portal -> odin2). The rootfs already has ROCKNIX's real
 # per-device dirs there (own amp tuning, AYANEO's own DSP split as .mdt), and
 # rsync can't put a link over a dir. So: keep the real dirs, and give AYANEO
-# the names MaSi's DTBs ask for, resolving to what MaSi's image loads.
+# the names its DTBs ask for, resolving to what that image loads.
 s="$out/firmware/qcom/sm8550"
 if [[ -L "$s/ayaneo" ]]; then
   rm "$s/ayaneo"
@@ -89,14 +87,14 @@ if [[ -L "$s/ayaneo" ]]; then
 fi
 for d in odin2mini odin2portal; do [[ -L "$s/ayn/$d" ]] && rm "$s/ayn/$d"; done
 
-# Boot file: MaSi's kernel section (Image.gz + their appended DTBs) untouched,
+# Boot file: the kernel section (Image.gz + their appended DTBs) untouched,
 # with OUR busybox initramfs (bootlog.txt, debug file, update recovery) as the
 # ramdisk at the beta 2 addresses. A tester's hybrid with exactly this layout
-# reached switch_root on an Odin 2; MaSi's own Debian initramfs is kept aside.
+# reached switch_root on an Odin 2; the image's own Debian initramfs is kept aside.
 repo="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 kc="$repo/external-and-mods/kernel-common"
-mv "$out/boot/KERNEL" "$out/boot/KERNEL.masi-orig"
-python3 - "$out/boot/KERNEL.masi-orig" "$work/kernel.bin" <<'PY'
+mv "$out/boot/KERNEL" "$out/boot/KERNEL.orig"
+python3 - "$out/boot/KERNEL.orig" "$work/kernel.bin" <<'PY'
 import struct, sys
 d = open(sys.argv[1], "rb").read()
 assert d[:8] == b"ANDROID!"
