@@ -84,13 +84,23 @@ def big_cpus() -> list[int]:
         return []
     low = min(caps.values())
     big = sorted(n for n, v in caps.items() if v > low and n != 0)
-    # SM8550 boots with irqaffinity=3-7 (IRQs off the A510s: the A740 GMU can
-    # wedge when its interrupt wakes CPU 0-2). Keep the first CPU of the IRQ
-    # mask online so interrupts never fall back onto the little cores.
+    # SM8550 (Adreno 740): the GMU can wedge when its interrupt wakes CPU 0-2,
+    # so konkrd pins the GPU/GMU IRQs to the big cores. Offlining all of them
+    # would push those IRQs back onto the little cores and hang the device
+    # in standby (RP6, beta 4). Keep the first big core online there, whatever
+    # the cmdline's irqaffinity says (the 7.0.14 kernel boots without one).
     irq = irq_cpus()
-    if irq and not (irq - set(big)):
-        big.remove(min(irq))
+    if big and (is_sm8550() or (irq and not (irq - set(big)))):
+        big.remove(min(big) if is_sm8550() else min(irq))
     return big
+
+
+def is_sm8550() -> bool:
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as f:
+            return b"qcom,sm8550" in f.read()
+    except OSError:
+        return False
 
 
 def irq_cpus() -> set[int]:

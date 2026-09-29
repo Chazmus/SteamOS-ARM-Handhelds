@@ -9,6 +9,9 @@
 out=/boot/debug-logs
 mountpoint -q /boot || mount /boot 2>/dev/null
 mkdir -p "$out" || exit 0
+# The boot before this one: after a freeze and a forced restart, that's the
+# one with the answer (the journal is persistent).
+journalctl -b -1 --no-pager -o short-monotonic > "$out/journal-previous-boot.txt" 2>&1
 i=0
 # First pass straight away (a hang shortly after boot still leaves logs),
 # then every 20 s.
