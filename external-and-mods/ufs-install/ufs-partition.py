@@ -5,6 +5,7 @@
   ufs-partition.py apply   --android-gib N --expect FINGERPRINT --backup-dir DIR
                            [--disk /dev/sda] [--storage-gib 20] [--dry-run]
   ufs-partition.py restore --backup FILE [--disk /dev/sda] [--dry-run]
+  ufs-partition.py reset-android --yes [--disk /dev/sda] [--dry-run]
 
 Layout after apply (everything before userdata is never touched):
 
@@ -179,6 +180,41 @@ def blank_head(disk: str, node: str) -> None:
         os.fsync(f.fileno())
 
 
+def android_metadata() -> str | None:
+    """Android's "metadata" partition (on any UFS LUN): it holds the key that
+    encrypts userdata. A real Android wipe (fastboot -w, recovery's Format
+    data) erases it together with userdata; erasing only userdata leaves a
+    key for data that's gone, and Android dies early on its next boot (logo,
+    then off: two Pocket FIT/S2 reports)."""
+    found = []
+    for line in sh("lsblk", "-rpno", "NAME,PARTLABEL,TYPE").splitlines():
+        f = line.split()
+        if len(f) == 3 and f[1] == "metadata" and f[2] == "part":
+            found.append(f[0])
+    if len(found) > 1:
+        die(f"expected one partition named metadata, found {len(found)}: {found}")
+    return found[0] if found else None
+
+
+def blank_metadata() -> None:
+    node = android_metadata()
+    if node is None:
+        print("no metadata partition: nothing to blank")
+        return
+    size = int(sh("blockdev", "--getsize64", node).strip())
+    # Small (16-64 MiB on these devices): zero all of it, like fastboot -w.
+    n = size if size <= 256 * MIB else 8 * MIB
+    with open(node, "r+b") as f:
+        left = n
+        while left:
+            k = min(left, 4 * MIB)
+            f.write(b"\0" * k)
+            left -= k
+        f.flush()
+        os.fsync(f.fileno())
+    print(f"metadata ({node}, {n // MIB} MiB) blanked")
+
+
 def ensure_idle(disk: str) -> None:
     out = sh("lsblk", "-rno", "NAME,MOUNTPOINTS", disk)
     busy = [l for l in out.splitlines() if len(l.split()) > 1]
@@ -315,6 +351,7 @@ def cmd_apply(a) -> None:
         die("userdata can only shrink")
     p = plan(t, ud, a.android_gib, a.storage_gib)
     dump = new_dump(a.disk, t, p)
+    print(f"metadata: {android_metadata() or 'none'} (blanked with userdata)")
     print(f"userdata -> {p['userdata_size'] * p['sector_size'] / GIB:.2f} GiB")
     for name, start, size, _ in p["new"]:
         print(f"{name:8s} start {start} size {size} ({size * p['sector_size'] / GIB:.2f} GiB)")
@@ -338,6 +375,7 @@ def cmd_apply(a) -> None:
     reread(a.disk)
     verify(a.disk, t, p)
     blank_head(a.disk, ud["node"])
+    blank_metadata()
     print("OK")
 
 
@@ -365,7 +403,27 @@ def cmd_restore(a) -> None:
     reread(a.disk)
     ud = [q for q in read_table(a.disk)["partitions"] if q["name"] == "userdata"][0]
     blank_head(a.disk, ud["node"])
+    blank_metadata()
     print("OK: original table restored; Android will format userdata on its next boot")
+
+
+def cmd_reset_android(a) -> None:
+    """For installs made before blank_metadata(): Android won't boot after
+    the SteamOS install. Wipe Android's data the way fastboot -w does
+    (userdata's head + metadata). The partition table is not touched."""
+    t = read_table(a.disk)
+    ud = userdata(t)
+    node = android_metadata()
+    print(f"Android data will be erased: userdata {ud['node']}, metadata {node or 'none'}")
+    if a.dry_run:
+        return
+    if booted_disk() == a.disk:
+        die(f"the running system is on {a.disk}; boot from the microSD card")
+    if not a.yes:
+        die("add --yes to erase Android's data (it sets itself up again on its next boot)")
+    blank_head(a.disk, ud["node"])
+    blank_metadata()
+    print("OK: Android sets itself up again on its next boot")
 
 
 def main() -> None:
@@ -374,7 +432,10 @@ def main() -> None:
     d = sub.add_parser("detect")
     ap_ = sub.add_parser("apply")
     r = sub.add_parser("restore")
-    for s in (d, ap_, r):
+    ra = sub.add_parser("reset-android")
+    ra.add_argument("--yes", action="store_true")
+    ra.add_argument("--dry-run", action="store_true")
+    for s in (d, ap_, r, ra):
         s.add_argument("--disk", default="/dev/sda")
     for s in (d, ap_):
         s.add_argument("--storage-gib", type=int, default=DEFAULT_STORAGE_GIB)
@@ -387,7 +448,8 @@ def main() -> None:
     a = ap.parse_args()
     if os.geteuid() != 0 and not getattr(a, "dry_run", False) and a.cmd != "detect":
         die("run as root")
-    {"detect": cmd_detect, "apply": cmd_apply, "restore": cmd_restore}[a.cmd](a)
+    {"detect": cmd_detect, "apply": cmd_apply, "restore": cmd_restore,
+     "reset-android": cmd_reset_android}[a.cmd](a)
 
 
 if __name__ == "__main__":
