@@ -402,4 +402,10 @@ fi
 # Ensure correct root and user permissions across /usr and /etc
 find "$R/usr" "$R/etc" -xdev \( -uid +999 -o -gid +999 \) -exec chown -h root:root {} + 2>/dev/null || true
 
+# macOS AppleDouble files (._name) from copying the tree through a Mac.
+# gamescope runs every .lua in its script folders, and ._inspect.lua made it
+# abort on start, over and over: the Odin 3 test 1/2 black screen.
+find "$R" -xdev -name '._*' -type f -delete 2>/dev/null || true
+[[ -z "$(find "$R" -xdev -name '._*' -type f -print -quit 2>/dev/null)" ]] || die "._ files left in $R"
+
 log "== SM8750 overlays successfully applied"
