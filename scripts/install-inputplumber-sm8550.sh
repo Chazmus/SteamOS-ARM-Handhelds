@@ -136,10 +136,13 @@ install_odin_composite() {
     "${R}/etc/systemd/system/multi-user.target.wants"
   install -m0644 "${OVL}/etc/inputplumber/devices.d/02-ayn-odin.yaml" \
     "${R}/etc/inputplumber/devices.d/02-ayn-odin.yaml"
-  install -m0644 "${OVL}/etc/inputplumber/capability_maps.d/ayn_mcu.yaml" \
-    "${R}/etc/inputplumber/capability_maps.d/ayn_mcu.yaml"
-  install -m0644 "${OVL}/etc/inputplumber/capability_maps.d/ayn_mcu.yaml" \
-    "${R}/usr/share/inputplumber/capability_maps/ayn_mcu.yaml"
+  # Every map, not just ayn_mcu: the RP6 profile points at retroid_mcu and
+  # without the file InputPlumber passed the raw buttons through (A/B swapped).
+  local m
+  for m in "${OVL}"/etc/inputplumber/capability_maps.d/*.yaml; do
+    install -m0644 "$m" "${R}/etc/inputplumber/capability_maps.d/${m##*/}"
+    install -m0644 "$m" "${R}/usr/share/inputplumber/capability_maps/${m##*/}"
+  done
   install -m0644 "${OVL}/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf" \
     "${R}/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf"
   install -m0755 "${OVL}/usr/lib/steamos/sm8550-inputplumber-ext-hid" \
