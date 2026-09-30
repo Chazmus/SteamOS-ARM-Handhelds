@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYN Odin 3 (SM8750) rsinput → virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
+# AYN Odin 3 (SM8750) rsinput + gpio-keys-paddles -> virtual Steam Deck (deck-uhid) + keyboard (OSK haptic).
 version: 1
 kind: CompositeDevice
 name: AYN Odin 3
@@ -8,22 +8,39 @@ matches:
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
+        - name: compatible
+          value: ayn,odin3
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
         - name: model
           value: AYN Odin 3
 
 single_source: false
 
-source_devices:
-  - group: gamepad
-    evdev:
-      phys_path: rsinput-gamepad/input0
-      handler: event*
-    capability_map_id: ayn_mcu
-    passthrough: false
-
 options:
   auto_manage: true
+
+source_devices:
+  - group: gamepad
+    capability_map_id: rsinput1
+    evdev:
+      name: AYN Odin3 Gamepad
+      phys_path: rsinput-gamepad/input0
+      vendor_id: "2020"
+      product_id: "3001"
+      handler: event*
+    passthrough: false
+
+  - group: gamepad
+    capability_map_id: rsinput1
+    evdev:
+      name: gpio-keys-paddles
+      phys_path: gpio-keys/input0
+      handler: event*
+    passthrough: false
 
 target_devices:
   - deck-uhid
   - keyboard
+

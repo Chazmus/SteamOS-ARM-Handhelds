@@ -262,6 +262,11 @@ fi
 # 5. Odin 3 Overlay (InputPlumber, Display, Audio, Device Manager)
 # ---------------------------------------------------------------------------
 log "== SM8750 Odin 3 overlay"
+if [[ -x "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" ]]; then
+  "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" "$R"
+  rm -f "$R/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf" \
+        "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || true
+fi
 cp -r --no-preserve=mode,ownership "$SM8750_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/steamos/sm8750-audio-setup" 2>/dev/null || true
 
