@@ -213,9 +213,9 @@ case "$DEVICE_MODEL" in
     # "generic ft5x06 (8d)", so also match the bottom one's I2C address
     # (top is 4-0038 on i2c4, bottom 1-0038, same as Armada's Thor tree).
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen,path:/1-0038/}"
-    # On the prebuilt 7.0.14 kernel ae96000 drives the bottom panel (a Thor
-    # tester: Steam's slider only dimmed the bottom screen), so the top is ae94000.
-    TOP_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 ;;
+    # Top panel is DSI-2 on dsi1 (ae96000), the bottom DSI-1 on dsi0 (ae94000),
+    # same as Armada's Thor. Beta 7 had these the other way round.
+    TOP_BACKLIGHT=/sys/class/backlight/ae96000.dsi.0 ;;
   "AYANEO Pocket DS")
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-Goodix Capacitive TouchScreen}"
     TOP_BACKLIGHT=/sys/class/backlight/ae94000.dsi.0 ;;
