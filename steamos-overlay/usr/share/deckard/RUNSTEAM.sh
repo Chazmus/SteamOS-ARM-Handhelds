@@ -76,6 +76,76 @@ if [[ "$is_odin3" -eq 1 ]]; then
     rm -rf "${htmlcache}" 2>/dev/null || true
     ln -sfn "${ram_cache}" "${htmlcache}" 2>/dev/null || true
   fi
+
+  # Odin 3 baseline: ensure config.vdf has controller mapping and UI scale factor
+  cfg="${STEAMROOT}/config/config.vdf"
+  if [[ ! -f "$cfg" ]]; then
+    mkdir -p "${STEAMROOT}/config"
+    cat <<'VDF' >"$cfg"
+"InstallConfigStore"
+{
+	"SDL_GamepadBind"		"03000000202000000130000001000000,AYN Odin3 Gamepad,crc:95bb,platform:Linux,a:b0,b:b1,x:b3,y:b2,dpleft:b13,dpright:b14,dpup:b11,dpdown:b12,leftx:a0,lefty:a1,leftstick:b9,rightx:a3,righty:a4,rightstick:b10,leftshoulder:b4,lefttrigger:a2,rightshoulder:b5,righttrigger:a5,back:b6,start:b7,guide:b8,misc1:b15,steam:2,"
+	"UI"
+	{
+		"display"
+		{
+			"Current"
+			{
+				"MinScaleFactor"		"0.711512446403503418"
+				"MaxScaleFactor"		"3.40971922874450684"
+				"IsExternalDisplay"		"1"
+				"name"		"External: gamescope 6\"|||Windowed"
+				"AutoScaleFactor"		"2.80762958526611328"
+				"ScaleFactor"		"2.38840627670288086"
+			}
+			"External: gamescope 6\"|||Windowed"
+			{
+				"ScaleFactor"		"2.38840627670288086"
+			}
+		}
+	}
+	"SteamOS"
+	{
+		"WifiForceWPASupplicant"		"1"
+	}
+}
+VDF
+  elif ! grep -q 'External: gamescope 6' "$cfg" 2>/dev/null; then
+    python3 -c '
+import sys
+p = sys.argv[1]
+try:
+    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+        c = f.read()
+    if "\"UI\"" not in c and "External: gamescope 6" not in c:
+        block = """\t"UI"
+\t{
+\t\t"display"
+\t\t{
+\t\t\t"Current"
+\t\t\t{
+\t\t\t\t"MinScaleFactor"\t\t"0.711512446403503418"
+\t\t\t\t"MaxScaleFactor"\t\t"3.40971922874450684"
+\t\t\t\t"IsExternalDisplay"\t\t"1"
+\t\t\t\t"name"\t\t"External: gamescope 6\\\"|||Windowed"
+\t\t\t\t"AutoScaleFactor"\t\t"2.80762958526611328"
+\t\t\t\t"ScaleFactor"\t\t"2.38840627670288086"
+\t\t\t}
+\t\t\t"External: gamescope 6\\\"|||Windowed"
+\t\t\t{
+\t\t\t\t"ScaleFactor"\t\t"2.38840627670288086"
+\t\t\t}
+\t\t}
+\t}\n"""
+        idx = c.rfind("}")
+        if idx != -1:
+            c = c[:idx] + block + c[idx:]
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(c)
+except Exception:
+    pass
+' "$cfg" 2>/dev/null || true
+  fi
 fi
 if [[ -L "${htmlcache}/SingletonLock" || -e "${htmlcache}/SingletonLock" ]]; then
   rm -f "${htmlcache}/SingletonLock" "${htmlcache}/SingletonCookie" \
