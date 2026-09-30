@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 07:58:28 -0500
+Subject: [PATCH] wifi: ath11k: add a mac_addr module parameter
+
+Some boards keep the Wi-Fi MAC address neither in the chip's OTP nor in
+the device tree: the QCA6490 of the REDMAGIC 6 has none programmed, so
+the firmware reports a new random address on every boot, and saved
+networks (bound to the permanent address) stop matching. Nubia keeps
+the address in a file on the persist partition. Let userspace pass it
+in; it applies only when the device tree provides none.
+---
+ drivers/net/wireless/ath/ath11k/core.c | 4 ++++
+ drivers/net/wireless/ath/ath11k/core.h | 1 +
+ drivers/net/wireless/ath/ath11k/mac.c  | 8 +++++++-
+ 3 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/core.c b/drivers/net/wireless/ath/ath11k/core.c
+index 3f6f4db5b..40699fd11 100644
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -38,6 +38,10 @@ bool ath11k_ftm_mode;
+ module_param_named(ftm_mode, ath11k_ftm_mode, bool, 0444);
+ MODULE_PARM_DESC(ftm_mode, "Boots up in factory test mode");
+ 
++char *ath11k_mac_addr;
++module_param_named(mac_addr, ath11k_mac_addr, charp, 0444);
++MODULE_PARM_DESC(mac_addr, "MAC address for chips without one in OTP or DT (xx:xx:xx:xx:xx:xx)");
++
+ static const struct ath11k_hw_params ath11k_hw_params[] = {
+ 	{
+ 		.hw_rev = ATH11K_HW_IPQ8074,
+diff --git a/drivers/net/wireless/ath/ath11k/core.h b/drivers/net/wireless/ath/ath11k/core.h
+index a0d725923..aae6b1200 100644
+--- a/drivers/net/wireless/ath/ath11k/core.h
++++ b/drivers/net/wireless/ath/ath11k/core.h
+@@ -60,6 +60,7 @@
+ 
+ extern unsigned int ath11k_frame_mode;
+ extern bool ath11k_ftm_mode;
++extern char *ath11k_mac_addr;
+ 
+ #define ATH11K_SCAN_TIMEOUT_HZ (20 * HZ)
+ 
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index a48b6bf1f..4dff3b987 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -7,6 +7,7 @@
+ #include <net/mac80211.h>
+ #include <net/cfg80211.h>
+ #include <linux/etherdevice.h>
++#include <linux/hex.h>
+ #include <linux/bitfield.h>
+ #include <linux/inetdevice.h>
+ #include <net/if_inet6.h>
+@@ -10728,11 +10729,16 @@ int ath11k_mac_register(struct ath11k_base *ab)
+ 		return ret;
+ 
+ 	device_get_mac_address(ab->dev, mac_addr);
++	/* Phones such as the REDMAGIC 6 keep the MAC in a file, not in OTP */
++	if (is_zero_ether_addr(mac_addr) && ath11k_mac_addr &&
++	    !mac_pton(ath11k_mac_addr, mac_addr))
++		ath11k_warn(ab, "invalid mac_addr parameter \"%s\"\n",
++			    ath11k_mac_addr);
+ 
+ 	for (i = 0; i < ab->num_radios; i++) {
+ 		pdev = &ab->pdevs[i];
+ 		ar = pdev->ar;
+-		if (ab->pdevs_macaddr_valid) {
++		if (ab->pdevs_macaddr_valid && is_zero_ether_addr(mac_addr)) {
+ 			ether_addr_copy(ar->mac_addr, pdev->mac_addr);
+ 		} else {
+ 			if (is_zero_ether_addr(mac_addr))

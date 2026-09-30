@@ -1,0 +1,1211 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 00:30:42 -0500
+Subject: [PATCH] arm64: dts: qcom: add REDMAGIC 6 (Nubia NX669J)
+
+---
+ arch/arm64/boot/dts/qcom/Makefile             |    1 +
+ .../boot/dts/qcom/sm8350-nubia-nx669j.dts     | 1179 +++++++++++++++++
+ 2 files changed, 1180 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 4ba8e73..a3f3293 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -358,6 +358,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8250-xiaomi-pipa.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-microsoft-surface-duo2.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-mtp.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-nubia-nx669j.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-sony-xperia-sagami-pdx214.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8350-sony-xperia-sagami-pdx215.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8450-hdk.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts b/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
+new file mode 100644
+index 0000000..15a5d96
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
+@@ -0,0 +1,1179 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * REDMAGIC 6 (Nubia NX669J), Snapdragon 888 (SM8350).
++ *
++ * Values come from Nubia's stock devicetree (NX669J-UN, June 2023 OTA:
++ * vendor_boot DTB "Lahaina V2.1" + dtbo "Lahaina MTP"), structure from the
++ * mainline SM8350 HDK and Sony sagami boards.
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/gpio-keys.h>
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/phy/phy.h>
++#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
++#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++#include "sm8350.dtsi"
++#include "pm8350.dtsi"
++#include "pm8350b.dtsi"
++#include "pm8350c.dtsi"
++#include "pmk8350.dtsi"
++#include "pmr735a.dtsi"
++/* No pmr735b here: SPMI SID 5 does not answer on the NX669J. */
++
++/ {
++	model = "REDMAGIC 6";
++	compatible = "nubia,nx669j", "qcom,sm8350";
++	chassis-type = "handset";
++
++	/*
++	 * Nubia keeps Qualcomm's stock ABL, which picks the boot DTB by SoC id
++	 * like it does the stock base DTBs: the same ids as the "Lahaina V2.1"
++	 * one (SoC 415/456/501), plus v2.0 in case of an older die, and
++	 * board-id 0 0. Board overlays come from the dtbo partition: erase it
++	 * (see docs/redmagic6.md), the stock ones do not apply to this tree.
++	 */
++	qcom,msm-id = <415 0x20001>, <456 0x20001>, <501 0x20001>,
++		      <415 0x20000>, <456 0x20000>, <501 0x20000>;
++	qcom,board-id = <0 0>;
++
++	aliases {
++		serial0 = &uart2;
++		serial1 = &uart18;
++	};
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/*
++		 * ABL continuous splash; replaced by msm DRM once it probes. It
++		 * holds the MDSS power domain so the picture survives the unused
++		 * domain cleanup until the msm module loads from the rootfs.
++		 */
++		framebuffer0: framebuffer@e1000000 {
++			compatible = "simple-framebuffer";
++			reg = <0 0xe1000000 0 (1080 * 2400 * 4)>;
++			width = <1080>;
++			height = <2400>;
++			stride = <(1080 * 4)>;
++			format = "a8r8g8b8";
++			clocks = <&gcc GCC_DISP_HF_AXI_CLK>,
++				 <&gcc GCC_DISP_SF_AXI_CLK>;
++			power-domains = <&dispcc MDSS_GDSC>;
++		};
++	};
++
++	gpio-keys {
++		compatible = "gpio-keys";
++
++		pinctrl-0 = <&vol_up_n>;
++		pinctrl-names = "default";
++
++		key-vol-up {
++			label = "Volume Up";
++			linux,code = <KEY_VOLUMEUP>;
++			gpios = <&pm8350_gpios 6 GPIO_ACTIVE_LOW>;
++			debounce-interval = <15>;
++			linux,can-disable;
++			wakeup-source;
++		};
++	};
++
++	pmic-glink {
++		compatible = "qcom,sm8350-pmic-glink", "qcom,pmic-glink";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		orientation-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
++
++		connector@0 {
++			compatible = "usb-c-connector";
++			reg = <0>;
++			power-role = "dual";
++			data-role = "dual";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					pmic_glink_hs_in: endpoint {
++						remote-endpoint = <&usb_1_dwc3_hs>;
++					};
++				};
++
++				port@1 {
++					reg = <1>;
++
++					pmic_glink_ss_in: endpoint {
++						remote-endpoint = <&usb_1_qmpphy_out>;
++					};
++				};
++			};
++		};
++	};
++
++	reserved-memory {
++		cont_splash_mem: memory@e1000000 {
++			reg = <0 0xe1000000 0 0x2300000>;
++			no-map;
++		};
++
++		dfps_data_mem: memory@e3300000 {
++			reg = <0 0xe3300000 0 0x100000>;
++			no-map;
++		};
++
++		ramoops@ffc00000 {
++			compatible = "ramoops";
++			reg = <0 0xffc00000 0 0x100000>;
++			console-size = <0x40000>;
++			record-size = <0x1000>;
++			pmsg-size = <0x20000>;
++			no-map;
++		};
++	};
++
++	/* Panel DVDD 1.2 V load switch (qcom,panel-dvdd-1p2-gpio) */
++	panel_dvdd_1p2: regulator-panel-dvdd {
++		compatible = "regulator-fixed";
++		regulator-name = "panel_dvdd_1p2";
++		regulator-min-microvolt = <1200000>;
++		regulator-max-microvolt = <1200000>;
++		gpio = <&tlmm 83 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-boot-on;
++		vin-supply = <&vph_pwr>;
++		pinctrl-0 = <&panel_dvdd_en>;
++		pinctrl-names = "default";
++	};
++
++	/* Touch AVDD / IOVDD load switches (goodix,avdd-gpio / iovdd-gpio) */
++	ts_avdd: regulator-ts-avdd {
++		compatible = "regulator-fixed";
++		regulator-name = "ts_avdd";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&tlmm 104 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-boot-on;
++		vin-supply = <&vreg_bob>;
++	};
++
++	ts_iovdd: regulator-ts-iovdd {
++		compatible = "regulator-fixed";
++		regulator-name = "ts_iovdd";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		gpio = <&tlmm 103 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-boot-on;
++		vin-supply = <&pm8350_s10>;
++	};
++
++	vph_pwr: vph-pwr-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "vph_pwr";
++		regulator-min-microvolt = <3700000>;
++		regulator-max-microvolt = <3700000>;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	wcn6855-pmu {
++		compatible = "qcom,wcn6855-pmu";
++
++		pinctrl-0 = <&bt_en>, <&wlan_en>, <&wlan_swctrl>;
++		pinctrl-names = "default";
++
++		wlan-enable-gpios = <&tlmm 64 GPIO_ACTIVE_HIGH>;
++		bt-enable-gpios = <&tlmm 65 GPIO_ACTIVE_HIGH>;
++		swctrl-gpios = <&tlmm 153 GPIO_ACTIVE_HIGH>;
++
++		/* qcom,cnss-qca6490 / bt_qca6490 supplies */
++		vddio-supply = <&pm8350_s10>;
++		vddaon-supply = <&pmr735a_s2>;
++		vddpmu-supply = <&pm8350_s12>;
++		vddpmumx-supply = <&pmr735a_s2>;
++		vddpmucx-supply = <&pm8350_s11>;
++		vddrfa0p95-supply = <&pm8350_s11>;
++		vddrfa1p3-supply = <&pm8350_s12>;
++		vddrfa1p9-supply = <&pm8350c_s1>;
++		vddpcie1p3-supply = <&pm8350_s12>;
++		vddpcie1p9-supply = <&pm8350c_s1>;
++
++		regulators {
++			vreg_pmu_rfa_cmn_0p8: ldo0 {
++				regulator-name = "vreg_pmu_rfa_cmn_0p8";
++			};
++
++			vreg_pmu_aon_0p8: ldo1 {
++				regulator-name = "vreg_pmu_aon_0p8";
++			};
++
++			vreg_pmu_wlcx_0p8: ldo2 {
++				regulator-name = "vreg_pmu_wlcx_0p8";
++			};
++
++			vreg_pmu_wlmx_0p8: ldo3 {
++				regulator-name = "vreg_pmu_wlmx_0p8";
++			};
++
++			vreg_pmu_btcmx_0p8: ldo4 {
++				regulator-name = "vreg_pmu_btcmx_0p8";
++			};
++
++			vreg_pmu_pcie_1p8: ldo5 {
++				regulator-name = "vreg_pmu_pcie_1p8";
++			};
++
++			vreg_pmu_pcie_0p9: ldo6 {
++				regulator-name = "vreg_pmu_pcie_0p9";
++			};
++
++			vreg_pmu_rfa_0p8: ldo7 {
++				regulator-name = "vreg_pmu_rfa_0p8";
++			};
++
++			vreg_pmu_rfa_1p2: ldo8 {
++				regulator-name = "vreg_pmu_rfa_1p2";
++			};
++
++			vreg_pmu_rfa_1p7: ldo9 {
++				regulator-name = "vreg_pmu_rfa_1p7";
++			};
++		};
++	};
++};
++
++&adsp {
++	firmware-name = "qcom/sm8350/nubia/nx669j/adsp.mbn";
++	status = "okay";
++};
++
++&apps_rsc {
++	regulators-0 {
++		compatible = "qcom,pm8350-rpmh-regulators";
++		qcom,pmic-id = "b";
++
++		vdd-s1-supply = <&vph_pwr>;
++		vdd-s2-supply = <&vph_pwr>;
++		vdd-s3-supply = <&vph_pwr>;
++		vdd-s4-supply = <&vph_pwr>;
++		vdd-s5-supply = <&vph_pwr>;
++		vdd-s6-supply = <&vph_pwr>;
++		vdd-s7-supply = <&vph_pwr>;
++		vdd-s8-supply = <&vph_pwr>;
++		vdd-s9-supply = <&vph_pwr>;
++		vdd-s10-supply = <&vph_pwr>;
++		vdd-s11-supply = <&vph_pwr>;
++		vdd-s12-supply = <&vph_pwr>;
++
++		vdd-l1-l4-supply = <&pm8350_s11>;
++		vdd-l2-l7-supply = <&vreg_bob>;
++		vdd-l3-l5-supply = <&vreg_bob>;
++		vdd-l6-l9-l10-supply = <&pm8350_s11>;
++
++		/* S5 mx.lvl, S6 gfx.lvl, S9 mxc.lvl: ARC */
++
++		pm8350_s10: smps10 {
++			regulator-name = "pm8350_s10";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_s11: smps11 {
++			regulator-name = "pm8350_s11";
++			regulator-min-microvolt = <752000>;
++			regulator-max-microvolt = <1012000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_s12: smps12 {
++			regulator-name = "pm8350_s12";
++			regulator-min-microvolt = <1224000>;
++			regulator-max-microvolt = <1360000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_l1: ldo1 {
++			regulator-name = "pm8350_l1";
++			regulator-min-microvolt = <912000>;
++			regulator-max-microvolt = <920000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_l2: ldo2 {
++			regulator-name = "pm8350_l2";
++			regulator-min-microvolt = <3072000>;
++			regulator-max-microvolt = <3072000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_l3: ldo3 {
++			regulator-name = "pm8350_l3";
++			regulator-min-microvolt = <904000>;
++			regulator-max-microvolt = <904000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* L4 lmx.lvl: ARC */
++
++		pm8350_l5: ldo5 {
++			regulator-name = "pm8350_l5";
++			regulator-min-microvolt = <880000>;
++			regulator-max-microvolt = <888000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350_l6: ldo6 {
++			regulator-name = "pm8350_l6";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1208000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* UFS VCC: Nubia's vcc-voltage-level is 2.504..2.952 V */
++		pm8350_l7: ldo7 {
++			regulator-name = "pm8350_l7";
++			regulator-min-microvolt = <2504000>;
++			regulator-max-microvolt = <2952000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* L8 lcx.lvl: ARC */
++
++		pm8350_l9: ldo9 {
++			regulator-name = "pm8350_l9";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++
++	regulators-1 {
++		compatible = "qcom,pm8350c-rpmh-regulators";
++		qcom,pmic-id = "c";
++
++		vdd-s1-supply = <&vph_pwr>;
++		vdd-s2-supply = <&vph_pwr>;
++		vdd-s3-supply = <&vph_pwr>;
++		vdd-s4-supply = <&vph_pwr>;
++		vdd-s5-supply = <&vph_pwr>;
++		vdd-s6-supply = <&vph_pwr>;
++		vdd-s7-supply = <&vph_pwr>;
++		vdd-s8-supply = <&vph_pwr>;
++		vdd-s9-supply = <&vph_pwr>;
++		vdd-s10-supply = <&vph_pwr>;
++
++		vdd-l1-l12-supply = <&pm8350c_s1>;
++		vdd-l2-l8-supply = <&pm8350c_s1>;
++		vdd-l3-l4-l5-l7-l13-supply = <&vreg_bob>;
++		vdd-l6-l9-l11-supply = <&vreg_bob>;
++		vdd-l10-supply = <&pm8350_s12>;
++
++		vdd-bob-supply = <&vph_pwr>;
++
++		pm8350c_s1: smps1 {
++			regulator-name = "pm8350c_s1";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1952000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* S2 ebi.lvl: ARC */
++
++		pm8350c_s3: smps3 {
++			regulator-name = "pm8350c_s3";
++			regulator-min-microvolt = <300000>;
++			regulator-max-microvolt = <704000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* S4 mss.lvl, S6 cx.lvl, S8 mmcx.lvl: ARC */
++
++		pm8350c_s10: smps10 {
++			regulator-name = "pm8350c_s10";
++			regulator-min-microvolt = <1048000>;
++			regulator-max-microvolt = <1128000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l1: ldo1 {
++			regulator-name = "pm8350c_l1";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l2: ldo2 {
++			regulator-name = "pm8350c_l2";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l3: ldo3 {
++			regulator-name = "pm8350c_l3";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <3008000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l4: ldo4 {
++			regulator-name = "pm8350c_l4";
++			regulator-min-microvolt = <1704000>;
++			regulator-max-microvolt = <3000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l5: ldo5 {
++			regulator-name = "pm8350c_l5";
++			regulator-min-microvolt = <1704000>;
++			regulator-max-microvolt = <3000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l6: ldo6 {
++			regulator-name = "pm8350c_l6";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <2960000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l7: ldo7 {
++			regulator-name = "pm8350c_l7";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <3008000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l8: ldo8 {
++			regulator-name = "pm8350c_l8";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* Shoulder trigger AVDD */
++		pm8350c_l9: ldo9 {
++			regulator-name = "pm8350c_l9";
++			regulator-min-microvolt = <2960000>;
++			regulator-max-microvolt = <3008000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		pm8350c_l10: ldo10 {
++			regulator-name = "pm8350c_l10";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* Fan MCU: Nubia raises this LDO to 3.312 V just for the fan. */
++		pm8350c_l11: ldo11 {
++			regulator-name = "pm8350c_l11";
++			regulator-min-microvolt = <3312000>;
++			regulator-max-microvolt = <3312000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* Panel VDDIO */
++		pm8350c_l12: ldo12 {
++			regulator-name = "pm8350c_l12";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* Panel VCI */
++		pm8350c_l13: ldo13 {
++			regulator-name = "pm8350c_l13";
++			regulator-min-microvolt = <3000000>;
++			regulator-max-microvolt = <3000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		vreg_bob: bob {
++			regulator-name = "vreg_bob";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <3960000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
++		};
++	};
++
++	regulators-2 {
++		compatible = "qcom,pmr735a-rpmh-regulators";
++		qcom,pmic-id = "e";
++
++		vdd-s1-supply = <&vph_pwr>;
++		vdd-s2-supply = <&vph_pwr>;
++		vdd-s3-supply = <&vph_pwr>;
++
++		vdd-l1-l2-supply = <&pmr735a_s2>;
++		vdd-l3-supply = <&pmr735a_s1>;
++		vdd-l4-supply = <&pm8350c_s1>;
++		vdd-l5-l6-supply = <&pm8350c_s1>;
++		vdd-l7-bob-supply = <&vreg_bob>;
++
++		pmr735a_s1: smps1 {
++			regulator-name = "pmr735a_s1";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1280000>;
++		};
++
++		/* WCN6855 AON / PMU MX (qcom,vdd-wlan-aon-config 1.012 V) */
++		pmr735a_s2: smps2 {
++			regulator-name = "pmr735a_s2";
++			regulator-min-microvolt = <500000>;
++			regulator-max-microvolt = <1020000>;
++		};
++
++		pmr735a_s3: smps3 {
++			regulator-name = "pmr735a_s3";
++			regulator-min-microvolt = <2200000>;
++			regulator-max-microvolt = <2352000>;
++		};
++
++		pmr735a_l1: ldo1 {
++			regulator-name = "pmr735a_l1";
++			regulator-min-microvolt = <912000>;
++			regulator-max-microvolt = <912000>;
++		};
++
++		pmr735a_l2: ldo2 {
++			regulator-name = "pmr735a_l2";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++		};
++
++		pmr735a_l3: ldo3 {
++			regulator-name = "pmr735a_l3";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++		};
++
++		pmr735a_l4: ldo4 {
++			regulator-name = "pmr735a_l4";
++			regulator-min-microvolt = <1776000>;
++			regulator-max-microvolt = <1872000>;
++		};
++
++		/*
++		 * No L5: RPMh has no voltage for it on this board (-ENOTRECOVERABLE
++		 * at registration takes the whole PMIC's regulators down), and
++		 * nothing here uses it.
++		 */
++
++		/*
++		 * Bluetooth antenna switch (qcom,bt-vdd-asd in the stock DT);
++		 * the WCN6855 BT binding has no supply for it.
++		 */
++		pmr735a_l7: ldo7 {
++			regulator-name = "pmr735a_l7";
++			regulator-min-microvolt = <2800000>;
++			regulator-max-microvolt = <2800000>;
++			regulator-always-on;
++		};
++	};
++};
++
++&cdsp {
++	firmware-name = "qcom/sm8350/nubia/nx669j/cdsp.mbn";
++	status = "okay";
++};
++
++&gpi_dma0 {
++	status = "okay";
++};
++
++&gpi_dma1 {
++	status = "okay";
++};
++
++&gpi_dma2 {
++	status = "okay";
++};
++
++&gpu {
++	status = "okay";
++};
++
++&gpu_zap_shader {
++	firmware-name = "qcom/sm8350/nubia/nx669j/a660_zap.mbn";
++};
++
++/* Touchscreen */
++&i2c4 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	touchscreen@5d {
++		compatible = "goodix,gt9897";
++		reg = <0x5d>;
++
++		interrupts-extended = <&tlmm 23 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&tlmm 22 GPIO_ACTIVE_LOW>;
++
++		avdd-supply = <&ts_avdd>;
++		vddio-supply = <&ts_iovdd>;
++
++		touchscreen-size-x = <1080>;
++		touchscreen-size-y = <2400>;
++
++		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
++		pinctrl-names = "default";
++	};
++};
++
++/* Right shoulder trigger */
++&i2c6 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	trigger@10 {
++		compatible = "nubia,nx669j-trigger-right";
++		reg = <0x10>;
++		interrupts-extended = <&tlmm 13 IRQ_TYPE_EDGE_FALLING>;
++		avdd-supply = <&pm8350c_l9>;
++		power-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
++		/* bit 0: outer zone, bit 1: inner zone */
++		linux,keycodes = <BTN_TR2 BTN_TR>;
++		pinctrl-0 = <&trigger_r_int>;
++		pinctrl-names = "default";
++	};
++};
++
++/* Left shoulder trigger */
++&i2c10 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	trigger@10 {
++		compatible = "nubia,nx669j-trigger-left";
++		reg = <0x10>;
++		interrupts-extended = <&tlmm 67 IRQ_TYPE_EDGE_FALLING>;
++		avdd-supply = <&pm8350c_l9>;
++		power-gpios = <&tlmm 66 GPIO_ACTIVE_LOW>;
++		/* bit 0: inner zone, bit 1: outer zone */
++		linux,keycodes = <BTN_TL BTN_TL2>;
++		pinctrl-0 = <&trigger_l_int>;
++		pinctrl-names = "default";
++	};
++};
++
++/* Cooling fan MCU */
++&i2c11 {
++	clock-frequency = <100000>;
++	status = "okay";
++
++	fan@2a {
++		compatible = "nubia,nx669j-fan";
++		reg = <0x2a>;
++		vdd-supply = <&pm8350c_l11>;
++		reset-gpios = <&pm8350c_gpios 6 GPIO_ACTIVE_LOW>;
++		vendor-gpios = <&tlmm 7 GPIO_ACTIVE_HIGH>;
++		pinctrl-0 = <&fan_mcu_rst>;
++		pinctrl-names = "default";
++	};
++};
++
++/* Speaker amplifiers (MAX98937), on primary MI2S (sound card below) */
++&i2c17 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	speaker_l: audio-codec@39 {
++		compatible = "maxim,max98937";
++		reg = <0x39>;
++		reset-gpios = <&tlmm 9 GPIO_ACTIVE_LOW>;
++		maxim,channel = <1>;	/* left */
++		#sound-dai-cells = <0>;
++		sound-name-prefix = "Speaker Left";
++	};
++
++	speaker_r: audio-codec@3a {
++		compatible = "maxim,max98937";
++		reg = <0x3a>;
++		reset-gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
++		maxim,channel = <2>;	/* right */
++		#sound-dai-cells = <0>;
++		sound-name-prefix = "Speaker Right";
++	};
++};
++
++&ipa {
++	qcom,gsi-loader = "self";
++	memory-region = <&pil_ipa_fw_mem>;
++	firmware-name = "qcom/sm8350/nubia/nx669j/ipa_fws.mbn";
++	status = "okay";
++};
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	vdda-supply = <&pm8350_l6>;
++	status = "okay";
++
++	display_panel: panel@0 {
++		/* NT37701 or NT37800A, picked from the ABL cmdline */
++		compatible = "nubia,nx669j-panel";
++		reg = <0>;
++
++		reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
++
++		/* Portrait panel, landscape handheld: right side up, like the Deck */
++		rotation = <270>;
++
++		vddio-supply = <&pm8350c_l12>;
++		vci-supply = <&pm8350c_l13>;
++		dvdd-supply = <&panel_dvdd_1p2>;
++
++		pinctrl-0 = <&sde_dsi_active>, <&sde_te_active>;
++		pinctrl-1 = <&sde_dsi_suspend>, <&sde_te_active>;
++		pinctrl-names = "default", "sleep";
++
++		port {
++			panel0_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	remote-endpoint = <&panel0_in>;
++	/* C-PHY: three trios */
++	data-lanes = <0 1 2>;
++	qcom,te-source = "mdp_vsync_p";
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&pm8350_l5>;
++	phy-type = <PHY_TYPE_CPHY>;
++	status = "okay";
++};
++
++&mpss {
++	firmware-name = "qcom/sm8350/nubia/nx669j/modem.mbn";
++	status = "okay";
++};
++
++&pcie0 {
++	perst-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
++	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
++
++	pinctrl-0 = <&pcie0_default_state>;
++	pinctrl-names = "default";
++
++	status = "okay";
++};
++
++&pcie0_phy {
++	vdda-phy-supply = <&pm8350_l5>;
++	vdda-pll-supply = <&pm8350_l6>;
++	status = "okay";
++};
++
++&pcie0 {
++	pcie@0 {
++		wifi@0 {
++			compatible = "pci17cb,1103";
++			reg = <0x10000 0x0 0x0 0x0 0x0>;
++
++			vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
++			vddaon-supply = <&vreg_pmu_aon_0p8>;
++			vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
++			vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
++			vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
++			vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
++			vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
++			vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
++			vddrfa1p8-supply = <&vreg_pmu_rfa_1p7>;
++
++			qcom,calibration-variant = "Nubia_NX669J";
++		};
++	};
++};
++
++&pm8350_gpios {
++	vol_up_n: vol-up-n-state {
++		pins = "gpio6";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		power-source = <1>;
++		bias-pull-up;
++		input-enable;
++	};
++};
++
++&pm8350c_gpios {
++	fan_mcu_rst: fan-mcu-rst-state {
++		pins = "gpio6";
++		function = PMIC_GPIO_FUNC_NORMAL;
++		power-source = <0>;
++		output-low;
++	};
++};
++
++&pmk8350_rtc {
++	status = "okay";
++};
++
++&pon_pwrkey {
++	status = "okay";
++};
++
++&pon_resin {
++	linux,code = <KEY_VOLUMEDOWN>;
++	status = "okay";
++};
++
++&qupv3_id_0 {
++	status = "okay";
++};
++
++&qupv3_id_1 {
++	status = "okay";
++};
++
++&qupv3_id_2 {
++	status = "okay";
++};
++
++&slpi {
++	firmware-name = "qcom/sm8350/nubia/nx669j/slpi.mbn";
++	status = "okay";
++};
++
++&tlmm {
++	/* TZ-owned (fingerprint / eSE SPI), as on the Qualcomm MTP */
++	gpio-reserved-ranges = <52 8>;
++
++	/* Speaker amplifiers' I2S (stock: pri_mi2s_*_active) */
++	pri_mi2s_active: pri-mi2s-active-state {
++		sck-pins {
++			pins = "gpio125";
++			function = "mi2s0_sck";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data0-pins {
++			pins = "gpio126";
++			function = "mi2s0_data0";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data1-pins {
++			pins = "gpio127";
++			function = "mi2s0_data1";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		ws-pins {
++			pins = "gpio128";
++			function = "mi2s0_ws";
++			drive-strength = <8>;
++			bias-disable;
++		};
++	};
++
++	/* Bluetooth: 4-wire UART, pulls as in the stock DT */
++	qup_uart18_bt: qup-uart18-bt-state {
++		cts-pins {
++			pins = "gpio68";
++			function = "qup18";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		rts-pins {
++			pins = "gpio69";
++			function = "qup18";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++
++		tx-pins {
++			pins = "gpio70";
++			function = "qup18";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++
++		rx-pins {
++			pins = "gpio71";
++			function = "qup18";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++
++	bt_en: bt-en-state {
++		pins = "gpio65";
++		function = "gpio";
++		drive-strength = <16>;
++		output-low;
++		bias-pull-up;
++	};
++
++	wlan_en: wlan-en-state {
++		pins = "gpio64";
++		function = "gpio";
++		drive-strength = <16>;
++		output-low;
++		bias-pull-up;
++	};
++
++	wlan_swctrl: wlan-swctrl-state {
++		pins = "gpio153";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	panel_dvdd_en: panel-dvdd-en-state {
++		pins = "gpio83";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	pcie0_default_state: pcie0-default-state {
++		perst-pins {
++			pins = "gpio94";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++
++		clkreq-pins {
++			pins = "gpio95";
++			function = "pcie0_clkreqn";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++
++		wake-pins {
++			pins = "gpio96";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++
++	sde_dsi_active: sde-dsi-active-state {
++		pins = "gpio24";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	sde_dsi_suspend: sde-dsi-suspend-state {
++		pins = "gpio24";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	sde_te_active: sde-te-active-state {
++		pins = "gpio82";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	trigger_l_int: trigger-l-int-state {
++		pins = "gpio67";
++		function = "gpio";
++		drive-strength = <6>;
++		bias-pull-up;
++	};
++
++	trigger_r_int: trigger-r-int-state {
++		pins = "gpio13";
++		function = "gpio";
++		drive-strength = <6>;
++		bias-pull-up;
++	};
++
++	ts_int_default: ts-int-default-state {
++		pins = "gpio23";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++	};
++
++	ts_reset_default: ts-reset-default-state {
++		pins = "gpio22";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++	};
++};
++
++&uart18 {
++	/* the SoC default muxes only two of the four lines */
++	pinctrl-0 = <&qup_uart18_bt>;
++	status = "okay";
++
++	bluetooth {
++		compatible = "qcom,wcn6855-bt";
++
++		vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
++		vddaon-supply = <&vreg_pmu_aon_0p8>;
++		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
++		vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
++		vddbtcmx-supply = <&vreg_pmu_btcmx_0p8>;
++		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
++		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
++		vddrfa1p8-supply = <&vreg_pmu_rfa_1p7>;
++
++		max-speed = <3200000>;
++	};
++};
++
++&ufs_mem_hc {
++	reset-gpios = <&tlmm 203 GPIO_ACTIVE_LOW>;
++
++	vcc-supply = <&pm8350_l7>;
++	vcc-max-microamp = <800000>;
++	vccq-supply = <&pm8350_l9>;
++	vccq-max-microamp = <900000>;
++	vdd-hba-supply = <&pm8350_l9>;
++
++	status = "okay";
++};
++
++&ufs_mem_phy {
++	vdda-phy-supply = <&pm8350_l5>;
++	vdda-pll-supply = <&pm8350_l6>;
++	status = "okay";
++};
++
++&usb_1 {
++	status = "okay";
++};
++
++&usb_1_dwc3 {
++	dr_mode = "otg";
++	usb-role-switch;
++	/* Gadget until the ADSP (pmic-glink) reports a role: USB debug shell. */
++	role-switch-default-mode = "peripheral";
++};
++
++&usb_1_dwc3_hs {
++	remote-endpoint = <&pmic_glink_hs_in>;
++};
++
++&usb_1_hsphy {
++	vdda-pll-supply = <&pm8350_l5>;
++	vdda18-supply = <&pm8350c_l1>;
++	vdda33-supply = <&pm8350_l2>;
++
++	/* Nubia's qcom,param-override-seq (0xe6/0x0b/0x17 at X0/X1/X2) */
++	qcom,hs-disconnect-bp = <1743>;
++	qcom,squelch-detector-bp = <(-2090)>;
++	qcom,hs-amplitude-bp = <1780>;
++	qcom,pre-emphasis-duration-bp = <20000>;
++	qcom,pre-emphasis-amplitude-bp = <40000>;
++	qcom,hs-rise-fall-time-bp = <(-4100)>;
++	qcom,hs-crossover-voltage-microvolt = <(-31000)>;
++	qcom,hs-output-impedance-micro-ohms = <2600000>;
++	status = "okay";
++};
++
++&usb_1_qmpphy {
++	vdda-phy-supply = <&pm8350_l6>;
++	vdda-pll-supply = <&pm8350_l1>;
++	status = "okay";
++};
++
++&usb_1_qmpphy_out {
++	remote-endpoint = <&pmic_glink_ss_in>;
++};
++
++/ {
++	/*
++	 * Speakers: two MAX98927 on primary MI2S (SD0 out; SD1 carries their
++	 * I/V sense back in the stock setup, unused here). The headphone jack
++	 * (WCD938x on SoundWire) is not wired up yet.
++	 */
++	sound {
++		compatible = "qcom,sm8250-sndcard";
++		model = "REDMAGIC 6";
++		pinctrl-0 = <&pri_mi2s_active>;
++		pinctrl-names = "default";
++
++		mm1-dai-link {
++			link-name = "MultiMedia1";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++			};
++		};
++
++		mm2-dai-link {
++			link-name = "MultiMedia2";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++			};
++		};
++
++		speaker-dai-link {
++			link-name = "Speakers";
++
++			cpu {
++				sound-dai = <&q6afedai PRIMARY_MI2S_RX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				sound-dai = <&speaker_l>, <&speaker_r>;
++			};
++		};
++	};
++};
++
++&q6afedai {
++	dai@16 {
++		reg = <PRIMARY_MI2S_RX>;
++		qcom,sd-lines = <0>;
++	};
++};
++
++&q6asmdai {
++	dai@0 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
++	};
++
++	dai@1 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
++	};
++};
+-- 
+2.55.0
+

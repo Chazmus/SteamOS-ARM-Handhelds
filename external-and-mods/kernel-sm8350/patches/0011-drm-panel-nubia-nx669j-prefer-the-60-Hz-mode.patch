@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 22:55:00 -0500
+Subject: [PATCH] drm/panel: nubia-nx669j: prefer the 60 Hz mode
+
+The first listed mode (144 Hz) was marked preferred. gamescope asks for
+its landscape output size (2400x1080), which never matches the portrait
+panel modes, so it falls back to the preferred mode and runs the Steam
+UI at 144 Hz with the MDP core clock at 460 MHz.
+
+Prefer 60 Hz instead (MDP core clock 200 MHz). On a static image this
+alone saves about 44 mA of battery current; compositing 60 instead of
+144 frames a second saves more. Games still get 90/120/144 Hz, which
+stay in the mode list.
+
+---
+--- a/drivers/gpu/drm/panel/panel-nubia-nx669j.c
++++ b/drivers/gpu/drm/panel/panel-nubia-nx669j.c
+@@ -83,6 +83,12 @@
+ };
+ 
+ #define NX669J_MAX_RATE	144
++/*
++ * Preferred rate. Compositors that cannot match their configured mode to the
++ * portrait panel (gamescope) fall back to the preferred mode; 144 Hz there
++ * costs power for nothing in menus. Games still get the other rates.
++ */
++#define NX669J_DEFAULT_RATE	60
+ #define NX669J_BL_MIN	8
+ #define NX669J_BL_MAX	2047
+ 
+@@ -181,6 +187,9 @@
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < d->num_modes; i++)
++		if (d->modes[i].rate == NX669J_DEFAULT_RATE)
++			return &d->modes[i];
++	for (i = 0; i < d->num_modes; i++)
+ 		if (d->modes[i].rate <= NX669J_MAX_RATE)
+ 			return &d->modes[i];
+ 	return &d->modes[0];
+@@ -344,6 +353,7 @@
+ {
+ 	struct nx669j_panel *ctx = to_nx669j(panel);
+ 	const struct nx669j_panel_desc *d = ctx->desc;
++	const struct nx669j_mode *def = nx669j_default_mode(d);
+ 	unsigned int i, n = 0;
+ 
+ 	ctx->connector = connector;
+@@ -361,8 +371,9 @@
+ 		if (!m)
+ 			return -ENOMEM;
+ 		nx669j_fill_mode(m, &d->modes[i]);
+-		if (!n++)
++		if (&d->modes[i] == def)
+ 			m->type |= DRM_MODE_TYPE_PREFERRED;
++		n++;
+ 		drm_mode_probed_add(connector, m);
+ 	}
+ 
+-- 
+2.43.0

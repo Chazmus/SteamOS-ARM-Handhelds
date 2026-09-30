@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Wed, 30 Sep 2026 03:40:00 -0500
+Subject: [PATCH] drm/panel: nubia-nx669j: fix backlight control
+
+The brightness slider had no effect: the NT37800A (B6) kept the DBV
+from its init sequence (0x52 read back 0x07ff whatever was written).
+It ignores DCS 0x51 in two ways:
+
+- sent in HS mode, the write is dropped without an error;
+- with two parameters it is ignored even in LP mode. The init
+  sequences of every variant set 0x51 with four (the DBV, then a
+  second word Nubia keeps at the top of the HBM range).
+
+Send 0x51 in LP mode with the trailing word taken from the variant's
+init sequence, and restore the DSI mode flags afterwards instead of
+leaving LP mode set. Verified on an NX669J with the nt37800a_b6 panel:
+0x52 now follows /sys/class/backlight and Steam's slider.
+
+---
+--- a/drivers/gpu/drm/panel/panel-nubia-nx669j.c
++++ b/drivers/gpu/drm/panel/panel-nubia-nx669j.c
+@@ -103,6 +103,8 @@
+ 	const struct nx669j_mode *cur_mode;
+ 	enum drm_panel_orientation orientation;
+ 	bool abl_initialised;
++	/* trailing 0x51 bytes from the init sequence, 0 if it has none */
++	u8 bl_tail[2], bl_len;
+ };
+ 
+ static inline struct nx669j_panel *to_nx669j(struct drm_panel *panel)
+@@ -401,18 +403,47 @@
+ static int nx669j_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	struct nx669j_panel *ctx = mipi_dsi_get_drvdata(dsi);
+ 	u16 brightness = backlight_get_brightness(bl);
++	unsigned long flags = dsi->mode_flags;
++	u8 buf[5];
+ 	int ret;
+ 
+ 	if (brightness && brightness < NX669J_BL_MIN)
+ 		brightness = NX669J_BL_MIN;
+ 
+-	/* qcom,mdss-dsi-bl-inverted-dbv: the DDIC wants the value big-endian */
+-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+-	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++	/*
++	 * qcom,mdss-dsi-bl-inverted-dbv: the DDIC wants the value big-endian.
++	 * The init sequences set 0x51 with four parameters (DBV, then a
++	 * second DBV word Nubia keeps at the top of the HBM range), and the
++	 * NT37800A ignores the plain two-byte form: 0x52 keeps reading back
++	 * the init value. Resend the second word from the init sequence.
++	 * It also drops 0x51 sent in HS mode (without an error), so send it
++	 * in LP mode like the init sequence.
++	 */
++	buf[0] = MIPI_DCS_SET_DISPLAY_BRIGHTNESS;
++	put_unaligned_be16(brightness, &buf[1]);
++	memcpy(&buf[3], ctx->bl_tail, sizeof(ctx->bl_tail));
++
+ 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++	ret = mipi_dsi_dcs_write_buffer(dsi, buf, 3 + ctx->bl_len);
++	dsi->mode_flags = flags;
++
++	return ret < 0 ? ret : 0;
++}
+ 
+-	return ret;
++static void nx669j_find_bl_tail(struct nx669j_panel *ctx)
++{
++	const struct nx669j_mode *m = &ctx->desc->modes[0];
++	unsigned int i;
++
++	for (i = 0; i < m->num_on_cmds; i++)
++		if (m->on_cmds[i].len == 5 &&
++		    m->on_cmds[i].data[0] == MIPI_DCS_SET_DISPLAY_BRIGHTNESS) {
++			memcpy(ctx->bl_tail, &m->on_cmds[i].data[3], 2);
++			ctx->bl_len = 2;
++			return;
++		}
+ }
+ 
+ static const struct backlight_ops nx669j_bl_ops = {
+@@ -546,6 +577,7 @@
+ 		return dev_err_probe(dev, ret, "invalid rotation\n");
+ 
+ 	mipi_dsi_set_drvdata(dsi, ctx);
++	nx669j_find_bl_tail(ctx);
+ 
+ 	dsi->lanes = 3;		/* C-PHY trios */
+ 	/*

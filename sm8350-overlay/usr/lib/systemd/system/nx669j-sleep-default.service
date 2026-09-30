@@ -1,0 +1,15 @@
+# REDMAGIC 6: kernel s2idle works here (kernel patch 0014 keeps the PCIe
+# GDSCs in retention; without it the SoC reset in PCIe noirq suspend), so
+# Steam's Sleep should be a real suspend, not konkr-standby. Seeds the
+# konkrctl flag once; `konkrctl sleep standby` afterwards still sticks.
+[Unit]
+Description=REDMAGIC 6 default sleep mode (kernel s2idle)
+ConditionFirmware=device-tree-compatible(nubia,nx669j)
+ConditionPathExists=!/var/lib/konkrd/.nx669j-sleep-seeded
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'mkdir -p /var/lib/konkrd && touch /var/lib/konkrd/sleep-s2idle /var/lib/konkrd/.nx669j-sleep-seeded'
+
+[Install]
+WantedBy=multi-user.target

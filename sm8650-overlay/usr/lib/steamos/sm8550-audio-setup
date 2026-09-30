@@ -5,6 +5,8 @@
 #   SM8550: card "AYN-Odin2" (Odin 2 / Mini / Portal, Retroid Pocket 6 / Nova:
 #     aw88166 amps on MI2S), "AYN-Thor", "SM8550-APS" (AYANEO Pockets:
 #     WSA884x), UCM from ROCKNIX.
+#   SM8350 (REDMAGIC 6): card "sm8250 - REDMAGIC 6", fully set up by its UCM
+#     (conf.d/sm8250/REDMAGIC 6.conf) when WirePlumber opens it.
 # Name kept as sm8550-audio-setup so the existing units/udev rule apply.
 set +e
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
@@ -19,6 +21,7 @@ trap 'touch "$READY"' EXIT
 # ostree / image pack often leaves UCM dirs 700 steam:steam; root alsaucm
 # then cannot read them and the speakers stay silent.
 for d in /usr/share/alsa/ucm2/AYN /usr/share/alsa/ucm2/AYANEO /usr/share/alsa/ucm2/Qualcomm/sm8650 \
+         /usr/share/alsa/ucm2/Nubia /usr/share/alsa/ucm2/conf.d/sm8250 \
          /usr/share/alsa/ucm2/conf.d/sm8550 /usr/share/alsa/ucm2/conf.d/sm8650 \
          /usr/share/alsa/ucm2/codecs /usr/share/alsa/ucm2/lib; do
   [[ -d "$d" ]] || continue
@@ -29,7 +32,7 @@ done
 wait_card() {
   local i
   for i in $(seq 1 80); do
-    grep -qiE 'APS|SM8650|AYN|Odin2|Thor|sm8550' /proc/asound/cards 2>/dev/null && return 0
+    grep -qiE 'APS|SM8650|AYN|Odin2|Thor|sm8550|REDMAGIC' /proc/asound/cards 2>/dev/null && return 0
     sleep 0.25
   done
   return 1
@@ -38,6 +41,13 @@ wait_card() {
 if ! wait_card; then
   log "no ASoC card yet"
   cat /proc/asound/cards >&2 || true
+  exit 0
+fi
+
+# REDMAGIC 6: nothing to do here. Before it matched above, every boot sat
+# out the whole 20 s wait while WirePlumber waited on us.
+if grep -qi 'REDMAGIC' /proc/asound/cards; then
+  log "REDMAGIC 6 card: UCM applied by WirePlumber"
   exit 0
 fi
 

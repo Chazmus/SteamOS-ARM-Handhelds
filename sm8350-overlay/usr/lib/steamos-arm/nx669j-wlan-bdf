@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Wi-Fi board data for the REDMAGIC 6 (QCA6490 / WCN6855 on ath11k).
+
+Nubia ships per-board calibration files (bdwlan.eXX, ELF) instead of an
+ath11k board-2.bin, and which one applies depends on the board id burned
+into the chip. ath11k logs the exact board name it wants when it cannot find
+one; this builds a board-2.bin with that name around Nubia's matching file
+(bdwlan.e<board id>, like Nubia's cnss2 picks it, else bdwlan.elf), writes it
+under firmware_class.path and reloads ath11k.
+
+The chip has no MAC address in OTP either, so the firmware makes up a new
+one on every boot and saved Wi-Fi networks (bound to it) stop matching.
+Nubia keeps the MAC in persist/wlan_mac.bin; it goes to ath11k's mac_addr
+parameter (modprobe.d, and a reload now if the running MAC differs).
+
+Runs every boot; after the first one both are already in place.
+"""
+import os
+import re
+import struct
+import subprocess
+import sys
+import time
+
+MODEL = "/sys/firmware/devicetree/base/model"
+BDF_SRC = "/usr/lib/firmware/nubia/nx669j/wlan"
+FW_DIR = "/var/lib/steamos-arm/firmware"
+PERSIST = "/dev/disk/by-partlabel/persist"
+MODPROBE_CONF = "/etc/modprobe.d/nx669j-wlan.conf"
+MAGIC = b"QCA-ATH11K-BOARD\0"
+BD_IE_BOARD, BD_IE_BOARD_NAME, BD_IE_BOARD_DATA = 0, 0, 1
+WANT = re.compile(r"ath11k_pci \S+: failed to fetch board data for (bus=pci,vendor=\S+?qmi-board-id=(\d+)\S*) from (ath11k/\S+/)board-2\.bin")
+READY = re.compile(r"ath11k_pci \S+: (fw_version|chip_id) ")
+
+
+def log(msg):
+    print(f"nx669j-wlan-bdf: {msg}", flush=True)
+
+
+def ie(ie_id, data):
+    return struct.pack("<II", ie_id, len(data)) + data + b"\0" * (-len(data) % 4)
+
+
+def board2(name, bdf):
+    magic = MAGIC + b"\0" * (-len(MAGIC) % 4)
+    board = ie(BD_IE_BOARD_NAME, name.encode()) + ie(BD_IE_BOARD_DATA, bdf)
+    return magic + ie(BD_IE_BOARD, board)
+
+
+def nubia_mac():
+    """Intf0MacAddress from Nubia's persist/wlan_mac.bin, as aa:bb:..."""
+    mnt = "/run/nx669j-persist"
+    os.makedirs(mnt, exist_ok=True)
+    if subprocess.run(["mount", "-o", "ro,noload", PERSIST, mnt],
+                      capture_output=True).returncode:
+        return None
+    try:
+        with open(os.path.join(mnt, "wlan_mac.bin")) as f:
+            m = re.search(r"Intf0MacAddress=([0-9A-Fa-f]{12})", f.read())
+    except OSError:
+        m = None
+    finally:
+        subprocess.run(["umount", mnt], check=False)
+    if not m:
+        return None
+    return ":".join(m.group(1)[i:i + 2] for i in range(0, 12, 2)).lower()
+
+
+def running_mac():
+    try:
+        for phy in os.listdir("/sys/class/ieee80211"):
+            with open(f"/sys/class/ieee80211/{phy}/macaddress") as f:
+                return f.read().strip().lower()
+    except OSError:
+        pass
+    return None
+
+
+def reload_ath11k(mac):
+    subprocess.run(["modprobe", "-r", "ath11k_pci", "ath11k"], check=False)
+    subprocess.run(["modprobe", "ath11k"] + ([f"mac_addr={mac}"] if mac else []), check=False)
+    subprocess.run(["modprobe", "ath11k_pci"], check=False)
+
+
+def kmsg():
+    return subprocess.run(["dmesg"], capture_output=True, text=True).stdout
+
+
+def main():
+    try:
+        if "REDMAGIC 6" not in open(MODEL).read():
+            return 0
+    except OSError:
+        return 0
+
+    mac = nubia_mac()
+    if mac:
+        conf = f"options ath11k mac_addr={mac}\n"
+        try:
+            old = open(MODPROBE_CONF).read()
+        except OSError:
+            old = ""
+        if old != conf:
+            os.makedirs(os.path.dirname(MODPROBE_CONF), exist_ok=True)
+            with open(MODPROBE_CONF, "w") as f:
+                f.write(conf)
+            log(f"{MODPROBE_CONF}: mac_addr={mac}")
+    else:
+        log("no MAC in persist/wlan_mac.bin, keeping the firmware's")
+
+    # ath11k asks for board data a few seconds after the WCN power-up.
+    want = None
+    for _ in range(60):
+        log_text = kmsg()
+        found = WANT.findall(log_text)
+        if found:
+            want = found[0]
+            break
+        if READY.search(log_text) and "failed to fetch board data" not in log_text:
+            log("ath11k already has its board data")
+            cur = running_mac()
+            if mac and cur and cur != mac:
+                log(f"MAC {cur} -> {mac}, reloading ath11k")
+                reload_ath11k(mac)
+            return 0
+        time.sleep(1)
+    if not want:
+        log("ath11k never asked for board data (Wi-Fi not probed?)")
+        return 0
+
+    name, board_id, fw_subdir = want[0], int(want[1]), want[2]
+    for cand in (f"bdwlan.e{board_id:02x}", "bdwlan.elf"):
+        src = os.path.join(BDF_SRC, cand)
+        if os.path.exists(src):
+            break
+    else:
+        log(f"no Nubia board file for board id {board_id}")
+        return 1
+
+    out_dir = os.path.join(FW_DIR, fw_subdir)
+    out = os.path.join(out_dir, "board-2.bin")
+    os.makedirs(out_dir, exist_ok=True)
+    with open(src, "rb") as f:
+        data = board2(name, f.read())
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, out)
+    log(f"{out}: '{name}' <- {cand}")
+
+    reload_ath11k(mac)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Wed, 30 Sep 2026 04:40:00 -0500
+Subject: [PATCH] clk: qcom: gcc-sm8350: keep PCIe GDSCs in retention during
+ suspend
+
+The Qualcomm PCIe controller driver keeps the link up across system
+suspend when an endpoint is present (Wi-Fi on PCIe0 here), so its power
+domain must not be switched off. With PWRSTS_OFF_ON, genpd powers off
+pcie_0_gdsc in the noirq phase of suspend-to-idle and the SoC
+cold-resets there (traced with a step marker in PMIC SDAM: last step
+"noirq power domain" of 1c00000.pcie).
+
+Do what SM8450, SM8550 and SC8280XP already do and let the PCIe GDSCs
+only go to retention. s2idle now survives and resumes with Wi-Fi.
+
+---
+--- a/drivers/clk/qcom/gcc-sm8350.c
++++ b/drivers/clk/qcom/gcc-sm8350.c
+@@ -3421,7 +3421,7 @@
+ 	.pd = {
+ 		.name = "pcie_0_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_OFF_ON,
++	.pwrsts = PWRSTS_RET_ON,
+ };
+ 
+ static struct gdsc pcie_1_gdsc = {
+@@ -3429,7 +3429,7 @@
+ 	.pd = {
+ 		.name = "pcie_1_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_OFF_ON,
++	.pwrsts = PWRSTS_RET_ON,
+ };
+ 
+ static struct gdsc ufs_card_gdsc = {

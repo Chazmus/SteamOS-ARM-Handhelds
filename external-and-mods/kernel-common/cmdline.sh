@@ -11,7 +11,9 @@
 # the verbose console back (scripts/sd-debug-boot.sh sets it).
 
 build_cmdline() {
-  local partuuid="$1"
+  # A bare PARTUUID, or a full spec like PARTLABEL=userdata.
+  local root="$1"
+  [[ "$root" == *=* ]] || root="PARTUUID=${root}"
   [[ -n "${CMDLINE_SOC:-}" ]] || { echo "build_cmdline: source kernel-<soc>/soc.env first" >&2; return 1; }
   # No clk_ignore_unused / pd_ignore_unused: ROCKNIX boots without them and
   # they can upset display bring-up.
@@ -27,7 +29,7 @@ build_cmdline() {
   fi
   parts+=(
     rw rootwait
-    "root=PARTUUID=${partuuid}"
+    "root=${root}"
     rootfstype=ext4
     errors=remount-ro
   )

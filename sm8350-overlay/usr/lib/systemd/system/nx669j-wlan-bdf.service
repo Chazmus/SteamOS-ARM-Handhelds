@@ -1,0 +1,14 @@
+[Unit]
+Description=REDMAGIC 6 Wi-Fi board data (ath11k board-2.bin from Nubia's bdwlan)
+ConditionPathExists=/sys/firmware/devicetree/base/model
+After=systemd-modules-load.service systemd-udev-settle.service
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'grep -qa "REDMAGIC 6" /sys/firmware/devicetree/base/model'
+ExecStart=/usr/lib/steamos-arm/nx669j-wlan-bdf
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

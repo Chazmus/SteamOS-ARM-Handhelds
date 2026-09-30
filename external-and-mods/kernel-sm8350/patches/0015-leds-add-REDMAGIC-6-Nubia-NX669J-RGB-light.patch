@@ -1,0 +1,510 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Wed, 30 Sep 2026 14:30:00 -0500
+Subject: [PATCH] leds: add REDMAGIC 6 (Nubia NX669J) RGB lights
+
+The back has two lights:
+
+- The RGB strip: an Awinic AW22118 on i2c8 (0x6a; reset GPIO 79,
+  interrupt GPIO 80) running a program Nubia's Android flashes into it.
+  Effects are Nubia's aw_cfg_XX.bin register scripts from the vendor
+  image; the new driver replays them and never reflashes the chip.
+  LED class device nx669j:rgb:indicator: "effect" picks the script,
+  brightness 0 is off, anything else runs the effect with the LED
+  current scaled up to Nubia's 30 mA.
+
+- The logo light in the middle: the pm8350c tri-LED on LPG channels
+  1-3 (stock: qcom,tri-led red/green/blue), handled by the mainline
+  leds-qcom-lpg driver as the multicolor LED rgb:status.
+
+---
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -944,6 +944,15 @@
+ 	  support in kernel. To compile this driver as a module, choose 'm' here:
+ 	  the module will be called uleds.
+ 
++config LEDS_NUBIA_NX669J
++	tristate "LED support for the REDMAGIC 6 (Nubia NX669J) RGB light"
++	depends on LEDS_CLASS && I2C && OF
++	depends on GPIOLIB
++	help
++	  Say Y here to support the back RGB light of the REDMAGIC 6
++	  (Nubia NX669J), an Awinic AW22118 running Nubia's firmware.
++	  Effects are loaded from Nubia's aw_cfg_XX.bin scripts.
++
+ config LEDS_NIC78BX
+ 	tristate "LED support for NI PXI NIC78bx devices"
+ 	depends on LEDS_CLASS
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -73,6 +73,7 @@
+ obj-$(CONFIG_LEDS_MT6323)		+= leds-mt6323.o
+ obj-$(CONFIG_LEDS_NET48XX)		+= leds-net48xx.o
+ obj-$(CONFIG_LEDS_NETXBIG)		+= leds-netxbig.o
++obj-$(CONFIG_LEDS_NUBIA_NX669J)	+= leds-nubia-nx669j.o
+ obj-$(CONFIG_LEDS_NIC78BX)		+= leds-nic78bx.o
+ obj-$(CONFIG_LEDS_NS2)			+= leds-ns2.o
+ obj-$(CONFIG_LEDS_OT200)		+= leds-ot200.o
+--- a/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
+@@ -12,6 +12,7 @@
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/gpio-keys.h>
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
+ #include <dt-bindings/phy/phy.h>
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+@@ -662,6 +663,21 @@
+ 	};
+ };
+ 
++/* Back RGB light: AW22118 running Nubia's firmware */
++&i2c8 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	led-controller@6a {
++		compatible = "nubia,nx669j-rgb";
++		reg = <0x6a>;
++		interrupts-extended = <&tlmm 80 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&tlmm 79 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&rgb_led_default>;
++		pinctrl-names = "default";
++	};
++};
++
+ /* Left shoulder trigger */
+ &i2c10 {
+ 	clock-frequency = <400000>;
+@@ -835,6 +851,34 @@
+ 	};
+ };
+ 
++/* Logo light on the back (stock: qcom,tri-led red/green/blue, LPG 1-3) */
++&pm8350c_pwm {
++	status = "okay";
++
++	multi-led {
++		color = <LED_COLOR_ID_RGB>;
++		function = LED_FUNCTION_STATUS;
++
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		led@1 {
++			reg = <1>;
++			color = <LED_COLOR_ID_RED>;
++		};
++
++		led@2 {
++			reg = <2>;
++			color = <LED_COLOR_ID_GREEN>;
++		};
++
++		led@3 {
++			reg = <3>;
++			color = <LED_COLOR_ID_BLUE>;
++		};
++	};
++};
++
+ &pmk8350_rtc {
+ 	status = "okay";
+ };
+@@ -1004,6 +1048,14 @@
+ 		};
+ 	};
+ 
++	/* RGB light reset (79) and interrupt (80), pulled up as on stock */
++	rgb_led_default: rgb-led-default-state {
++		pins = "gpio79", "gpio80";
++		function = "gpio";
++		drive-strength = <6>;
++		bias-pull-up;
++	};
++
+ 	sde_dsi_active: sde-dsi-active-state {
+ 		pins = "gpio24";
+ 		function = "gpio";
+--- /dev/null
++++ b/drivers/leds/leds-nubia-nx669j.c
+@@ -0,0 +1,375 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * REDMAGIC 6 (Nubia NX669J) back RGB light.
++ *
++ * The light is an Awinic AW22118: a 6x3 LED matrix driver with a small 8051
++ * MCU and flash inside. Android flashes Nubia's MCU program into it
++ * (aw22xxx_fw_nx669j_v1e.bin); the effects are then started by replaying
++ * short register scripts (vendor /firmware/aw_cfg_XX.bin) that feed the
++ * effect parameters to the MCU through a mailbox:
++ *
++ *   ff 00          page 0
++ *   05 01          TASK0 = 1: start a parameter upload
++ *   06 xx, 04 07   TASK1 = byte, MCUCTR = wake up: one byte per pair
++ *   05 80          TASK0 = 0x80: run the effect
++ *
++ * From Nubia's drivers/leds/nubia_led/aw22xxx/leds-aw22xxx.c. This driver
++ * never reflashes the chip; units that ran stock Android already have the
++ * program, and a failed flash would leave the light dead.
++ *
++ * Exposed as an LED class device: "effect" picks the script (the XX of
++ * aw_cfg_XX.bin, loaded from nubia/nx669j/aw22xxx/: Nubia's a0..ff, or a
++ * name made of a-z, 0-9 and _ for scripts made from them), brightness 0
++ * turns the light off and anything else starts the effect with the LED
++ * current scaled to the brightness.
++ */
++
++#include <linux/ctype.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/interrupt.h>
++#include <linux/leds.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++
++#define AW22XXX_REG_CHIPID		0x00
++#define AW22XXX_REG_SRST		0x01
++#define AW22XXX_REG_GCR			0x02
++#define AW22XXX_REG_MCUCTR		0x04
++#define AW22XXX_REG_TASK0		0x05
++#define AW22XXX_REG_INTEN		0x09
++#define AW22XXX_REG_INTST		0x0a
++#define AW22XXX_REG_IMAX		0x0b
++#define AW22XXX_REG_AUDCTR		0x0c
++#define AW22XXX_REG_PAGE		0xff
++
++#define AW22XXX_SRST_RESET		0x55
++#define AW22XXX_SRST_ID			0x76
++#define AW22118_CHIPID			0x18
++#define AW22127_CHIPID			0x27
++
++#define AW22XXX_GCR_CHIPEN		BIT(0)
++#define AW22XXX_MCUCTR_WORK		BIT(0)
++#define AW22XXX_MCUCTR_RUN		BIT(1)	/* 0 holds the MCU in reset */
++#define AW22XXX_INT_FUNCMPE		BIT(0)	/* one-shot effect finished */
++
++#define NX669J_RGB_FW_DIR		"nubia/nx669j/aw22xxx/"
++#define NX669J_RGB_DEFAULT_EFFECT	"c0"
++#define NX669J_RGB_EFFECT_LEN		24
++
++/* IMAX register codes in ascending current, 2 mA .. 75 mA. */
++static const u8 nx669j_rgb_imax[] = {
++	8, 0, 9, 1, 2, 11, 3, 12, 4, 14, 5, 6, 7,
++};
++/* Nubia runs every effect at 30 mA; brightness 255 maps here. */
++#define NX669J_RGB_IMAX_MAX_IDX		8
++
++struct nx669j_rgb {
++	struct i2c_client *client;
++	struct gpio_desc *reset_gpio;
++	struct led_classdev cdev;
++	struct mutex lock;
++	char effect[NX669J_RGB_EFFECT_LEN];
++	bool running;
++};
++
++static int nx669j_rgb_write(struct nx669j_rgb *rgb, u8 reg, u8 val)
++{
++	return i2c_smbus_write_byte_data(rgb->client, reg, val);
++}
++
++static int nx669j_rgb_write_seq(struct nx669j_rgb *rgb, const u8 *seq,
++				size_t len)
++{
++	u8 page = 0;
++	size_t i;
++	int ret;
++
++	for (i = 0; i + 1 < len; i += 2) {
++		ret = nx669j_rgb_write(rgb, seq[i], seq[i + 1]);
++		if (ret)
++			return ret;
++		if (seq[i] == AW22XXX_REG_PAGE)
++			page = seq[i + 1];
++		/* The oscillator needs 2 ms after the chip is enabled. */
++		if (page == 0 && seq[i] == AW22XXX_REG_GCR &&
++		    (seq[i + 1] & AW22XXX_GCR_CHIPEN))
++			usleep_range(2000, 3000);
++	}
++	return 0;
++}
++
++/* Nubia's lamp_init: enable the chip, start the MCU, unmask FUNCMPE. */
++static const u8 nx669j_rgb_init_seq[] = {
++	AW22XXX_REG_PAGE,	0x00,
++	AW22XXX_REG_GCR,	AW22XXX_GCR_CHIPEN,
++	AW22XXX_REG_AUDCTR,	0x00,
++	AW22XXX_REG_TASK0,	0x01,
++	AW22XXX_REG_MCUCTR,	AW22XXX_MCUCTR_WORK,
++	AW22XXX_REG_INTEN,	AW22XXX_INT_FUNCMPE,
++	AW22XXX_REG_MCUCTR,	AW22XXX_MCUCTR_WORK | AW22XXX_MCUCTR_RUN,
++	AW22XXX_REG_TASK0,	0x41,
++};
++
++/* Stop the MCU and put the chip in standby (GCR chip enable off). */
++static const u8 nx669j_rgb_off_seq[] = {
++	AW22XXX_REG_PAGE,	0x00,
++	AW22XXX_REG_TASK0,	0x00,
++	AW22XXX_REG_MCUCTR,	AW22XXX_MCUCTR_WORK,
++	AW22XXX_REG_GCR,	0x00,
++};
++
++static int nx669j_rgb_off(struct nx669j_rgb *rgb)
++{
++	rgb->running = false;
++	return nx669j_rgb_write_seq(rgb, nx669j_rgb_off_seq,
++				    sizeof(nx669j_rgb_off_seq));
++}
++
++static int nx669j_rgb_start(struct nx669j_rgb *rgb,
++			    enum led_brightness brightness)
++{
++	struct device *dev = &rgb->client->dev;
++	const struct firmware *fw;
++	char name[64];
++	unsigned int idx;
++	int ret;
++
++	snprintf(name, sizeof(name), NX669J_RGB_FW_DIR "aw_cfg_%s.bin",
++		 rgb->effect);
++	ret = request_firmware(&fw, name, dev);
++	if (ret)
++		return ret;
++
++	if (fw->size < 2 || fw->size % 2) {
++		dev_err(dev, "%s: bad size %zu\n", name, fw->size);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	ret = nx669j_rgb_write_seq(rgb, nx669j_rgb_init_seq,
++				   sizeof(nx669j_rgb_init_seq));
++	if (!ret)
++		ret = nx669j_rgb_write_seq(rgb, fw->data, fw->size);
++	if (ret)
++		goto out;
++
++	/* Scripts may switch pages; IMAX lives on page 0. */
++	idx = DIV_ROUND_UP(brightness * NX669J_RGB_IMAX_MAX_IDX, LED_FULL);
++	ret = nx669j_rgb_write(rgb, AW22XXX_REG_PAGE, 0);
++	if (!ret)
++		ret = nx669j_rgb_write(rgb, AW22XXX_REG_IMAX,
++				       nx669j_rgb_imax[idx]);
++	if (!ret)
++		rgb->running = true;
++out:
++	release_firmware(fw);
++	return ret;
++}
++
++static int nx669j_rgb_set(struct led_classdev *cdev,
++			  enum led_brightness brightness)
++{
++	struct nx669j_rgb *rgb = container_of(cdev, struct nx669j_rgb, cdev);
++	int ret;
++
++	mutex_lock(&rgb->lock);
++	ret = nx669j_rgb_off(rgb);
++	if (!ret && brightness)
++		ret = nx669j_rgb_start(rgb, brightness);
++	mutex_unlock(&rgb->lock);
++	return ret;
++}
++
++static irqreturn_t nx669j_rgb_irq(int irq, void *data)
++{
++	struct nx669j_rgb *rgb = data;
++	int st;
++
++	mutex_lock(&rgb->lock);
++	st = i2c_smbus_read_byte_data(rgb->client, AW22XXX_REG_INTST);
++	/* A one-shot effect ended: standby, like Nubia's driver. */
++	if (st >= 0 && (st & AW22XXX_INT_FUNCMPE) && rgb->running)
++		nx669j_rgb_off(rgb);
++	mutex_unlock(&rgb->lock);
++
++	return st < 0 ? IRQ_NONE : IRQ_HANDLED;
++}
++
++static bool nx669j_rgb_effect_valid(const char *e)
++{
++	size_t len = strlen(e), i;
++
++	if (!len || len >= NX669J_RGB_EFFECT_LEN)
++		return false;
++	for (i = 0; i < len; i++)
++		if (!islower(e[i]) && !isdigit(e[i]) && e[i] != '_')
++			return false;
++	return true;
++}
++
++static ssize_t effect_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct led_classdev *cdev = dev_get_drvdata(dev);
++	struct nx669j_rgb *rgb = container_of(cdev, struct nx669j_rgb, cdev);
++
++	return sysfs_emit(buf, "%s\n", rgb->effect);
++}
++
++static ssize_t effect_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	struct led_classdev *cdev = dev_get_drvdata(dev);
++	struct nx669j_rgb *rgb = container_of(cdev, struct nx669j_rgb, cdev);
++	char e[NX669J_RGB_EFFECT_LEN];
++	int ret = 0;
++
++	/* one word, trailing newline dropped */
++	if (strscpy(e, buf, sizeof(e)) < 0)
++		return -EINVAL;
++	e[strcspn(e, "\n")] = '\0';
++	if (!nx669j_rgb_effect_valid(e))
++		return -EINVAL;
++
++	mutex_lock(&rgb->lock);
++	strscpy(rgb->effect, e, sizeof(rgb->effect));
++	if (rgb->running) {
++		ret = nx669j_rgb_off(rgb);
++		if (!ret)
++			ret = nx669j_rgb_start(rgb, cdev->brightness);
++	}
++	mutex_unlock(&rgb->lock);
++
++	return ret ?: count;
++}
++static DEVICE_ATTR_RW(effect);
++
++static struct attribute *nx669j_rgb_attrs[] = {
++	&dev_attr_effect.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(nx669j_rgb);
++
++static int nx669j_rgb_detect(struct nx669j_rgb *rgb)
++{
++	struct device *dev = &rgb->client->dev;
++	int ret, id;
++
++	/* Nubia's aw22xxx_hw_reset(): 1 ms low, 1 ms high. */
++	gpiod_set_value_cansleep(rgb->reset_gpio, 1);
++	usleep_range(1000, 2000);
++	gpiod_set_value_cansleep(rgb->reset_gpio, 0);
++	usleep_range(1000, 2000);
++
++	ret = nx669j_rgb_write(rgb, AW22XXX_REG_PAGE, 0);
++	if (!ret)
++		ret = nx669j_rgb_write(rgb, AW22XXX_REG_SRST,
++				       AW22XXX_SRST_RESET);
++	if (ret)
++		return dev_err_probe(dev, ret, "no response\n");
++	usleep_range(2000, 3000);
++
++	ret = i2c_smbus_read_byte_data(rgb->client, AW22XXX_REG_SRST);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "cannot read SRST\n");
++	if (ret != AW22XXX_SRST_ID)
++		return dev_err_probe(dev, -ENODEV, "unexpected SRST 0x%02x\n",
++				     ret);
++
++	id = i2c_smbus_read_byte_data(rgb->client, AW22XXX_REG_CHIPID);
++	if (id < 0)
++		return dev_err_probe(dev, id, "cannot read chip id\n");
++	if (id != AW22118_CHIPID && id != AW22127_CHIPID)
++		dev_warn(dev, "unknown chip id 0x%02x\n", id);
++	else
++		dev_info(dev, "AW22%s\n", id == AW22118_CHIPID ? "118" : "127");
++
++	return 0;
++}
++
++static int nx669j_rgb_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct led_init_data init = {};
++	struct nx669j_rgb *rgb;
++	int ret;
++
++	rgb = devm_kzalloc(dev, sizeof(*rgb), GFP_KERNEL);
++	if (!rgb)
++		return -ENOMEM;
++	rgb->client = client;
++	i2c_set_clientdata(client, rgb);
++	strscpy(rgb->effect, NX669J_RGB_DEFAULT_EFFECT, sizeof(rgb->effect));
++
++	ret = devm_mutex_init(dev, &rgb->lock);
++	if (ret)
++		return ret;
++
++	/* Asserted = chip in reset (and off). */
++	rgb->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(rgb->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(rgb->reset_gpio),
++				     "cannot get reset gpio\n");
++
++	ret = nx669j_rgb_detect(rgb);
++	if (ret)
++		return ret;
++
++	/* Whatever the bootloader or Android left running: off. */
++	ret = nx669j_rgb_off(rgb);
++	if (ret)
++		return ret;
++	i2c_smbus_read_byte_data(client, AW22XXX_REG_INTST);
++
++	if (client->irq > 0) {
++		ret = devm_request_threaded_irq(dev, client->irq, NULL,
++						nx669j_rgb_irq, IRQF_ONESHOT,
++						"nx669j-rgb", rgb);
++		if (ret)
++			return dev_err_probe(dev, ret, "cannot request irq\n");
++	}
++
++	rgb->cdev.max_brightness = LED_FULL;
++	rgb->cdev.brightness_set_blocking = nx669j_rgb_set;
++	rgb->cdev.groups = nx669j_rgb_groups;
++	init.fwnode = dev_fwnode(dev);
++	init.devicename = "nx669j";
++	init.default_label = "rgb:indicator";
++
++	return devm_led_classdev_register_ext(dev, &rgb->cdev, &init);
++}
++
++static void nx669j_rgb_shutdown(struct i2c_client *client)
++{
++	struct nx669j_rgb *rgb = i2c_get_clientdata(client);
++
++	if (!rgb)
++		return;
++	mutex_lock(&rgb->lock);
++	nx669j_rgb_off(rgb);
++	gpiod_set_value_cansleep(rgb->reset_gpio, 1);
++	mutex_unlock(&rgb->lock);
++}
++
++static const struct of_device_id nx669j_rgb_of_match[] = {
++	{ .compatible = "nubia,nx669j-rgb" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nx669j_rgb_of_match);
++
++static struct i2c_driver nx669j_rgb_driver = {
++	.driver = {
++		.name = "nubia-nx669j-rgb",
++		.of_match_table = nx669j_rgb_of_match,
++	},
++	.probe = nx669j_rgb_probe,
++	.shutdown = nx669j_rgb_shutdown,
++};
++module_i2c_driver(nx669j_rgb_driver);
++
++MODULE_DESCRIPTION("REDMAGIC 6 (Nubia NX669J) RGB light");
++MODULE_LICENSE("GPL");
+-- 
+2.43.0

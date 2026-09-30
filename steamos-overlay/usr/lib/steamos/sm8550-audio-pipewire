@@ -8,8 +8,9 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 
 # SM8650 (KONKR Pocket FIT / AYANEO Pocket S2) uses UCM HiFi via WirePlumber
 # (53-konkr-audio.conf). The pro-audio + MI2S policy below is Odin 2 only and
-# breaks the SM8650-APS2 DSP graph.
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
+# breaks the SM8650-APS2 DSP graph. The REDMAGIC 6 (SM8350) also has its own
+# UCM (Nubia/NX669J) and no Odin 2 codec controls.
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2|REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
   exit 0
 fi
 

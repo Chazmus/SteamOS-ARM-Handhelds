@@ -7,6 +7,12 @@
 #
 # Root: root=PARTLABEL=<name> (internal UFS install: STORAGE, boot log on
 # ROCKNIX); anything else is the microSD image (p1 boot, p2 root).
+# steamos.root= wins over root= (stock bootloaders may append their own).
+# Without a FAT boot partition (REDMAGIC 6) the log goes to
+# /var/log/steamos-arm-boot on the root instead.
+# steamos.usbshell=1 (or, on the REDMAGIC 6 only, a failed root mount) starts
+# a USB gadget with a serial console (ttyACM on the PC) and NCM networking
+# (telnet 172.16.42.1).
 /bin/busybox --install -s /bin
 export PATH=/bin
 mount -t devtmpfs dev /dev
@@ -17,13 +23,61 @@ mkdir -p /boot /newroot
 extra=0
 rootarg=""
 debug=0
+usbshell=0
+steamosroot=""
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
     konkr.bootlog_wait=*) extra="${arg#*=}" ;;
     steamos.debug=1) debug=1 ;;
+    steamos.usbshell=1) usbshell=1 ;;
+    steamos.root=*) steamosroot="${arg#steamos.root=}" ;;
     root=*) rootarg="${arg#root=}" ;;
   esac
 done
+[ -n "$steamosroot" ] && rootarg="$steamosroot"
+
+# USB gadget: ACM serial console + NCM network with telnetd on 172.16.42.1.
+usb_shell() {
+  [ -d /sys/kernel/config/usb_gadget ] || mount -t configfs configfs /sys/kernel/config 2>/dev/null
+  g=/sys/kernel/config/usb_gadget/steamos
+  [ -d /sys/kernel/config/usb_gadget ] || return 1
+  [ -d "$g" ] && return 0
+  for i in $(seq 1 20); do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 0.5; done
+  udc="$(ls /sys/class/udc 2>/dev/null | head -n1)"
+  [ -n "$udc" ] || return 1
+  mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" \
+    "$g/functions/acm.usb0" "$g/functions/ncm.usb0"
+  echo 0x1d6b >"$g/idVendor"; echo 0x0104 >"$g/idProduct"
+  echo "SteamOS ARM" >"$g/strings/0x409/manufacturer"
+  echo "SteamOS ARM debug shell" >"$g/strings/0x409/product"
+  # Windows rejects a gadget without a serial number string (Code 43,
+  # "invalid serial number string descriptor").
+  echo "steamos-arm-debug" >"$g/strings/0x409/serialnumber"
+  echo "debug" >"$g/configs/c.1/strings/0x409/configuration"
+  ln -s "$g/functions/acm.usb0" "$g/configs/c.1/"
+  ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/"
+  echo "$udc" >"$g/UDC" || return 1
+  sleep 1
+  ip link set usb0 up 2>/dev/null && ip addr add 172.16.42.1/24 dev usb0 2>/dev/null
+  # The shells live in a small root on a tmpfs with its own proc, dev and
+  # devpts: switch_root empties this initramfs and moves /proc and /dev into
+  # the new root. Each session enters PID 1's root, so after the handover it
+  # is a shell in the booted system.
+  d=/dbg
+  mkdir -p $d && mount -t tmpfs dbg $d && mkdir -p $d/bin $d/proc $d/dev &&
+    cp /bin/busybox $d/bin/busybox && mount -t proc proc $d/proc &&
+    mount -t devtmpfs devtmpfs $d/dev && mkdir -p $d/dev/pts &&
+    mount -t devpts devpts $d/dev/pts || return 1
+  printf '%s\n' '#!/bin/busybox sh' \
+    '[ -x /proc/1/root/bin/sh ] && exec /bin/busybox chroot /proc/1/root /bin/sh -l' \
+    'exec /bin/busybox sh' >$d/bin/sh
+  chmod 755 $d/bin/sh
+  # USB only: this is an unauthenticated root shell
+  chroot $d /bin/busybox telnetd -b 172.16.42.1 -l /bin/sh
+  setsid chroot $d /bin/busybox sh -c 'while :; do /bin/sh </dev/ttyGS0 >/dev/ttyGS0 2>&1; /bin/busybox sleep 1; done' &
+  return 0
+}
+[ "$usbshell" = 1 ] && usb_shell
 
 # /dev node of the partition with GPT name $1, if present.
 by_partlabel() {
@@ -59,25 +113,31 @@ case "$rootarg" in
     ;;
 esac
 
+logdir=""
 snap() {
-  [ -n "$bootdev" ] || return
+  [ -n "$logdir" ] || return
   {
     echo "=== $1  uptime $(cat /proc/uptime)"
     echo "--- cmdline"; cat /proc/cmdline
     echo "--- partitions"; cat /proc/partitions
     echo "--- drm"; ls /sys/class/drm 2>&1
     echo "--- dmesg"; dmesg
-  } > /boot/bootlog.txt 2>&1
+  } > "$logdir/bootlog.txt" 2>&1
   sync
 }
 
 if [ -n "$bootdev" ] && mount -t vfat "$bootdev" /boot; then
+  logdir=/boot
   [ -e /boot/debug ] || [ -e /boot/debug.txt ] && debug=1
   n=0
   while [ "$n" -lt "$extra" ]; do snap "snapshot $n"; sleep 4; n=$((n + 1)); done
 fi
 
 if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
+  if [ -z "$logdir" ]; then
+    logdir=/newroot/var/log/steamos-arm-boot
+    mkdir -p "$logdir"
+  fi
   if [ -f /newroot/var/lib/konkr-update/pending ]; then
     if ! ( . /konkr-update-recover ); then
       snap "UPDATE RECOVERY FAILED"
@@ -118,4 +178,8 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
 fi
 snap "FAILED to mount root ($rootdev)"
 echo "root mount failed; see bootlog.txt on the FAT partition"
+# Only the REDMAGIC 6 has no other way in (no SD slot, no UART).
+if grep -qa "REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  usb_shell && echo "USB debug shell: serial gadget, or telnet 172.16.42.1"
+fi
 exec sh

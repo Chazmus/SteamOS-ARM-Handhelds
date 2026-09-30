@@ -1,0 +1,440 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 00:30:42 -0500
+Subject: [PATCH] hwmon: add REDMAGIC 6 (Nubia NX669J) fan
+
+---
+ drivers/hwmon/Kconfig            |   8 +
+ drivers/hwmon/Makefile           |   1 +
+ drivers/hwmon/nubia-nx669j-fan.c | 388 +++++++++++++++++++++++++++++++
+ 3 files changed, 397 insertions(+)
+ create mode 100644 drivers/hwmon/nubia-nx669j-fan.c
+
+diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
+index 14e4cea..dbde5c6 100644
+--- a/drivers/hwmon/Kconfig
++++ b/drivers/hwmon/Kconfig
+@@ -1709,6 +1709,14 @@ config SENSORS_NTC_THERMISTOR
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called ntc_thermistor.
+ 
++config SENSORS_NUBIA_NX669J_FAN
++	tristate "REDMAGIC 6 (Nubia NX669J) fan"
++	depends on I2C && OF
++	depends on GPIOLIB && REGULATOR
++	help
++	  Say Y here to support the cooling fan MCU of the REDMAGIC 6
++	  (Nubia NX669J). It is exposed as a hwmon PWM and tachometer.
++
+ config SENSORS_NCT6683
+ 	tristate "Nuvoton NCT6683D"
+ 	depends on HAS_IOPORT
+diff --git a/drivers/hwmon/Makefile b/drivers/hwmon/Makefile
+index 982ee2c..f3d0be4 100644
+--- a/drivers/hwmon/Makefile
++++ b/drivers/hwmon/Makefile
+@@ -188,6 +188,7 @@ obj-$(CONFIG_SENSORS_NCT7904)	+= nct7904.o
+ obj-$(CONFIG_SENSORS_NPCM7XX)	+= npcm750-pwm-fan.o
+ obj-$(CONFIG_SENSORS_NSA320)	+= nsa320-hwmon.o
+ obj-$(CONFIG_SENSORS_NTC_THERMISTOR)	+= ntc_thermistor.o
++obj-$(CONFIG_SENSORS_NUBIA_NX669J_FAN)	+= nubia-nx669j-fan.o
+ obj-$(CONFIG_SENSORS_NZXT_KRAKEN2) += nzxt-kraken2.o
+ obj-$(CONFIG_SENSORS_NZXT_KRAKEN3) += nzxt-kraken3.o
+ obj-$(CONFIG_SENSORS_NZXT_SMART2) += nzxt-smart2.o
+diff --git a/drivers/hwmon/nubia-nx669j-fan.c b/drivers/hwmon/nubia-nx669j-fan.c
+new file mode 100644
+index 0000000..83da914
+--- /dev/null
++++ b/drivers/hwmon/nubia-nx669j-fan.c
+@@ -0,0 +1,388 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * REDMAGIC 6 (Nubia NX669J) cooling fan.
++ *
++ * The fan is driven by a small MCU (Maxim MAX28200 running Nubia firmware)
++ * on I2C. Protocol, from Nubia's drivers/fan/fan_core.c:
++ *
++ *   write { 0x08, duty }      PWM duty in percent (0..100), 25 kHz
++ *   write { 0x01 }            start the tach counter
++ *   write { 0x03 }            stop it
++ *   write 0x02, read 2 bytes  tach count (LE) for the window
++ *   write 0x06 / 0x07, read   fan current / MCU temperature (raw)
++ *   write 0x09, read          firmware version (5 on shipping units)
++ *
++ * The MCU is held in reset by a PMIC GPIO and powered from pm8350c L11 at
++ * 3.312 V (Nubia raises that LDO's limit just for the fan).
++ *
++ * Nubia's driver reflashes the MCU when the version is not 5; this one never
++ * does, it only warns. Units that ran stock Android already have it.
++ *
++ * Exposed as hwmon pwm1 (0..255) / pwm1_enable / fan1_input, so a userspace
++ * fan curve (like konkrd on the Pocket FIT) can drive it.
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/hwmon.h>
++#include <linux/i2c.h>
++#include <linux/jiffies.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#define NX669J_FAN_CMD_TACH_START	0x01
++#define NX669J_FAN_REG_TACH		0x02
++#define NX669J_FAN_CMD_TACH_STOP	0x03
++#define NX669J_FAN_REG_CURRENT		0x06
++#define NX669J_FAN_REG_TEMP		0x07
++#define NX669J_FAN_REG_PWM		0x08
++#define NX669J_FAN_REG_FW_VERSION	0x09
++
++#define NX669J_FAN_FW_VERSION		5
++#define NX669J_FAN_TACH_WINDOW_MS	1000
++/* Fans from two suppliers: pulses per window to RPM (fan_core.c). */
++#define NX669J_FAN_TAIDA_MULT		20
++#define NX669J_FAN_HUAYING_MULT		30
++#define NX669J_FAN_RPM_CACHE_MS		2000
++#define NX669J_FAN_PROBE_TRIES		3
++
++struct nx669j_fan {
++	struct i2c_client *client;
++	struct regulator *vdd;
++	struct gpio_desc *reset_gpio;
++	struct gpio_desc *vendor_gpio;
++	struct mutex lock;
++	bool powered;
++	bool huaying;
++	u8 pwm;			/* hwmon scale, 0..255 */
++	u8 enable;		/* 0 = full speed, 1 = manual, like pwm-fan */
++	long rpm;
++	unsigned long rpm_updated;
++};
++
++static int nx669j_fan_write(struct nx669j_fan *fan, const u8 *buf, int len)
++{
++	int ret = i2c_master_send(fan->client, buf, len);
++
++	return ret < 0 ? ret : 0;
++}
++
++static int nx669j_fan_read16(struct nx669j_fan *fan, u8 reg, u16 *val)
++{
++	u8 buf[2];
++	struct i2c_msg msgs[] = {
++		{ .addr = fan->client->addr, .len = 1, .buf = &reg },
++		{ .addr = fan->client->addr, .flags = I2C_M_RD, .len = 2, .buf = buf },
++	};
++	int ret = i2c_transfer(fan->client->adapter, msgs, ARRAY_SIZE(msgs));
++
++	if (ret < 0)
++		return ret;
++	if (ret != ARRAY_SIZE(msgs))
++		return -EIO;
++	*val = buf[0] | buf[1] << 8;
++	return 0;
++}
++
++static int nx669j_fan_power(struct nx669j_fan *fan, bool on)
++{
++	int ret;
++
++	if (fan->powered == on)
++		return 0;
++
++	if (on) {
++		ret = regulator_enable(fan->vdd);
++		if (ret)
++			return ret;
++		/* fan_enable_reg(): hold reset 100 ms, release, wait 100 ms */
++		gpiod_set_value_cansleep(fan->reset_gpio, 1);
++		msleep(100);
++		gpiod_set_value_cansleep(fan->reset_gpio, 0);
++		msleep(100);
++	} else {
++		gpiod_set_value_cansleep(fan->reset_gpio, 1);
++		regulator_disable(fan->vdd);
++		fan->rpm = 0;
++	}
++	fan->powered = on;
++	return 0;
++}
++
++static int nx669j_fan_set_duty(struct nx669j_fan *fan, u8 pwm)
++{
++	u8 buf[2] = { NX669J_FAN_REG_PWM, DIV_ROUND_CLOSEST(pwm * 100, 255) };
++	int ret;
++
++	if (!pwm) {
++		if (fan->powered)
++			nx669j_fan_write(fan, buf, sizeof(buf));
++		return nx669j_fan_power(fan, false);
++	}
++
++	ret = nx669j_fan_power(fan, true);
++	if (ret)
++		return ret;
++	return nx669j_fan_write(fan, buf, sizeof(buf));
++}
++
++static int nx669j_fan_measure(struct nx669j_fan *fan, long *rpm)
++{
++	static const u8 start = NX669J_FAN_CMD_TACH_START;
++	static const u8 stop = NX669J_FAN_CMD_TACH_STOP;
++	u16 count;
++	int ret;
++
++	if (!fan->powered) {
++		*rpm = 0;
++		return 0;
++	}
++	/* The tach window is a full second; don't redo it for every read. */
++	if (fan->rpm_updated &&
++	    time_before(jiffies, fan->rpm_updated +
++			msecs_to_jiffies(NX669J_FAN_RPM_CACHE_MS))) {
++		*rpm = fan->rpm;
++		return 0;
++	}
++
++	ret = nx669j_fan_write(fan, &start, 1);
++	if (ret)
++		return ret;
++	msleep(NX669J_FAN_TACH_WINDOW_MS);
++	ret = nx669j_fan_write(fan, &stop, 1);
++	if (ret)
++		return ret;
++	ret = nx669j_fan_read16(fan, NX669J_FAN_REG_TACH, &count);
++	if (ret)
++		return ret;
++
++	fan->rpm = (long)count * (fan->huaying ? NX669J_FAN_HUAYING_MULT
++					       : NX669J_FAN_TAIDA_MULT);
++	fan->rpm_updated = jiffies;
++	*rpm = fan->rpm;
++	return 0;
++}
++
++static umode_t nx669j_fan_is_visible(const void *data,
++				     enum hwmon_sensor_types type,
++				     u32 attr, int channel)
++{
++	switch (type) {
++	case hwmon_pwm:
++		return 0644;
++	case hwmon_fan:
++		return 0444;
++	default:
++		return 0;
++	}
++}
++
++static int nx669j_fan_hwmon_read(struct device *dev,
++				 enum hwmon_sensor_types type,
++				 u32 attr, int channel, long *val)
++{
++	struct nx669j_fan *fan = dev_get_drvdata(dev);
++	int ret = 0;
++
++	mutex_lock(&fan->lock);
++	switch (type) {
++	case hwmon_pwm:
++		if (attr == hwmon_pwm_input)
++			*val = fan->pwm;
++		else if (attr == hwmon_pwm_enable)
++			*val = fan->enable;
++		else
++			ret = -EOPNOTSUPP;
++		break;
++	case hwmon_fan:
++		if (attr == hwmon_fan_input)
++			ret = nx669j_fan_measure(fan, val);
++		else
++			ret = -EOPNOTSUPP;
++		break;
++	default:
++		ret = -EOPNOTSUPP;
++	}
++	mutex_unlock(&fan->lock);
++	return ret;
++}
++
++static int nx669j_fan_hwmon_write(struct device *dev,
++				  enum hwmon_sensor_types type,
++				  u32 attr, int channel, long val)
++{
++	struct nx669j_fan *fan = dev_get_drvdata(dev);
++	int ret = -EOPNOTSUPP;
++
++	if (type != hwmon_pwm)
++		return ret;
++
++	mutex_lock(&fan->lock);
++	if (attr == hwmon_pwm_input) {
++		if (val < 0 || val > 255) {
++			ret = -EINVAL;
++		} else {
++			ret = fan->enable == 1 ? nx669j_fan_set_duty(fan, val) : 0;
++			if (!ret)
++				fan->pwm = val;
++		}
++	} else if (attr == hwmon_pwm_enable) {
++		if (val == 0) {
++			ret = nx669j_fan_set_duty(fan, 255);
++		} else if (val == 1) {
++			ret = nx669j_fan_set_duty(fan, fan->pwm);
++		} else {
++			ret = -EINVAL;
++		}
++		if (!ret)
++			fan->enable = val;
++	}
++	mutex_unlock(&fan->lock);
++	return ret;
++}
++
++static const struct hwmon_channel_info * const nx669j_fan_info[] = {
++	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT | HWMON_PWM_ENABLE),
++	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT),
++	NULL
++};
++
++static const struct hwmon_ops nx669j_fan_hwmon_ops = {
++	.is_visible = nx669j_fan_is_visible,
++	.read = nx669j_fan_hwmon_read,
++	.write = nx669j_fan_hwmon_write,
++};
++
++static const struct hwmon_chip_info nx669j_fan_chip_info = {
++	.ops = &nx669j_fan_hwmon_ops,
++	.info = nx669j_fan_info,
++};
++
++static int nx669j_fan_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct device *hwmon;
++	struct nx669j_fan *fan;
++	u16 version = 0;
++	int i, ret;
++
++	fan = devm_kzalloc(dev, sizeof(*fan), GFP_KERNEL);
++	if (!fan)
++		return -ENOMEM;
++	fan->client = client;
++	fan->enable = 1;
++	mutex_init(&fan->lock);
++
++	fan->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(fan->vdd))
++		return dev_err_probe(dev, PTR_ERR(fan->vdd), "failed to get vdd\n");
++
++	/* Active low reset (Nubia drives the pin high to run). */
++	fan->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(fan->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(fan->reset_gpio),
++				     "failed to get reset-gpios\n");
++
++	/* High = HuaYing fan, low = TaiDa: different pulses per revolution. */
++	fan->vendor_gpio = devm_gpiod_get_optional(dev, "vendor", GPIOD_IN);
++	if (IS_ERR(fan->vendor_gpio))
++		return dev_err_probe(dev, PTR_ERR(fan->vendor_gpio),
++				     "failed to get vendor-gpios\n");
++	if (fan->vendor_gpio)
++		fan->huaying = gpiod_get_value_cansleep(fan->vendor_gpio) > 0;
++
++	ret = nx669j_fan_power(fan, true);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to power the fan MCU\n");
++	/*
++	 * No extra reset pulse here: talking to the MCU ~1 ms after a reset
++	 * lands in the MAX28200 bootloader window (Nubia only does that to
++	 * reflash it) and leaves it NAKing/stretching the bus until the next
++	 * power cycle, which made the probe fail on most boots.
++	 */
++	for (i = 0; i < NX669J_FAN_PROBE_TRIES; i++) {
++		ret = nx669j_fan_read16(fan, NX669J_FAN_REG_FW_VERSION, &version);
++		if (!ret)
++			break;
++		msleep(50);
++	}
++	if (ret) {
++		nx669j_fan_power(fan, false);
++		return dev_err_probe(dev, ret, "fan MCU does not answer\n");
++	}
++	if (version != NX669J_FAN_FW_VERSION)
++		dev_warn(dev, "fan MCU firmware %u (expected %u); boot stock Android once to update it\n",
++			 version, NX669J_FAN_FW_VERSION);
++
++	/* Off until userspace sets a duty, like stock at boot. */
++	ret = nx669j_fan_set_duty(fan, 0);
++	if (ret)
++		return ret;
++
++	i2c_set_clientdata(client, fan);
++	hwmon = devm_hwmon_device_register_with_info(dev, "nx669j_fan", fan,
++						     &nx669j_fan_chip_info, NULL);
++	if (IS_ERR(hwmon))
++		return PTR_ERR(hwmon);
++
++	dev_info(dev, "fan MCU fw %u, %s fan\n", version,
++		 fan->huaying ? "HuaYing" : "TaiDa");
++	return 0;
++}
++
++static void nx669j_fan_shutdown(struct i2c_client *client)
++{
++	struct nx669j_fan *fan = i2c_get_clientdata(client);
++
++	if (fan) {
++		mutex_lock(&fan->lock);
++		nx669j_fan_set_duty(fan, 0);
++		mutex_unlock(&fan->lock);
++	}
++}
++
++static int nx669j_fan_suspend(struct device *dev)
++{
++	struct nx669j_fan *fan = dev_get_drvdata(dev);
++
++	mutex_lock(&fan->lock);
++	nx669j_fan_power(fan, false);
++	mutex_unlock(&fan->lock);
++	return 0;
++}
++
++static int nx669j_fan_resume(struct device *dev)
++{
++	struct nx669j_fan *fan = dev_get_drvdata(dev);
++	int ret;
++
++	mutex_lock(&fan->lock);
++	ret = nx669j_fan_set_duty(fan, fan->enable == 1 ? fan->pwm : 255);
++	mutex_unlock(&fan->lock);
++	return ret;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(nx669j_fan_pm, nx669j_fan_suspend,
++				nx669j_fan_resume);
++
++static const struct of_device_id nx669j_fan_of_match[] = {
++	{ .compatible = "nubia,nx669j-fan" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nx669j_fan_of_match);
++
++static struct i2c_driver nx669j_fan_driver = {
++	.driver = {
++		.name = "nubia-nx669j-fan",
++		.of_match_table = nx669j_fan_of_match,
++		.pm = pm_sleep_ptr(&nx669j_fan_pm),
++	},
++	.probe = nx669j_fan_probe,
++	.shutdown = nx669j_fan_shutdown,
++};
++module_i2c_driver(nx669j_fan_driver);
++
++MODULE_DESCRIPTION("REDMAGIC 6 (NX669J) fan MCU");
++MODULE_LICENSE("GPL");
+-- 
+2.55.0
+

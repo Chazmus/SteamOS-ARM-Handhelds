@@ -1,0 +1,15 @@
+# REDMAGIC 6 back lights: logo red, strip green on a charger, red otherwise.
+[Unit]
+Description=REDMAGIC 6 back lights (charging colour)
+ConditionFirmware=device-tree-compatible(nubia,nx669j)
+After=systemd-modules-load.service systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/steamos-arm/nx669j-lights
+ExecStopPost=/usr/lib/steamos-arm/nx669j-lights stop
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

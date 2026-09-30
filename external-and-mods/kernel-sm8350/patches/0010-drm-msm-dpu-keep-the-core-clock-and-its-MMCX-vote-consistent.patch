@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 20:51:00 -0500
+Subject: [PATCH] drm/msm/dpu: keep the core clock and its MMCX vote consistent
+
+When the last CRTC is disabled, dpu_core_perf_crtc_update() asks for a
+core clock rate of 0. dev_pm_opp_set_rate(dev, 0) drops the performance
+state vote but leaves the MDP core clock running at its last rate
+(460 MHz on the REDMAGIC 6). Nothing else votes on MMCX there, so the
+rail drops under the running MDP: the MDP TOP registers still answer,
+but every core block (CTL, SSPP, ...) stops responding. The next enable
+reads CTL_START in dpu_kms_wait_flush() before the new rate is set, the
+access hangs the bus and the SoC resets with no log. Turning the screen
+off and on again rebooted the phone every time.
+
+Park at the lowest OPP instead of 0, so the clock drops to 200 MHz and
+keeps a matching vote. Runtime PM drops the vote while the DPU is
+suspended and restores it on resume as before.
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_core_perf.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_core_perf.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_core_perf.c
+@@ -395,6 +395,26 @@
+ 		trace_dpu_core_perf_update_clk(kms->dev, !crtc->enabled, clk_rate);
+ 
+ 		clk_rate = min(clk_rate, kms->perf.max_core_clk_rate);
++
++		/*
++		 * A rate of 0 drops the performance state vote but leaves the
++		 * core clock running at its last rate. Without another MMCX
++		 * voter the rail then drops under the running MDP, and the next
++		 * register access (e.g. CTL at the following enable) hangs the
++		 * bus. Park at the lowest OPP instead, which keeps the clock
++		 * and the vote consistent.
++		 */
++		if (!clk_rate) {
++			unsigned long min_rate = 0;
++			struct dev_pm_opp *opp;
++
++			opp = dev_pm_opp_find_freq_ceil(&kms->pdev->dev, &min_rate);
++			if (!IS_ERR(opp)) {
++				dev_pm_opp_put(opp);
++				clk_rate = min_rate;
++			}
++		}
++
+ 		ret = dev_pm_opp_set_rate(&kms->pdev->dev, clk_rate);
+ 		if (ret) {
+ 			DPU_ERROR("failed to set core clock rate %llu\n", clk_rate);
+--
+2.47.0
