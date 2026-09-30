@@ -5,6 +5,19 @@
 set -u
 modprobe -q bluetooth btqca hci_uart 2>/dev/null || true
 rfkill unblock bluetooth wifi 2>/dev/null || true
+# REDMAGIC 6: power it through bluetoothd (mgmt), never with `hciconfig hci0
+# up`: the legacy ioctl clears HCI_AUTO_OFF behind mgmt's back, so the kernel
+# skips hci_powered_update_sync() and never registers the SMP channels. LE
+# pads then fail to pair ("security requested but not available", HOG
+# refused). bluetoothctl also segfaults there without a terminal; use busctl.
+if grep -qa "REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  for _ in $(seq 20); do
+    busctl set-property org.bluez /org/bluez/hci0 org.bluez.Adapter1 \
+      Powered b true 2>/dev/null && break
+    sleep 0.5
+  done
+  exit 0
+fi
 if command -v hciconfig >/dev/null 2>&1; then
   timeout 5 hciconfig hci0 up 2>/dev/null || true
 fi

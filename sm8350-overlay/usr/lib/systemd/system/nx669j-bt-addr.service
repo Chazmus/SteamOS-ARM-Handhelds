@@ -1,0 +1,13 @@
+[Unit]
+Description=REDMAGIC 6 Bluetooth address (from Nubia's persist partition)
+ConditionPathExists=/sys/firmware/devicetree/base/model
+After=systemd-modules-load.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos-arm/nx669j-bt-addr
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,256 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 00:30:42 -0500
+Subject: [PATCH] Input: add REDMAGIC 6 (Nubia NX669J) shoulder triggers
+
+---
+ drivers/input/misc/Kconfig                 |   7 +
+ drivers/input/misc/Makefile                |   1 +
+ drivers/input/misc/nubia-nx669j-triggers.c | 205 +++++++++++++++++++++
+ 3 files changed, 213 insertions(+)
+ create mode 100644 drivers/input/misc/nubia-nx669j-triggers.c
+
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 94a753f..f1bf516 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -282,6 +282,13 @@ config INPUT_MAX77693_HAPTIC
+ 	  To compile this driver as module, choose M here: the
+ 	  module will be called max77693-haptic.
+ 
++config INPUT_NUBIA_NX669J_TRIGGERS
++	tristate "REDMAGIC 6 (Nubia NX669J) shoulder triggers"
++	depends on I2C && OF
++	help
++	  Say Y here to support the capacitive shoulder triggers of the
++	  REDMAGIC 6 (Nubia NX669J), two Cypress CapSense MCUs on I2C.
++
+ config INPUT_MAX8925_ONKEY
+ 	tristate "MAX8925 ONKEY support"
+ 	depends on MFD_MAX8925
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 415fc4e..4c502db 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -55,6 +55,7 @@ obj-$(CONFIG_INPUT_M68K_BEEP)		+= m68kspkr.o
+ obj-$(CONFIG_INPUT_MAX7360_ROTARY)	+= max7360-rotary.o
+ obj-$(CONFIG_INPUT_MAX77650_ONKEY)	+= max77650-onkey.o
+ obj-$(CONFIG_INPUT_MAX77693_HAPTIC)	+= max77693-haptic.o
++obj-$(CONFIG_INPUT_NUBIA_NX669J_TRIGGERS)	+= nubia-nx669j-triggers.o
+ obj-$(CONFIG_INPUT_MAX8925_ONKEY)	+= max8925_onkey.o
+ obj-$(CONFIG_INPUT_MAX8997_HAPTIC)	+= max8997_haptic.o
+ obj-$(CONFIG_INPUT_MC13783_PWRBUTTON)	+= mc13783-pwrbutton.o
+diff --git a/drivers/input/misc/nubia-nx669j-triggers.c b/drivers/input/misc/nubia-nx669j-triggers.c
+new file mode 100644
+index 0000000..d0db70f
+--- /dev/null
++++ b/drivers/input/misc/nubia-nx669j-triggers.c
+@@ -0,0 +1,205 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * REDMAGIC 6 (Nubia NX669J) capacitive shoulder triggers.
++ *
++ * Each side has a Cypress CY8C4014 CapSense MCU on its own I2C bus with two
++ * touch zones. On an interrupt, register 0x00 holds the zone state (bit 0,
++ * bit 1; 0xff means none). Register 0x03 selects wake (0x5a) or sleep (0xa5).
++ * Protocol from Nubia's drivers/input/keyboard/cy8c4014l_touchkey*.
++ *
++ * One input device per side; "linux,keycodes" gives the code for bit 0 and
++ * bit 1 (the NX669J DT maps the outer zones to BTN_TR2/BTN_TL2 and the inner
++ * ones to BTN_TR/BTN_TL).
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#define NX669J_TRIG_REG_KEYS	0x00
++#define NX669J_TRIG_REG_MODE	0x03
++#define NX669J_TRIG_REG_FW	0x04
++#define NX669J_TRIG_MODE_WAKE	0x5a
++#define NX669J_TRIG_MODE_SLEEP	0xa5
++#define NX669J_TRIG_ZONES	2
++
++struct nx669j_trig {
++	struct i2c_client *client;
++	struct input_dev *input;
++	struct regulator *avdd;
++	struct gpio_desc *power_gpio;
++	u32 keycodes[NX669J_TRIG_ZONES];
++	u8 state;
++};
++
++static int nx669j_trig_set_mode(struct nx669j_trig *t, u8 mode)
++{
++	int ret, i;
++
++	/* The MCU misses writes right after power/mode changes; Nubia retries. */
++	for (i = 0; i < 10; i++) {
++		ret = i2c_smbus_write_byte_data(t->client, NX669J_TRIG_REG_MODE, mode);
++		if (!ret)
++			return 0;
++		msleep(50);
++	}
++	return ret;
++}
++
++static void nx669j_trig_report(struct nx669j_trig *t, u8 state)
++{
++	int i;
++
++	for (i = 0; i < NX669J_TRIG_ZONES; i++)
++		input_report_key(t->input, t->keycodes[i], state & BIT(i));
++	input_sync(t->input);
++	t->state = state;
++}
++
++static irqreturn_t nx669j_trig_irq(int irq, void *data)
++{
++	struct nx669j_trig *t = data;
++	int val = i2c_smbus_read_byte_data(t->client, NX669J_TRIG_REG_KEYS);
++
++	if (val < 0) {
++		dev_err_ratelimited(&t->client->dev, "read failed: %d\n", val);
++		return IRQ_HANDLED;
++	}
++	if (val == 0xff)
++		val = 0;
++	val &= GENMASK(NX669J_TRIG_ZONES - 1, 0);
++	if (val != t->state)
++		nx669j_trig_report(t, val);
++
++	return IRQ_HANDLED;
++}
++
++static void nx669j_trig_power_off(void *data)
++{
++	struct nx669j_trig *t = data;
++
++	regulator_disable(t->avdd);
++}
++
++static int nx669j_trig_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct nx669j_trig *t;
++	int fw, ret, i;
++
++	t = devm_kzalloc(dev, sizeof(*t), GFP_KERNEL);
++	if (!t)
++		return -ENOMEM;
++	t->client = client;
++	i2c_set_clientdata(client, t);
++
++	ret = device_property_read_u32_array(dev, "linux,keycodes",
++					     t->keycodes, NX669J_TRIG_ZONES);
++	if (ret)
++		return dev_err_probe(dev, ret, "need 2 linux,keycodes\n");
++
++	t->avdd = devm_regulator_get(dev, "avdd");
++	if (IS_ERR(t->avdd))
++		return dev_err_probe(dev, PTR_ERR(t->avdd), "failed to get avdd\n");
++
++	/*
++	 * MCU power switch, active low on the NX669J (the DT flags it). The
++	 * bootloader leaves the line high, which keeps both MCUs off the bus
++	 * (-ENXIO); asserting it powers them up.
++	 */
++	t->power_gpio = devm_gpiod_get_optional(dev, "power", GPIOD_OUT_HIGH);
++	if (IS_ERR(t->power_gpio))
++		return dev_err_probe(dev, PTR_ERR(t->power_gpio),
++				     "failed to get power-gpios\n");
++
++	ret = regulator_enable(t->avdd);
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(dev, nx669j_trig_power_off, t);
++	if (ret)
++		return ret;
++	/* the MCU needs a while after power-up before it answers */
++	for (i = 0; i < 20; i++) {
++		msleep(50);
++		fw = i2c_smbus_read_byte_data(client, NX669J_TRIG_REG_FW);
++		if (fw >= 0)
++			break;
++	}
++	if (fw < 0)
++		return dev_err_probe(dev, fw, "trigger MCU does not answer\n");
++	dev_dbg(dev, "MCU answered after %d ms\n", (i + 1) * 50);
++
++	ret = nx669j_trig_set_mode(t, NX669J_TRIG_MODE_WAKE);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to wake trigger MCU\n");
++
++	t->input = devm_input_allocate_device(dev);
++	if (!t->input)
++		return -ENOMEM;
++	t->input->name = of_device_is_compatible(dev->of_node, "nubia,nx669j-trigger-left") ?
++			 "REDMAGIC 6 left shoulder trigger" :
++			 "REDMAGIC 6 right shoulder trigger";
++	t->input->phys = "nx669j-triggers/input0";
++	t->input->id.bustype = BUS_I2C;
++	for (i = 0; i < NX669J_TRIG_ZONES; i++)
++		input_set_capability(t->input, EV_KEY, t->keycodes[i]);
++
++	ret = input_register_device(t->input);
++	if (ret)
++		return ret;
++
++	ret = devm_request_threaded_irq(dev, client->irq, NULL, nx669j_trig_irq,
++					IRQF_ONESHOT, dev_name(dev), t);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to request irq\n");
++
++	dev_info(dev, "%s, firmware 0x%02x\n", t->input->name, fw);
++	return 0;
++}
++
++static int nx669j_trig_suspend(struct device *dev)
++{
++	struct nx669j_trig *t = dev_get_drvdata(dev);
++
++	disable_irq(t->client->irq);
++	if (t->state)
++		nx669j_trig_report(t, 0);
++	return nx669j_trig_set_mode(t, NX669J_TRIG_MODE_SLEEP);
++}
++
++static int nx669j_trig_resume(struct device *dev)
++{
++	struct nx669j_trig *t = dev_get_drvdata(dev);
++	int ret = nx669j_trig_set_mode(t, NX669J_TRIG_MODE_WAKE);
++
++	enable_irq(t->client->irq);
++	return ret;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(nx669j_trig_pm, nx669j_trig_suspend,
++				nx669j_trig_resume);
++
++static const struct of_device_id nx669j_trig_of_match[] = {
++	{ .compatible = "nubia,nx669j-trigger-left" },
++	{ .compatible = "nubia,nx669j-trigger-right" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nx669j_trig_of_match);
++
++static struct i2c_driver nx669j_trig_driver = {
++	.driver = {
++		.name = "nubia-nx669j-triggers",
++		.of_match_table = nx669j_trig_of_match,
++		.pm = pm_sleep_ptr(&nx669j_trig_pm),
++	},
++	.probe = nx669j_trig_probe,
++};
++module_i2c_driver(nx669j_trig_driver);
++
++MODULE_DESCRIPTION("REDMAGIC 6 (NX669J) shoulder triggers");
++MODULE_LICENSE("GPL");
+-- 
+2.55.0
+

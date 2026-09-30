@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 07:22:31 -0500
+Subject: [PATCH] wifi: ath11k: pci: accept QCA6490 1.1 as WCN6855 hw2.1
+
+The QCA6490 in SM8350 phones such as the REDMAGIC 6 reports SoC version
+1.0x10. Its firmware (WLAN.HSP.1.1, the downstream amss.bin) is the one
+WCN6855 2.1 uses, and ath11k runs it with the hw2.1 parameters.
+---
+ drivers/net/wireless/ath/ath11k/pci.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
+index 7114eca..1a02cbf 100644
+--- a/drivers/net/wireless/ath/ath11k/pci.c
++++ b/drivers/net/wireless/ath/ath11k/pci.c
+@@ -1031,6 +1031,16 @@ static int ath11k_pci_probe(struct pci_dev *pdev,
+ 		ath11k_pci_read_hw_version(ab, &soc_hw_version_major,
+ 					   &soc_hw_version_minor);
+ 		switch (soc_hw_version_major) {
++		case 1:
++			/*
++			 * QCA6490 1.1, as in SM8350 phones (REDMAGIC 6): the
++			 * downstream driver runs it with the same firmware
++			 * (WLAN.HSP.1.1, amss.bin) as WCN6855 2.1.
++			 */
++			if (soc_hw_version_minor != 0x10)
++				goto unsupported_wcn6855_soc;
++			ab->hw_rev = ATH11K_HW_WCN6855_HW21;
++			break;
+ 		case 2:
+ 			switch (soc_hw_version_minor) {
+ 			case 0x00:
+-- 
+2.55.0
+

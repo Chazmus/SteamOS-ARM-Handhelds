@@ -145,9 +145,13 @@ def load_conf() -> configparser.ConfigParser:
 
 
 # ------------------------------------------------------------------ fan ----
+# pwmfan: ROCKNIX DT fans (Pocket FIT, SM8550). nx669j_fan: REDMAGIC 6 fan MCU.
+FAN_HWMON_NAMES = ("pwmfan", "nx669j_fan")
+
+
 def find_fan() -> str | None:
     for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
-        if rd(f"{d}/name") == "pwmfan":
+        if rd(f"{d}/name") in FAN_HWMON_NAMES:
             return d
     return None
 
@@ -216,7 +220,7 @@ class Fan:
             wr(f"{self.dir}/pwm1_enable", 1)
             log(f"fan: {self.dir}")
         elif self.dir is None:
-            log("fan: no pwmfan hwmon found")
+            log("fan: no fan hwmon found")
 
     def tick(self, profile: str, fan: dict | None = None, standby: bool = False) -> None:
         if not self.enabled:
@@ -616,7 +620,9 @@ KEY_POWER = 116
 LONG_PRESS_S = 1.0
 # Presses right after a wake are ignored, like powerbuttond on the Deck
 # ("still actively resuming"): the wake press was followed by a second one
-# that put the device straight back to sleep (journal, 2026-09-26).
+# that put the device straight back to sleep (journal, 2026-09-26). Applies
+# to konkr-standby and to kernel s2idle (the REDMAGIC 6 re-suspended 2 s
+# after every power key wake, 2026-09-30).
 WAKE_GRACE_S = 2.5
 
 
@@ -965,11 +971,19 @@ class Daemon:
         power_down_at = None
         power_long_sent = False
         last_standby = 0.0
+        # CLOCK_BOOTTIME runs through a kernel suspend, CLOCK_MONOTONIC does
+        # not: a jump in their difference means we just came back from s2idle,
+        # and the power key press that woke the device is still queued.
+        sleep_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
         while True:
             timeout = 0.1 if power_down_at is not None else 0.25 if self.touch.active else 0.5
             if os.path.exists(STANDBY_FLAG):
                 last_standby = time.monotonic()
             keys = self.keys.poll(timeout, self.touch)
+            offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+            if offset - sleep_offset > 0.5:
+                last_standby = time.monotonic()      # resumed from s2idle
+            sleep_offset = offset
             self.touch.tick(os.path.exists(STANDBY_FLAG))
             for code, value in keys:
                 if os.path.exists(STANDBY_FLAG):

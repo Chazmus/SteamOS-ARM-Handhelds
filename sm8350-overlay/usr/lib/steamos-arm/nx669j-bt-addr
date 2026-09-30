@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Bluetooth address for the REDMAGIC 6 (QCA6490 on UART).
+
+The chip has none programmed: it comes up as 00:00:00:00:5a:ad, the kernel
+keeps it as an unconfigured controller and bluetoothd sees no adapter at all.
+Nubia keeps the address in persist/bluetooth/.bt_nv.bin as NV item 1:
+01 00 06 <6 address bytes, most significant first>.
+
+hci0 shows up in sysfs well before the QCA firmware download finishes, and
+mgmt only lists the controller (and accepts an address) after that, so wait
+for mgmt itself. btmgmt hangs without a terminal; talk to the mgmt socket
+directly. Setting the address makes the kernel configure the controller and
+bluetoothd picks it up, whether it is already running or not.
+"""
+import ctypes
+import os
+import select
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+MODEL = "/sys/firmware/devicetree/base/model"
+PERSIST = "/dev/disk/by-partlabel/persist"
+AF_BLUETOOTH, BTPROTO_HCI, HCI_DEV_NONE, HCI_CHANNEL_CONTROL = 31, 1, 0xFFFF, 3
+MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS = 0x0001, 0x0002
+MGMT_OP_READ_UNCONF_INDEX_LIST = 0x0036
+MGMT_OP_READ_CONFIG_INFO = 0x0037
+MGMT_OP_SET_PUBLIC_ADDRESS = 0x0039
+MGMT_OPTION_PUBLIC_ADDRESS = 1 << 1
+INDEX = 0
+
+
+def log(msg):
+    print(f"nx669j-bt-addr: {msg}", flush=True)
+
+
+def nubia_addr():
+    """NV item 1 from Nubia's persist/bluetooth/.bt_nv.bin, as 6 bytes MSB first."""
+    mnt = "/run/nx669j-persist"
+    os.makedirs(mnt, exist_ok=True)
+    if subprocess.run(["mount", "-o", "ro,noload", PERSIST, mnt],
+                      capture_output=True).returncode:
+        return None
+    try:
+        with open(os.path.join(mnt, "bluetooth/.bt_nv.bin"), "rb") as f:
+            nv = f.read(9)
+    except OSError:
+        nv = b""
+    finally:
+        subprocess.run(["umount", mnt], check=False)
+    if len(nv) == 9 and nv[:3] == b"\x01\x00\x06":
+        return nv[3:]
+    return None
+
+
+class Mgmt:
+    def __init__(self):
+        self.sock = socket.socket(AF_BLUETOOTH, socket.SOCK_RAW, BTPROTO_HCI)
+        # Python's bind() for BTPROTO_HCI has no channel field.
+        libc = ctypes.CDLL(None, use_errno=True)
+        addr = struct.pack("<HHH", AF_BLUETOOTH, HCI_DEV_NONE, HCI_CHANNEL_CONTROL)
+        if libc.bind(self.sock.fileno(), addr, len(addr)):
+            raise OSError(ctypes.get_errno(), "bind to the mgmt channel")
+
+    def cmd(self, op, index, data=b""):
+        """Returns (status, params), or (None, b"") without a reply in 5 s."""
+        self.sock.send(struct.pack("<HHH", op, index, len(data)) + data)
+        deadline = time.monotonic() + 5
+        while (left := deadline - time.monotonic()) > 0:
+            if not select.select([self.sock], [], [], left)[0]:
+                break
+            pkt = self.sock.recv(1024)
+            ev, idx = struct.unpack("<HH", pkt[:4])
+            if ev in (MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS) and idx == index \
+                    and struct.unpack("<H", pkt[6:8])[0] == op:
+                return pkt[8], pkt[9:]
+        return None, b""
+
+    def unconfigured(self):
+        status, rp = self.cmd(MGMT_OP_READ_UNCONF_INDEX_LIST, HCI_DEV_NONE)
+        if status != 0 or len(rp) < 2:
+            return []
+        n = struct.unpack("<H", rp[:2])[0]
+        return list(struct.unpack(f"<{n}H", rp[2:2 + 2 * n]))
+
+    def missing_options(self, index):
+        status, rp = self.cmd(MGMT_OP_READ_CONFIG_INFO, index)
+        if status != 0 or len(rp) < 10:
+            return None
+        return struct.unpack("<I", rp[6:10])[0]
+
+
+def main():
+    try:
+        if "REDMAGIC 6" not in open(MODEL).read():
+            return 0
+    except OSError:
+        return 0
+
+    addr = nubia_addr()
+    if not addr:
+        log("no address in persist/bluetooth/.bt_nv.bin")
+        return 0
+    text = ":".join(f"{b:02X}" for b in addr)
+
+    try:
+        mgmt = Mgmt()
+    except OSError as e:
+        log(f"no Bluetooth mgmt socket: {e}")
+        return 0
+
+    # The QCA firmware download takes about a second after hci0 appears.
+    for _ in range(60):
+        if INDEX in mgmt.unconfigured():
+            break
+        if os.path.exists(f"/sys/class/bluetooth/hci{INDEX}") and \
+                mgmt.missing_options(INDEX) == 0:
+            log(f"hci{INDEX} is already configured")
+            return 0
+        time.sleep(0.5)
+    else:
+        log(f"hci{INDEX} never showed up as an unconfigured controller")
+        return 0
+
+    missing = mgmt.missing_options(INDEX)
+    if missing is not None and not missing & MGMT_OPTION_PUBLIC_ADDRESS:
+        log(f"hci{INDEX} does not need an address (missing options {missing:#x})")
+        return 0
+    status, _ = mgmt.cmd(MGMT_OP_SET_PUBLIC_ADDRESS, INDEX, addr[::-1])
+    if status != 0:
+        log(f"setting {text} failed (mgmt status {status})")
+        return 1
+    log(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

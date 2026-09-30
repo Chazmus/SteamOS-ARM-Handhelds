@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 23:35:00 -0500
+Subject: [PATCH] arm64: dts: qcom: nx669j: park the USB DisplayPort switch
+
+The REDMAGIC 6 has a Nubia DisplayPort switch on the USB-C data lines
+(stock: nubia,usb_switch_dp; enable on GPIO 14, active low; mode on
+GPIO 116). Nothing drives GPIO 14 here, so it floats low and the switch
+stays enabled. That takes D+/D- away from the PMIC charger detection:
+every charger reads as SDP and the ADSP caps the input at 500 mA, even
+on a 9 V / 3 A USB-PD contract.
+
+Park it off the way the stock driver does at probe. The input limit
+goes from 500 mA to 3 A within seconds (about 13 W from the same
+charger that gave 4.5 W).
+
+---
+--- a/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
+@@ -869,6 +869,26 @@
+ 	/* TZ-owned (fingerprint / eSE SPI), as on the Qualcomm MTP */
+ 	gpio-reserved-ranges = <52 8>;
+ 
++	/*
++	 * Nubia's DisplayPort switch on the USB-C data lines (stock:
++	 * nubia,usb_switch_dp; enable is active low). Left floating low it
++	 * takes D+/D- from the charger detection: every charger reads as SDP
++	 * and the ADSP caps input at 500 mA. Stock parks it off at boot.
++	 */
++	usb-dp-switch-en-hog {
++		gpio-hog;
++		gpios = <14 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "usb-dp-switch-en-n";
++	};
++
++	usb-dp-switch-mode-hog {
++		gpio-hog;
++		gpios = <116 GPIO_ACTIVE_HIGH>;
++		output-low;
++		line-name = "usb-dp-switch-mode";
++	};
++
+ 	/* Speaker amplifiers' I2S (stock: pri_mi2s_*_active) */
+ 	pri_mi2s_active: pri-mi2s-active-state {
+ 		sck-pins {
+-- 
+2.43.0

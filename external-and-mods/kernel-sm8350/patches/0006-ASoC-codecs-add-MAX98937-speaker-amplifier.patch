@@ -1,0 +1,397 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SteamOS-ARM-RM6 <exclaim_plethora227@simplelogin.com>
+Date: Tue, 29 Sep 2026 11:54:25 -0500
+Subject: [PATCH] ASoC: codecs: add MAX98937 speaker amplifier
+
+The MAX98937 is a MAX98927 relative with a different register map: the
+PCM interface block sits three registers higher (0x23-0x29), the
+amplifier block one lower (0x39-0x41), global enable moved to 0x500 and
+the version register to 0x600 (0x43). The max98927 driver therefore
+reads revision 0 and leaves it silent.
+
+Add a small driver that programs it the way the vendor driver of the
+REDMAGIC 6 (Nubia NX669J) does: its common and per-channel register
+tables at probe, the PCM format, word size, BCLK ratio and sample rate
+at the new addresses, and speaker/global enable on unmute, after the
+CPU DAI has started the I2S clocks.
+---
+ sound/soc/codecs/Kconfig    |   8 +
+ sound/soc/codecs/Makefile   |   2 +
+ sound/soc/codecs/max98937.c | 326 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 336 insertions(+)
+ create mode 100644 sound/soc/codecs/max98937.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 269c31c..36b6b81 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -1435,6 +1435,14 @@ config SND_SOC_MAX98927
+ 	tristate "Maxim Integrated MAX98927 Speaker Amplifier"
+ 	depends on I2C
+ 
++config SND_SOC_MAX98937
++	tristate "Maxim Integrated MAX98937 Speaker Amplifier"
++	depends on I2C
++	select REGMAP_I2C
++	help
++	  Enable support for the Maxim MAX98937 speaker amplifier, a MAX98927
++	  relative with a different register map (REDMAGIC 6 / Nubia NX669J).
++
+ config SND_SOC_MAX98520
+ 	tristate "Maxim Integrated MAX98520 Speaker Amplifier"
+ 	depends on I2C
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index 172861d..aeead87 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -173,6 +173,7 @@ snd-soc-max9867-y := max9867.o
+ snd-soc-max98925-y := max98925.o
+ snd-soc-max98926-y := max98926.o
+ snd-soc-max98927-y := max98927.o
++snd-soc-max98937-y := max98937.o
+ snd-soc-max98520-y := max98520.o
+ snd-soc-max98363-y := max98363.o
+ snd-soc-max98373-y := max98373.o
+@@ -605,6 +606,7 @@ obj-$(CONFIG_SND_SOC_MAX9867)	+= snd-soc-max9867.o
+ obj-$(CONFIG_SND_SOC_MAX98925)	+= snd-soc-max98925.o
+ obj-$(CONFIG_SND_SOC_MAX98926)	+= snd-soc-max98926.o
+ obj-$(CONFIG_SND_SOC_MAX98927)	+= snd-soc-max98927.o
++obj-$(CONFIG_SND_SOC_MAX98937)	+= snd-soc-max98937.o
+ obj-$(CONFIG_SND_SOC_MAX98520)	+= snd-soc-max98520.o
+ obj-$(CONFIG_SND_SOC_MAX98363)	+= snd-soc-max98363.o
+ obj-$(CONFIG_SND_SOC_MAX98373)	+= snd-soc-max98373.o
+diff --git a/sound/soc/codecs/max98937.c b/sound/soc/codecs/max98937.c
+new file mode 100644
+index 0000000..d86ed6f
+--- /dev/null
++++ b/sound/soc/codecs/max98937.c
+@@ -0,0 +1,326 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * MAX98937 speaker amplifier
++ *
++ * A relative of the MAX98927 with a different register map: the PCM
++ * interface block sits 3 registers higher (0x23-0x29 instead of
++ * 0x20-0x26), the amplifier block one lower (0x39-0x41 instead of
++ * 0x3a-0x42), global enable moved to 0x500 and the version to 0x600.
++ * The register values below are those of the vendor (Maxim/Nubia) driver
++ * for the REDMAGIC 6 (Nubia NX669J), which has two of these on I2S.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/tlv.h>
++
++#define MAX98937_RX_EN		0x0018
++#define MAX98937_PCM_MODE	0x0023	/* channel size, format, BCLK edge */
++#define MAX98937_PCM_MODE_CHANSZ	GENMASK(7, 6)
++#define MAX98937_PCM_MODE_FORMAT	GENMASK(5, 3)
++#define MAX98937_PCM_MODE_BCLKEDGE	BIT(2)
++#define MAX98937_PCM_MASTER	0x0024
++#define MAX98937_PCM_CLK	0x0025	/* BCLK/LRCLK ratio in [3:0] */
++#define MAX98937_PCM_SR1	0x0026	/* speaker sample rate in [3:0] */
++#define MAX98937_PCM_SR2	0x0027	/* speaker [7:4], I/V sense [3:0] */
++#define MAX98937_PDM_RX		0x0035
++#define MAX98937_AMP_VOL	0x0036
++#define MAX98937_AMP_EN		0x0039	/* bit 0: speaker amplifier */
++#define MAX98937_SPK_SRC	0x003a	/* 0: PCM input */
++#define MAX98937_SPK_GAIN	0x003b
++#define MAX98937_BOOST_VOUT	0x003f
++#define MAX98937_GLOBAL_EN	0x0500
++#define MAX98937_VERSION	0x0600
++#define MAX98937_VERSION_ID	0x43
++
++struct max98937_priv {
++	struct regmap *regmap;
++	struct gpio_desc *reset_gpio;
++	u32 channel;
++};
++
++/* Vendor driver: max98937_reg_common_map */
++static const struct reg_sequence max98937_common[] = {
++	{ 0x0011, 0x00 }, { 0x0053, 0x00 }, { 0x0055, 0x00 }, { 0x005e, 0x16 },
++	{ 0x005f, 0x00 }, { 0x0060, 0x0c }, { 0x0061, 0x0c }, { 0x0062, 0x12 },
++	{ 0x0063, 0x00 }, { 0x0064, 0x0c }, { 0x0065, 0x0c }, { 0x0066, 0x0e },
++	{ 0x0067, 0x03 }, { 0x0068, 0x18 }, { 0x0069, 0x18 }, { 0x006a, 0x0a },
++	{ 0x006b, 0x00 }, { 0x006c, 0x80 }, { 0x006d, 0x00 }, { 0x005a, 0x00 },
++	{ 0x005b, 0x00 }, { 0x005c, 0x1f }, { 0x005d, 0x00 }, { 0x0042, 0x07 },
++	{ 0x0014, 0x75 }, { 0x0015, 0x8c }, { 0x0017, 0x55 }, { 0x003e, 0xf7 },
++	{ 0x0023, 0x40 }, { 0x003a, 0x00 }, { 0x001b, 0x00 }, { 0x0019, 0x00 },
++	{ 0x001f, 0x03 }, { 0x001d, 0xff }, { 0x003d, 0x00 }, { 0x0035, 0x00 },
++	{ 0x0036, 0x38 }, { 0x0037, 0x0f }, { 0x003b, 0x55 }, { 0x003c, 0x85 },
++	{ 0x003f, 0x1c }, { 0x0041, 0x40 }, { 0x0043, 0x00 }, { 0x0044, 0xff },
++	{ 0x0016, 0x08 }, { 0x0073, 0x0f }, { 0x0077, 0x01 }, { 0x0052, 0x02 },
++	{ 0x0020, 0x00 }, { 0x0021, 0x00 }, { 0x0022, 0x00 }, { 0x004e, 0x10 },
++	{ 0x0079, 0x45 }, { 0x007a, 0x2b }, { 0x007b, 0x04 }, { 0x0039, 0x80 },
++};
++
++/* Vendor driver: max98937_reg_channel_map; 0: mono mix, 1: left, 2: right */
++static const struct reg_sequence max98937_channel[3][7] = {
++	{ { 0x0040, 0x01 }, { 0x001e, 0x01 }, { 0x0018, 0x03 }, { 0x001a, 0x03 },
++	  { 0x001c, 0xfc }, { 0x0028, 0x80 }, { 0x0029, 0x01 } },
++	{ { 0x0040, 0x01 }, { 0x001e, 0x40 }, { 0x0018, 0x01 }, { 0x001a, 0x01 },
++	  { 0x001c, 0xfe }, { 0x0028, 0x80 }, { 0x0029, 0x00 } },
++	{ { 0x0040, 0x09 }, { 0x001e, 0x41 }, { 0x0018, 0x02 }, { 0x001a, 0x02 },
++	  { 0x001c, 0xfd }, { 0x0028, 0x81 }, { 0x0029, 0x01 } },
++};
++
++static const unsigned int max98937_rates[] = {
++	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
++};
++
++static int max98937_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	struct max98937_priv *max98937 =
++		snd_soc_component_get_drvdata(dai->component);
++	unsigned int mode = 0;
++
++	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC)
++		return -EINVAL;
++
++	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++		break;
++	case SND_SOC_DAIFMT_LEFT_J:
++		mode |= FIELD_PREP(MAX98937_PCM_MODE_FORMAT, 1);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++	case SND_SOC_DAIFMT_NB_NF:
++		break;
++	case SND_SOC_DAIFMT_IB_NF:
++		mode |= MAX98937_PCM_MODE_BCLKEDGE;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(max98937->regmap, MAX98937_PCM_MASTER, 0x3, 0);
++	return regmap_update_bits(max98937->regmap, MAX98937_PCM_MODE,
++				  MAX98937_PCM_MODE_FORMAT |
++				  MAX98937_PCM_MODE_BCLKEDGE, mode);
++}
++
++static int max98937_dai_hw_params(struct snd_pcm_substream *substream,
++				  struct snd_pcm_hw_params *params,
++				  struct snd_soc_dai *dai)
++{
++	struct max98937_priv *max98937 =
++		snd_soc_component_get_drvdata(dai->component);
++	static const unsigned int bclk_ratios[] = { 32, 48, 64, 96, 128, 192, 256 };
++	unsigned int chansz, sr, bsel, i;
++	int frame = snd_soc_params_to_frame_size(params);
++
++	switch (params_width(params)) {
++	case 16:
++		chansz = 1;
++		break;
++	case 24:
++		chansz = 2;
++		break;
++	case 32:
++		chansz = 3;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	for (sr = 0; sr < ARRAY_SIZE(max98937_rates); sr++)
++		if (max98937_rates[sr] == params_rate(params))
++			break;
++	if (sr == ARRAY_SIZE(max98937_rates))
++		return -EINVAL;
++
++	for (i = 0; i < ARRAY_SIZE(bclk_ratios); i++)
++		if (bclk_ratios[i] == frame)
++			break;
++	if (i == ARRAY_SIZE(bclk_ratios))
++		return -EINVAL;
++	bsel = i + 2;
++
++	regmap_update_bits(max98937->regmap, MAX98937_PCM_MODE,
++			   MAX98937_PCM_MODE_CHANSZ,
++			   FIELD_PREP(MAX98937_PCM_MODE_CHANSZ, chansz));
++	regmap_update_bits(max98937->regmap, MAX98937_PCM_CLK, 0x0f, bsel);
++	regmap_update_bits(max98937->regmap, MAX98937_PCM_SR1, 0x0f, sr);
++	/* I/V sense runs three rate codes lower, as in the vendor driver */
++	return regmap_write(max98937->regmap, MAX98937_PCM_SR2,
++			    sr << 4 | (sr >= 3 ? sr - 3 : 0));
++}
++
++/*
++ * The amplifier only picks up the PCM input when it is enabled while
++ * BCLK/LRCLK run, i.e. after the CPU DAI has started its port.
++ */
++static int max98937_dai_mute_stream(struct snd_soc_dai *dai, int mute,
++				    int stream)
++{
++	struct max98937_priv *max98937 =
++		snd_soc_component_get_drvdata(dai->component);
++
++	if (mute)
++		return regmap_write(max98937->regmap, MAX98937_GLOBAL_EN, 0);
++
++	regmap_update_bits(max98937->regmap, MAX98937_AMP_EN, BIT(0), BIT(0));
++	return regmap_write(max98937->regmap, MAX98937_GLOBAL_EN, 1);
++}
++
++static const struct snd_soc_dai_ops max98937_dai_ops = {
++	.set_fmt = max98937_dai_set_fmt,
++	.hw_params = max98937_dai_hw_params,
++	.mute_stream = max98937_dai_mute_stream,
++	.no_capture_mute = 1,
++};
++
++static struct snd_soc_dai_driver max98937_dai = {
++	.name = "max98937-aif1",
++	.playback = {
++		.stream_name = "HiFi Playback",
++		.channels_min = 1,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |
++			   SNDRV_PCM_FMTBIT_S32_LE,
++	},
++	.ops = &max98937_dai_ops,
++};
++
++static const DECLARE_TLV_DB_SCALE(max98937_digital_tlv, -1600, 25, 0);
++static const DECLARE_TLV_DB_SCALE(max98937_spk_tlv, 300, 300, 0);
++
++static const struct snd_kcontrol_new max98937_controls[] = {
++	SOC_SINGLE_TLV("Digital Volume", MAX98937_AMP_VOL, 0, 0x7f, 0,
++		       max98937_digital_tlv),
++	SOC_SINGLE_TLV("Speaker Volume", MAX98937_SPK_GAIN, 0, 5, 0,
++		       max98937_spk_tlv),
++};
++
++static const struct snd_soc_dapm_widget max98937_widgets[] = {
++	SND_SOC_DAPM_AIF_IN("DAI_IN", "HiFi Playback", 0, SND_SOC_NOPM, 0, 0),
++	SND_SOC_DAPM_OUTPUT("SPK"),
++};
++
++static const struct snd_soc_dapm_route max98937_routes[] = {
++	{ "SPK", NULL, "DAI_IN" },
++};
++
++static const struct snd_soc_component_driver max98937_component = {
++	.controls = max98937_controls,
++	.num_controls = ARRAY_SIZE(max98937_controls),
++	.dapm_widgets = max98937_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(max98937_widgets),
++	.dapm_routes = max98937_routes,
++	.num_dapm_routes = ARRAY_SIZE(max98937_routes),
++	.idle_bias_on = 1,
++	.use_pmdown_time = 1,
++	.endianness = 1,
++};
++
++static const struct regmap_config max98937_regmap = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.max_register = MAX98937_VERSION,
++	.cache_type = REGCACHE_NONE,
++};
++
++static int max98937_i2c_probe(struct i2c_client *i2c)
++{
++	struct device *dev = &i2c->dev;
++	struct max98937_priv *max98937;
++	unsigned int version;
++	int ret;
++
++	max98937 = devm_kzalloc(dev, sizeof(*max98937), GFP_KERNEL);
++	if (!max98937)
++		return -ENOMEM;
++	i2c_set_clientdata(i2c, max98937);
++
++	of_property_read_u32(dev->of_node, "maxim,channel", &max98937->channel);
++	if (max98937->channel >= ARRAY_SIZE(max98937_channel))
++		return dev_err_probe(dev, -EINVAL, "invalid maxim,channel\n");
++
++	max98937->regmap = devm_regmap_init_i2c(i2c, &max98937_regmap);
++	if (IS_ERR(max98937->regmap))
++		return dev_err_probe(dev, PTR_ERR(max98937->regmap),
++				     "failed to allocate regmap\n");
++
++	max98937->reset_gpio = devm_gpiod_get_optional(dev, "reset",
++						       GPIOD_OUT_HIGH);
++	if (IS_ERR(max98937->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(max98937->reset_gpio),
++				     "failed to get reset GPIO\n");
++	if (max98937->reset_gpio) {
++		gpiod_set_value_cansleep(max98937->reset_gpio, 0);
++		usleep_range(5000, 6000);
++	}
++
++	ret = regmap_read(max98937->regmap, MAX98937_VERSION, &version);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read version\n");
++	if (version != MAX98937_VERSION_ID)
++		dev_warn(dev, "unexpected version 0x%02x\n", version);
++
++	regmap_write(max98937->regmap, MAX98937_GLOBAL_EN, 0);
++	ret = regmap_multi_reg_write(max98937->regmap, max98937_common,
++				     ARRAY_SIZE(max98937_common));
++	if (!ret)
++		ret = regmap_multi_reg_write(max98937->regmap,
++			max98937_channel[max98937->channel],
++			ARRAY_SIZE(max98937_channel[0]));
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to initialise\n");
++
++	dev_info(dev, "MAX98937 version 0x%02x, channel %u\n", version,
++		 max98937->channel);
++
++	return devm_snd_soc_register_component(dev, &max98937_component,
++					       &max98937_dai, 1);
++}
++
++static void max98937_i2c_remove(struct i2c_client *i2c)
++{
++	struct max98937_priv *max98937 = i2c_get_clientdata(i2c);
++
++	regmap_write(max98937->regmap, MAX98937_GLOBAL_EN, 0);
++	if (max98937->reset_gpio)
++		gpiod_set_value_cansleep(max98937->reset_gpio, 1);
++}
++
++static const struct of_device_id max98937_of_match[] = {
++	{ .compatible = "maxim,max98937" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, max98937_of_match);
++
++static const struct i2c_device_id max98937_i2c_id[] = {
++	{ "max98937" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, max98937_i2c_id);
++
++static struct i2c_driver max98937_i2c_driver = {
++	.driver = {
++		.name = "max98937",
++		.of_match_table = max98937_of_match,
++	},
++	.probe = max98937_i2c_probe,
++	.remove = max98937_i2c_remove,
++	.id_table = max98937_i2c_id,
++};
++module_i2c_driver(max98937_i2c_driver);
++
++MODULE_DESCRIPTION("ALSA SoC MAX98937 speaker amplifier driver");
++MODULE_LICENSE("GPL");
+-- 
+2.55.0
+

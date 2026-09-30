@@ -21,6 +21,14 @@ if [[ -f "$STAMP" ]]; then
   exit 0
 fi
 
+# REDMAGIC 6: SteamOS fills the UFS userdata partition, /home is a directory
+# on it and x-systemd.growfs grows the root. Never repartition that disk.
+if grep -qa "REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  log "REDMAGIC 6: no home partition by design (root grows via x-systemd.growfs) — skip"
+  touch "$STAMP"
+  exit 0
+fi
+
 if ! command -v resize2fs >/dev/null 2>&1; then
   log "ERROR: resize2fs missing — skip (will retry)"
   exit 0
