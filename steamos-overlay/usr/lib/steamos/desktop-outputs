@@ -158,9 +158,21 @@ def map_touch(found: list[dict]) -> None:
     ordered = sorted(found, key=lambda p: p["width"] * p["height"], reverse=True)
     main, second = ordered[0]["name"], ordered[1]["name"]
     secondary = SECONDARY_TOUCH.get(model())
-    groups = {}
+    groups, seen, dupes = {}, set(), set()
     for name, vid, pid in touchscreens():
-        groups[f"[Libinput][{vid}][{pid}][{name}]"] = second if name == secondary else main
+        key = f"[Libinput][{vid}][{pid}][{name}]"
+        if key in seen:
+            dupes.add(key)
+        seen.add(key)
+        groups[key] = second if name == secondary else main
+    # KWin can only tell touchscreens apart by vid/pid/name. On the 7.0.14
+    # kernel both Thor touchscreens are "generic ft5x06 (8d)", so one entry
+    # tied both to the top panel: bottom-screen touches landed up there from
+    # the second Desktop session on. Leave those to KWin's own default (what
+    # the first session used) and drop what an older run wrote for them.
+    for key in dupes:
+        groups[key] = None
+        log(f"touch: two touchscreens share {key}, leaving them to KWin")
     if not groups:
         return
     lines = KCMINPUT.read_text().splitlines() if KCMINPUT.exists() else []
@@ -173,9 +185,11 @@ def map_touch(found: list[dict]) -> None:
     while kept and not kept[-1].strip():
         kept.pop()
     for group, output in groups.items():
-        kept += ["", group, f"OutputName={output}"]
+        if output is not None:
+            kept += ["", group, f"OutputName={output}"]
     KCMINPUT.write_text("\n".join(kept).lstrip("\n") + "\n")
-    log("touch: " + ", ".join(f"{g.split('][')[-1][:-1]} -> {o}" for g, o in groups.items()))
+    log("touch: " + ", ".join(f"{g.split('][')[-1][:-1]} -> {o or 'KWin default'}"
+                              for g, o in groups.items()))
 
 
 def digest(path: Path) -> str:
