@@ -20,6 +20,7 @@ from __future__ import annotations
 import atexit
 import configparser
 import glob
+import grp
 import json
 import os
 import pwd
@@ -711,8 +712,31 @@ class Odin3Daemon:
         self.server_sock.bind(SOCK_PATH)
         self.server_sock.listen(5)
         self.server_sock.setblocking(False)
-        # Allow standard users (steamos) to communicate with socket
-        os.chmod(SOCK_PATH, 0o666)
+        # Restrict control socket access to root and steamos group (mode 0660)
+        gid = -1
+        try:
+            gid = grp.getgrnam("steamos").gr_gid
+        except KeyError:
+            try:
+                gid = pwd.getpwnam("steamos").pw_gid
+            except KeyError:
+                gid = 1000  # Default GID for steamos group on SteamOS
+
+        try:
+            os.chown(SOCK_DIR, -1, gid)
+            os.chmod(SOCK_DIR, 0o775)
+        except OSError:
+            pass
+
+        try:
+            os.chown(SOCK_PATH, -1, gid)
+        except OSError as e:
+            log(f"Warning: could not set steamos group on {SOCK_PATH}: {e}")
+
+        try:
+            os.chmod(SOCK_PATH, 0o660)
+        except OSError as e:
+            log(f"Warning: could not set permissions on {SOCK_PATH}: {e}")
 
     def handle_client(self, conn: socket.socket) -> None:
         try:
