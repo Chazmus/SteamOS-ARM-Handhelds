@@ -1,0 +1,16 @@
+[Unit]
+Description=AYN Odin 3 Platform & Fan Daemon
+ConditionPathExists=/sys/firmware/devicetree/base/model
+After=systemd-udev-settle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/odin3/odin3d
+# Maintain a safe fan speed if the daemon ever terminates or restarts
+ExecStopPost=/bin/sh -c 'for d in /sys/class/hwmon/hwmon*; do [ "$(cat $d/name 2>/dev/null)" = pwmfan ] && echo 150 > $d/pwm1; done; true'
+Restart=always
+RestartSec=2
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

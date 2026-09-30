@@ -345,6 +345,13 @@ UNIT
 ln -sfn /etc/systemd/system/sm8750-audio-setup.service \
   "$R/etc/systemd/system/multi-user.target.wants/sm8750-audio-setup.service"
 
+# Odin 3 platform & fan control daemon (fan curves, thermal protection, profiles)
+mkdir -p "$R/var/lib/odin3" "$R/run/odin3"
+chmod 0755 "$R/usr/lib/odin3/odin3d" "$R/usr/bin/odin3ctl" 2>/dev/null || true
+chmod 0644 "$R/etc/odin3.conf" "$R/usr/lib/systemd/system/odin3d.service" 2>/dev/null || true
+ln -sfn /usr/lib/systemd/system/odin3d.service \
+  "$R/etc/systemd/system/multi-user.target.wants/odin3d.service"
+
 # Permissions
 find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
   -type d -exec chmod 0755 {} + 2>/dev/null || true

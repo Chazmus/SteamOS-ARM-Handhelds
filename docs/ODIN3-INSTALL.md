@@ -84,7 +84,46 @@ fastboot reboot
 * **Display:** 1080x1920 AMOLED panel running at 60 Hz or 120 Hz with dynamic frame limiting.
 * **Graphics:** Accelerated Vulkan via Mesa Freedreno Turnip (Adreno 830).
 * **Audio:** ALSA UCM profiles route audio to the internal stereo speakers and headphone jack.
+* **Fan & Power Management:** Dynamic temperature-based fan control via `odin3d` with CPU governor scaling (`schedutil` by default) and GPU devfreq tuning.
 * **Desktop Mode:** Switch to desktop mode via Steam Menu -> Power -> Switch to Desktop to access KDE Plasma 6.
+
+---
+
+## Fan Control & Platform Management (`odin3ctl`)
+
+The Odin 3 runs `odin3d`, a background daemon that monitors all CPU and GPU thermal sensors and dynamically adjusts fan speed along customizable curves. It also manages CPU frequency scaling (`schedutil` governor prevents high idle heat) and GPU devfreq ranges.
+
+You can inspect or control the daemon at any time from a terminal or SSH using `odin3ctl`:
+
+```bash
+# View live status: temperatures, fan speed, active profile, and clocks
+odin3ctl status
+
+# Live terminal monitor (updates every second)
+odin3ctl monitor
+
+# Switch performance and fan profiles (silent, balanced, turbo)
+odin3ctl profile silent
+odin3ctl profile balanced
+odin3ctl profile turbo
+
+# Set a manual fixed fan percentage (e.g. 50%)
+odin3ctl fan fixed 50
+
+# Return to automatic temperature-based curve mode
+odin3ctl fan auto
+
+# Toggle temporary full-speed fan boost
+odin3ctl fan boost
+
+# Control stick ring RGB LEDs (e.g. hex color or off)
+odin3ctl rgb ff3c00
+odin3ctl rgb off
+```
+
+> [!TIP]
+> **Thermal Runaway Protection:**
+> Even if a manual fixed fan speed or silent profile is chosen, `odin3d` includes a hardware safety override: if the hottest SoC sensor reaches **88°C**, the fan immediately ramps to **100% (PWM 255)** until temperature drops safely below 78°C.
 
 ### Sudo Password
 The default user is `steamos`. It has no password by default. To set one for `sudo` commands:
