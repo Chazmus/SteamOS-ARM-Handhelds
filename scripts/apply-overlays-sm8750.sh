@@ -266,7 +266,7 @@ if [[ -n "${MESA_STACK:-}" ]]; then
     ls "$MESA_STACK/$a/usr/share/vulkan/icd.d/"freedreno_icd.*.json >/dev/null 2>&1 \
       || die "MESA_STACK has no $a build"
   done
-  strings "$MESA_STACK/aarch64/usr/lib/libvulkan_freedreno.so" | grep -q "Adreno (TM) 830" \
+  grep -aq "Adreno (TM) 830" "$MESA_STACK/aarch64/usr/lib/libvulkan_freedreno.so" \
     || die "MESA_STACK Turnip doesn't know the Adreno 830"
   ANDROID_VENDOR="usr/share/guestos/android/vendor/lib64"
   PDB="$R/usr/lib/holo/pacmandb/local"
