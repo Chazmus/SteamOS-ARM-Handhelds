@@ -105,6 +105,16 @@ def curve_pwm(curve: list[tuple[int, int]], temp: float) -> int:
     return curve[-1][1]
 
 
+
+def shutting_down() -> bool:
+    try:
+        r = subprocess.run(["systemctl", "is-system-running"], capture_output=True,
+                           text=True, timeout=2)
+        return r.stdout.strip() == "stopping"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 class Config:
     def __init__(self, path: str = CONF_PATH):
         self.path = path
@@ -691,7 +701,10 @@ class Odin3Daemon:
 
     def cleanup(self):
         log("Cleaning up odin3d resources...")
-        self.hw.set_failsafe()
+        # Not on shutdown: the device is off a few seconds later, the
+        # failsafe only spun the fan up for that long.
+        if not shutting_down():
+            self.hw.set_failsafe()
         self.power_btn.cleanup()
         if self.server_sock:
             try:
