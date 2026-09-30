@@ -255,6 +255,63 @@ log "== SM8750 Odin 3 overlay"
 cp -r --no-preserve=mode,ownership "$SM8750_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/steamos/sm8750-audio-setup" 2>/dev/null || true
 
+# Our own Mesa (scripts/build-mesa.sh, MESA_STACK=/work/mesa/out): the same
+# 26.2.3 stack as the 8 Gen 2 image, with the Adreno 830 ids added (patches/
+# 0003). Replaces Valve's whole Mesa natively, in the FEX guest and for
+# Lepton, so Turnip and zink always match. Goes after the overlay copy above,
+# which may carry a standalone Turnip .so.
+if [[ -n "${MESA_STACK:-}" ]]; then
+  log "== Mesa: our stack from $MESA_STACK"
+  for a in aarch64 x86_64 i386; do
+    ls "$MESA_STACK/$a/usr/share/vulkan/icd.d/"freedreno_icd.*.json >/dev/null 2>&1 \
+      || die "MESA_STACK has no $a build"
+  done
+  strings "$MESA_STACK/aarch64/usr/lib/libvulkan_freedreno.so" | grep -q "Adreno (TM) 830" \
+    || die "MESA_STACK Turnip doesn't know the Adreno 830"
+  ANDROID_VENDOR="usr/share/guestos/android/vendor/lib64"
+  PDB="$R/usr/lib/holo/pacmandb/local"
+  for pkg in deckard-mesa-linux-aarch64 deckard-mesa-linux-x86_64 deckard-mesa-android-aarch64; do
+    list="$(ls -d "$PDB/${pkg}"-[0-9]*/files 2>/dev/null | head -1)"
+    [[ -n "$list" ]] || continue
+    grep -v -e '^%' -e '/$' "$list" | grep -E '(\.so[.0-9]*|\.json)$' \
+      | grep -v -e 'VkLayer_MESA_vram_report_limit' -e 'graphics_provider.json' \
+      | while read -r f; do
+          [[ -e "$R/$f" || -L "$R/$f" ]] || continue
+          mkdir -p "$STOCK/$(dirname "$f")"
+          [[ -e "$STOCK/$f" ]] || cp -a "$R/$f" "$STOCK/$f"
+          rm -f "$R/$f"
+        done
+  done
+  rm -f "$R/usr/lib/libvulkan_freedreno.so"
+  GUEST="$R/usr/share/guestos/fex-mesa"
+  cp -a "$MESA_STACK/aarch64/usr/lib/." "$R/usr/lib/"
+  cp -a "$MESA_STACK/aarch64/usr/share/." "$R/usr/share/"
+  cp -a "$MESA_STACK/x86_64/usr/lib/." "$GUEST/usr/lib/"
+  cp -a "$MESA_STACK/x86_64/usr/share/." "$GUEST/usr/share/"
+  cp -a "$MESA_STACK/i386/usr/lib32/." "$GUEST/usr/lib32/"
+  cp -a "$MESA_STACK/i386/usr/share/vulkan/." "$GUEST/usr/share/vulkan/"
+  if [[ -f "$MESA_STACK/android/$ANDROID_VENDOR/hw/vulkan.freedreno.so" ]]; then
+    mkdir -p "$R/$ANDROID_VENDOR"
+    cp -a "$MESA_STACK/android/$ANDROID_VENDOR/." "$R/$ANDROID_VENDOR/"
+    chown -R root:root "$R/$ANDROID_VENDOR"
+  fi
+  chown -R root:root "$R/usr/lib/dri" "$GUEST/usr/lib/dri" "$GUEST/usr/lib32/dri"
+  # mangoapp uses the system Turnip, no pin to the Frame's.
+  rm -rf "$R/usr/lib/steamos-sm8650/frame-turnip" \
+    "$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json"
+  # No msm DRI driver in our build and no automatic zink fallback: GL goes
+  # through zink for the whole session, same as the 8 Gen 2 image.
+  mkdir -p "$R/usr/lib/environment.d"
+  printf '# Our Mesa: GL goes through zink on Turnip, like the Frame.\nMESA_LOADER_DRIVER_OVERRIDE=zink\n' \
+    >"$R/usr/lib/environment.d/60-sm8750-zink.conf"
+  chmod 0644 "$R/usr/lib/environment.d/60-sm8750-zink.conf"
+  for f in "$R/usr/lib/libvulkan_freedreno.so" "$R/usr/lib/libgallium-"*.so; do
+    log "   ${f#$R}: $(grep -a -o -m1 'Mesa [0-9][0-9.]*' "$f" || echo '?')"
+  done
+else
+  rm -f "$R/usr/lib/environment.d/60-sm8750-zink.conf"
+fi
+
 # Audio setup service
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
 cat <<'UNIT' >"$R/etc/systemd/system/sm8750-audio-setup.service"
