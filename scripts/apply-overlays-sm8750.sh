@@ -74,7 +74,7 @@ log "== gamescope binaries"
 GSBUILD="${GAMESCOPE_BUILD:-}"
 if [[ -n "$GSBUILD" ]]; then
   [[ -x "$GSBUILD/src/gamescope" ]] || die "no built gamescope in $GSBUILD"
-  strings "$GSBUILD/src/gamescope" | grep -q -- --force-composition-rotation \
+  grep -aq "force-composition-rotation" "$GSBUILD/src/gamescope" \
     || die "$GSBUILD gamescope has no --force-composition-rotation"
   for b in gamescope gamescopectl gamescopereaper gamescopestream; do
     backup "$R/usr/bin/$b" "$STOCK/usr/bin/$b"
