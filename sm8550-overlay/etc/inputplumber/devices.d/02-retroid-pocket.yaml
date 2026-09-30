@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
 # Retroid Pocket 6 / 6 TOP-DPAD / Nova (SM8550) → virtual Steam Deck controller.
-# Same RSInput serial pad as the AYN Odin 2 (qcs8550-ayn-common.dtsi), so it
-# shares the ayn_mcu map. The two back paddles are gpio-keys (BTN_Z / BTN_C,
+# Same RSInput serial pad as the AYN Odin 2 (qcs8550-ayn-common.dtsi), but
+# the face buttons come in the other way round, so it has its own
+# retroid_mcu map. The two back paddles are gpio-keys (BTN_Z / BTN_C,
 # next to Volume Up) → L4 / R4. Unmapped keys (volume) pass through to the
 # keyboard target.
 version: 1
@@ -32,13 +33,13 @@ source_devices:
     evdev:
       phys_path: rsinput-gamepad/input0
       handler: event*
-    capability_map_id: ayn_mcu
+    capability_map_id: retroid_mcu
   - group: gamepad
     evdev:
       name: gpio-keys
       phys_path: gpio-keys/input0
       handler: event*
-    capability_map_id: ayn_mcu
+    capability_map_id: retroid_mcu
 
 options:
   auto_manage: true
