@@ -74,7 +74,7 @@ fetch() {
 rocknix_path() { echo "${ROCKNIX_DIR}/$1"; }
 
 prepare_source() {
-  if [[ -d "$ROCKNIX_DIR/.git" ]]; then
+  if [[ -e "$ROCKNIX_DIR/.git" ]]; then  # a directory, or a file in a worktree
     [[ "$(git -C "$ROCKNIX_DIR" rev-parse HEAD)" == "$(git -C "$ROCKNIX_DIR" rev-parse "${ROCKNIX_REF}^{commit}")" ]] || die "ROCKNIX checkout does not match pinned ${ROCKNIX_REF}"
   else
     die "ROCKNIX source needs Git metadata to verify the pinned revision"
