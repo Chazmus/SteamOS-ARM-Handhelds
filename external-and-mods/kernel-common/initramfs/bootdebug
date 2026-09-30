@@ -29,6 +29,18 @@ while [ "$i" -lt 10 ]; do
     echo "--- gpu"; ls /sys/class/devfreq/ 2>&1; dmesg | grep -i -E "adreno|msm_dpu|a7xx|gmu|zap|drm" | tail -40
   } > "$out/summary.txt" 2>&1
   dmesg > "$out/dmesg.txt" 2>&1
+  {
+    echo "--- pci (vendor:device class -> driver)"
+    for p in /sys/bus/pci/devices/*; do
+      [ -e "$p" ] || continue
+      d=$(readlink "$p/driver" 2>/dev/null); d=${d##*/}
+      echo "${p##*/} $(cat "$p/vendor" "$p/device" "$p/class" 2>/dev/null | tr '\n' ' ')-> ${d:-none}"
+    done
+    echo "--- usb"; for u in /sys/bus/usb/devices/*; do [ -e "$u/idVendor" ] && echo "${u##*/} $(cat "$u/idVendor"):$(cat "$u/idProduct") $(cat "$u/product" 2>/dev/null)"; done
+    echo "--- input"; cat /proc/bus/input/devices
+    echo "--- network"; ip -br link 2>&1; nmcli -t device 2>&1
+    echo "--- modules"; cat /proc/modules
+  } > "$out/devices.txt" 2>&1
   journalctl -b --no-pager -o short-monotonic > "$out/journal.txt" 2>&1
   journalctl -b --no-pager -o short-monotonic _UID=1000 > "$out/journal-user.txt" 2>&1
   journalctl -b --no-pager -o short-monotonic -t gamescope-session -t gamescope -t bottom-screen > "$out/gamescope.txt" 2>&1
