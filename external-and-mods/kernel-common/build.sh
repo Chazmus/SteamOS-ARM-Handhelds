@@ -153,17 +153,22 @@ stage_builtin_firmware() {
   fi
   local ext="${SRC}/external-firmware"
   rm -rf "$ext"
-  local ent src dst from
+  local ent src dst from sha
   for ent in $BUILTIN_FW; do
-    src="${ent%%:*}"; dst="${ent#*:}"
+    # src:dst or src:dst:sha256
+    src="${ent%%:*}"; dst="${ent#*:}"; sha=""
+    [[ "$dst" == *:* ]] && { sha="${dst#*:}"; dst="${dst%%:*}"; }
     case "$src" in
       xfw/*) from="${EXTRA_FW_SRC}/${src#xfw/}" ;;
+      # The Frame's own files, as the image build backs them up (Wi-Fi).
+      frm/*) from="${FRAME_FW_DIR:-/work/rootfs-sm8550/opt/stock-steamos}/${src#frm/}" ;;
       lfw/*)
         from="${CACHE}/linux-firmware-${LINUX_FW_REF}/${src#lfw/}"
         fetch "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/${LINUX_FW_REF}/${src#lfw/}" "$from" ;;
       *) die "BUILTIN_FW: unknown source $src" ;;
     esac
     [[ -s "$from" ]] || die "missing firmware $from"
+    [[ -z "$sha" ]] || echo "$sha  $from" | sha256sum -c --quiet || die "firmware hash mismatch: $from"
     mkdir -p "$(dirname "${ext}/${dst}")"
     cp -L "$from" "${ext}/${dst}"
   done
