@@ -15,9 +15,21 @@
 #include <X11/Xlib.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #define STEAM_APPID 769
+/* At most one WM_TAKE_FOCUS per this many seconds: when focus bounces
+ * between a game and Steam (GTA IV + Social Club opening Quick Access,
+ * three bounces in 14 s), re-activating on every return can keep it going. */
+#define MIN_INTERVAL_S 3
+
+static double now(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec + ts.tv_nsec / 1e9;
+}
 
 static unsigned long card(Display *d, Window w, Atom a)
 {
@@ -45,6 +57,7 @@ int main(int argc, char **argv)
 	Atom proto = XInternAtom(d, "WM_PROTOCOLS", False);
 	Atom take = XInternAtom(d, "WM_TAKE_FOCUS", False);
 	Window last = None;
+	double sent_at = -MIN_INTERVAL_S;
 
 	for (;;) {
 		usleep(250 * 1000);
@@ -53,8 +66,16 @@ int main(int argc, char **argv)
 		Window game = card(d, root, gs_win);
 		unsigned long app = card(d, root, gs_app);
 		if (game && focus == game && last != game && last != None
-		    && app && app != STEAM_APPID) {
+		    && app && app != STEAM_APPID && now() - sent_at >= MIN_INTERVAL_S) {
 			usleep(100 * 1000);   /* let Steam finish handing focus back */
+			/* Steam may have taken focus again meanwhile (Quick Access
+			 * opening): then leave it alone. */
+			XGetInputFocus(d, &focus, &rev);
+			if (focus != game || card(d, root, gs_win) != game) {
+				last = focus;
+				continue;
+			}
+			sent_at = now();
 			/* WM_TAKE_FOCUS only: Wine then activates the window and sets X focus
 			 * itself. Also forcing XSetInputFocus + _NET_ACTIVE_WINDOW made Wine
 			 * re-grab/warp the pointer -> endless camera spin in Dying Light. */
