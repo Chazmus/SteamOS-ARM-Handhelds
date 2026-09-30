@@ -273,7 +273,9 @@ EOF
   home_dev="${LOOPDEV}p3"
 
   log "Formatting filesystems"
-  sudo_run mkfs.vfat -F 32 -n BOOT "${boot_dev}"
+  # Fixed FAT serial so the cmdline can find this BOOT by UUID.
+  local boot_serial="${disk_id:0:8}"
+  sudo_run mkfs.vfat -F 32 -n BOOT -i "${boot_serial}" "${boot_dev}"
   sudo_run mkfs.ext4 -q -F -L root -U "${root_uuid}" -m 1 "${root_dev}"
   sudo_run mkfs.ext4 -q -F -L home -U "${home_uuid}" -m 0 "${home_dev}"
 
@@ -284,7 +286,8 @@ EOF
 
   log "Writing p1 BOOT (repacked KERNEL with root=PARTUUID=${disk_id}-02)"
   sudo_run mkdir -p "${MNT}/boot/boot"
-  repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/KERNEL" "${disk_id}-02"
+  BOOT_FS_UUID="$(tr a-f A-F <<<"${boot_serial:0:4}-${boot_serial:4:4}")" HOME_FS_UUID="${home_uuid}" \
+    repack_kernel_partuuid "${KOUT}/boot/KERNEL" "${MNT}/boot/KERNEL" "${disk_id}-02"
   sudo_run cp "${MNT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL | tee KERNEL.md5 boot/KERNEL.md5 >/dev/null"
   if [[ -f "${MOD}/kernel-sm8750/post-flash.sh" ]]; then

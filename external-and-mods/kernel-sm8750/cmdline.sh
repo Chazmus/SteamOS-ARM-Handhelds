@@ -9,7 +9,9 @@
 # verbose console back.
 
 build_cmdline() {
-  local partuuid="$1"
+  local partuuid="$1" boot_src=LABEL=BOOT disk_src=LABEL=home
+  [[ -n "${BOOT_FS_UUID:-}" ]] && boot_src="UUID=${BOOT_FS_UUID}"
+  [[ -n "${HOME_FS_UUID:-}" ]] && disk_src="UUID=${HOME_FS_UUID}"
   local -a parts=(
     video=efifb:off
     irqaffinity=0-1
@@ -24,8 +26,11 @@ build_cmdline() {
     parts+=(console=tty0 loglevel=4)
   fi
   parts+=(
-    boot=LABEL=BOOT
-    disk=LABEL=home
+    # ROCKNIX's init mounts these before post-flash.sh runs. By UUID when the
+    # image build knows them, so another card's or install's BOOT/home can't
+    # be picked (Armada boots the Odin 3 by UUID too).
+    "boot=${boot_src}"
+    "disk=${disk_src}"
     rw rootwait
     "root=PARTUUID=${partuuid}"
     rootfstype=ext4
