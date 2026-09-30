@@ -281,6 +281,11 @@ fi
 # 5. Odin 3 Overlay (InputPlumber, Display, Audio, Device Manager)
 # ---------------------------------------------------------------------------
 log "== SM8750 Odin 3 overlay"
+if [[ -x "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" ]]; then
+  "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" "$R"
+  rm -f "$R/usr/lib/systemd/system/inputplumber.service.d/99-sm8550.conf" \
+        "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || true
+fi
 cp -r --no-preserve=mode,ownership "$SM8750_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/steamos/sm8750-audio-setup" 2>/dev/null || true
 
@@ -423,6 +428,39 @@ if [[ -x "$R/usr/lib/steamos/sm8550-patch-steamui" && -d "$STEAM_HOME/steamui" ]
   "$R/usr/lib/steamos/sm8550-patch-steamui" "$STEAM_HOME/steamui" || true
 fi
 touch "$STEAM_HOME/.install-complete"
+
+# Seed Odin 3 default controller mapping and UI scale factor into config.vdf
+mkdir -p "$STEAM_HOME/config"
+cat <<'VDF' >"$STEAM_HOME/config/config.vdf"
+"InstallConfigStore"
+{
+	"SDL_GamepadBind"		"03000000202000000130000001000000,AYN Odin3 Gamepad,crc:95bb,platform:Linux,a:b0,b:b1,x:b3,y:b2,dpleft:b13,dpright:b14,dpup:b11,dpdown:b12,leftx:a0,lefty:a1,leftstick:b9,rightx:a3,righty:a4,rightstick:b10,leftshoulder:b4,lefttrigger:a2,rightshoulder:b5,righttrigger:a5,back:b6,start:b7,guide:b8,misc1:b15,steam:2,"
+	"UI"
+	{
+		"display"
+		{
+			"Current"
+			{
+				"MinScaleFactor"		"0.711512446403503418"
+				"MaxScaleFactor"		"3.40971922874450684"
+				"IsExternalDisplay"		"1"
+				"name"		"External: gamescope 6\"|||Windowed"
+				"AutoScaleFactor"		"2.80762958526611328"
+				"ScaleFactor"		"2.38840627670288086"
+			}
+			"External: gamescope 6\"|||Windowed"
+			{
+				"ScaleFactor"		"2.38840627670288086"
+			}
+		}
+	}
+	"SteamOS"
+	{
+		"WifiForceWPASupplicant"		"1"
+	}
+}
+VDF
+
 install_file "$OVL/usr/share/deckard/RUNSTEAM.sh" "$STEAM_HOME/RUNSTEAM.sh" 0755
 if [[ -d "$STEAM_HOME/linuxarm64" && -d "$STEAM_HOME/steamrtarm64" ]]; then
   for _lib in steamclient.so crashhandler.so steam-launch-wrapper; do
