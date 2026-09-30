@@ -1,5 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# SM8550 rsinput (AYN): D-pad as buttons, QAM, Guide, West/North swap.
+# SM8550 rsinput (AYN): D-pad as buttons, QAM, Guide. The pad reports A as
+# BTN_EAST, B as BTN_SOUTH, X as BTN_NORTH and Y as BTN_WEST (raw events
+# checked on an Odin 2 by a tester), so both face-button pairs are swapped.
 version: 2
 kind: CapabilityMap
 name: AYN MCU Mapping
@@ -20,7 +22,7 @@ mapping:
     source_events:
       - evdev:
           event_type: KEY
-          event_code: BTN_SOUTH
+          event_code: BTN_EAST
           value_type: button
     target_event:
       gamepad:
@@ -50,7 +52,7 @@ mapping:
     source_events:
       - evdev:
           event_type: KEY
-          event_code: BTN_EAST
+          event_code: BTN_SOUTH
           value_type: button
     target_event:
       gamepad:
