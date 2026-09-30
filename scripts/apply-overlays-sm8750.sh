@@ -67,8 +67,27 @@ cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
 # 2. Gamescope (SM8750 aarch64 build)
 # ---------------------------------------------------------------------------
 log "== gamescope binaries"
+# Our gamescope (same build as the 8 Gen 2/3 images, GAMESCOPE_BUILD) when
+# given: it has GAMESCOPE_FAKE_OUTPUT_MM, without which Steam saw the Odin 3's
+# real (small, portrait) panel size and made the UI far too big. It also has
+# --force-composition-rotation, which the Odin 3 session uses.
+GSBUILD="${GAMESCOPE_BUILD:-}"
+if [[ -n "$GSBUILD" ]]; then
+  [[ -x "$GSBUILD/src/gamescope" ]] || die "no built gamescope in $GSBUILD"
+  strings "$GSBUILD/src/gamescope" | grep -q -- --force-composition-rotation \
+    || die "$GSBUILD gamescope has no --force-composition-rotation"
+  for b in gamescope gamescopectl gamescopereaper gamescopestream; do
+    backup "$R/usr/bin/$b" "$STOCK/usr/bin/$b"
+    install_file "$GSBUILD/src/$b" "$R/usr/bin/$b" 0755
+    install_file "$GSBUILD/src/$b" "$R/usr/local/bin/$b" 0755
+  done
+  if [[ -f "$GSBUILD/layer/libVkLayer_FROG_gamescope_wsi_aarch64.so" ]]; then
+    install_file "$GSBUILD/layer/libVkLayer_FROG_gamescope_wsi_aarch64.so" \
+      "$R/usr/lib/libVkLayer_FROG_gamescope_wsi_aarch64.so" 0755
+  fi
+fi
 for b in gamescope gamescopectl gamescopereaper gamescopestream; do
-  if [[ -f "$SM8750_OVL/usr/bin/$b" ]]; then
+  if [[ -z "$GSBUILD" && -f "$SM8750_OVL/usr/bin/$b" ]]; then
     backup "$R/usr/bin/$b" "$STOCK/usr/bin/$b"
     install_file "$SM8750_OVL/usr/bin/$b" "$R/usr/bin/$b" 0755
     install_file "$SM8750_OVL/usr/bin/$b" "$R/usr/local/bin/$b" 0755

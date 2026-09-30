@@ -126,6 +126,7 @@ apply_mods() {
   log "Applying SM8750 Odin 3 kernel / Turnip Adreno 830 / overlays"
   sudo_run env KERNEL_OUT="${KOUT}" STEAMOS_ROOTFS="${R}" STEAMOS_WORK="${WORKDIR}" \
     MESA_STACK="${MESA_STACK:-}" ${STEAM_ARM_SEED:+STEAM_ARM_SEED="${STEAM_ARM_SEED}"} \
+    ${GAMESCOPE_BUILD:+GAMESCOPE_BUILD="${GAMESCOPE_BUILD}"} \
     "${SCRIPTS}/apply-overlays-sm8750.sh"
 }
 
