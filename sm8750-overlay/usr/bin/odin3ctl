@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""odin3ctl — Control the AYN Odin 3 platform daemon (odin3d).
+
+Usage:
+  odin3ctl status                     Show current thermals, fan, power and clocks
+  odin3ctl monitor                    Live monitor of thermals, fan speed, and CPU/GPU clocks
+  odin3ctl profile [silent|balanced|turbo|next]  View or switch performance & fan profile
+  odin3ctl fan auto                   Set fan to automatic temperature curve mode
+  odin3ctl fan fixed <0-100>          Set fan to fixed percentage
+  odin3ctl fan boost [on|off]         Toggle or set temporary fan boost
+  odin3ctl fan set <0-255>            Directly set PWM (testing)
+  odin3ctl rgb <RRGGBB> [brightness]  Set joystick ring RGB color
+  odin3ctl rgb off                    Turn off joystick ring LEDs
+"""
+
+from __future__ import annotations
+
+import glob
+import json
+import os
+import socket
+import sys
+import time
+
+SOCK_PATH = "/run/odin3/request"
+STATE_PATH = "/var/lib/odin3/state.json"
+PROFILES = ("silent", "balanced", "turbo")
+
+
+def rd(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def send_req(action: str, **kwargs) -> dict:
+    if not os.path.exists(SOCK_PATH):
+        return {"error": "odin3d is not running (/run/odin3/request missing)"}
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(3.0)
+        s.connect(SOCK_PATH)
+        payload = {"action": action, **kwargs}
+        s.sendall((json.dumps(payload) + "\n").encode())
+        res = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            res += chunk
+            if b"\n" in chunk:
+                break
+        s.close()
+        return json.loads(res.decode())
+    except Exception as e:
+        return {"error": f"communication failed: {e}"}
+
+
+def format_status(data: dict) -> str:
+    lines = []
+    lines.append("=== AYN Odin 3 Platform Status ===")
+    lines.append(f"Profile      : {data.get('profile', 'unknown').upper()}")
+    
+    fan_mode = data.get("fan_mode", "auto")
+    fan_pct = data.get("fan_pct", 0)
+    fan_pwm = data.get("fan_pwm", 0)
+    boost = " (BOOST ACTIVE)" if data.get("fan_boost") else ""
+    override = " [CRITICAL OVERRIDE ACTIVE]" if data.get("critical_override") else ""
+    lines.append(f"Fan Speed    : {fan_pct}% (PWM {fan_pwm}/255) [Mode: {fan_mode}]{boost}{override}")
+    
+    soc_temp = data.get("soc_temp_c", 0.0)
+    hottest = data.get("hottest_zone", "?")
+    lines.append(f"SoC Temp     : {soc_temp:.1f} °C (hottest zone: {hottest})")
+    
+    # Top 3 hottest zones
+    all_temps = []
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        t = rd(f"{z}/type")
+        if t.startswith(("cpu", "gpu")) or "gpuss" in t or "cpuss" in t:
+            raw = rd(f"{z}/temp")
+            if raw and raw.isdigit():
+                all_temps.append((t, int(raw) / 1000.0))
+    all_temps.sort(key=lambda x: x[1], reverse=True)
+    if all_temps:
+        top_str = ", ".join(f"{name}: {t:.1f}°C" for name, t in all_temps[:3])
+        lines.append(f"Sensors      : {top_str}")
+
+    # CPU info
+    for pol in sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*")):
+        name = os.path.basename(pol)
+        cpus = rd(f"{pol}/related_cpus")
+        cur_mhz = int(rd(f"{pol}/scaling_cur_freq", "0")) // 1000
+        max_mhz = int(rd(f"{pol}/cpuinfo_max_freq", "0")) // 1000
+        gov = rd(f"{pol}/scaling_governor")
+        lines.append(f"CPU ({name}): CPUs {cpus:8} {cur_mhz:4} MHz / {max_mhz} MHz [{gov}]")
+
+    # GPU info
+    gpu_d = "/sys/class/devfreq/3d00000.gpu"
+    if os.path.isdir(gpu_d):
+        cur_gpu = int(rd(f"{gpu_d}/cur_freq", "0")) // 1_000_000
+        min_gpu = int(rd(f"{gpu_d}/min_freq", "0")) // 1_000_000
+        max_gpu = int(rd(f"{gpu_d}/max_freq", "0")) // 1_000_000
+        lines.append(f"GPU (Adreno) : {cur_gpu:4} MHz (range: {min_gpu}-{max_gpu} MHz, {rd(f'{gpu_d}/governor')})")
+
+    # RGB
+    rgb = data.get("rgb", {})
+    if rgb:
+        lines.append(f"Stick RGB    : mode={rgb.get('mode')}, color=#{rgb.get('color')}, brightness={rgb.get('brightness')}")
+
+    return "\n".join(lines)
+
+
+def cmd_status() -> None:
+    res = send_req("status")
+    if "error" in res:
+        print(f"Daemon note: {res['error']}")
+        print("Falling back to reading hardware sysfs directly...\n")
+        # Direct sysfs read
+        cur_pwm = 0
+        for d in glob.glob("/sys/class/hwmon/hwmon*"):
+            if rd(f"{d}/name") == "pwmfan":
+                cur_pwm = int(rd(f"{d}/pwm1", "0"))
+                break
+        temps = []
+        for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+            t = rd(f"{z}/type")
+            if t.startswith(("cpu", "gpu")) or "gpuss" in t or "cpuss" in t:
+                raw = rd(f"{z}/temp")
+                if raw and raw.isdigit():
+                    temps.append((t, int(raw) / 1000.0))
+        temps.sort(key=lambda x: x[1], reverse=True)
+        hottest_val = temps[0][1] if temps else 0.0
+        hottest_name = temps[0][0] if temps else "?"
+        print(format_status({
+            "profile": "unknown (odin3d stopped)",
+            "fan_mode": "manual",
+            "fan_pct": int(round(cur_pwm / 2.55)),
+            "fan_pwm": cur_pwm,
+            "soc_temp_c": hottest_val,
+            "hottest_zone": hottest_name,
+        }))
+        return
+
+    print(format_status(res))
+
+
+def cmd_monitor() -> None:
+    print("Monitoring AYN Odin 3 thermals and fan (Ctrl+C to exit)...")
+    try:
+        while True:
+            res = send_req("status")
+            if "error" in res:
+                print(f"\rError: {res['error']}", end="")
+            else:
+                pct = res.get("fan_pct", 0)
+                pwm = res.get("fan_pwm", 0)
+                temp = res.get("soc_temp_c", 0.0)
+                zone = res.get("hottest_zone", "?")
+                prof = res.get("profile", "?")
+                mode = res.get("fan_mode", "?")
+                sys.stdout.write(f"\r\033[K[{prof.upper()}/{mode}] Temp: {temp:5.1f} °C ({zone}) | Fan: {pct:3d}% (PWM {pwm:3d}/255)")
+                sys.stdout.flush()
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("\nExiting monitor.")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+
+    cmd = args[0].lower()
+
+    if cmd == "status":
+        cmd_status()
+        return
+
+    if cmd == "monitor":
+        cmd_monitor()
+        return
+
+    if cmd == "profile":
+        if len(args) == 1:
+            res = send_req("status")
+            print(f"Current profile: {res.get('profile', 'unknown')}")
+            print(f"Available profiles: {', '.join(PROFILES)}")
+            return
+        target = args[1].lower()
+        res = send_req("profile", value=target)
+        if "error" in res:
+            sys.exit(f"Error: {res['error']}")
+        print(f"Profile switched to: {res.get('profile')}")
+        return
+
+    if cmd == "fan":
+        if len(args) < 2:
+            sys.exit("Usage: odin3ctl fan <auto | fixed <0-100> | boost [on|off] | set <0-255>>")
+        sub = args[1].lower()
+        if sub == "auto":
+            res = send_req("fan_auto")
+            print("Fan set to auto curve mode" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        elif sub == "fixed":
+            if len(args) < 3:
+                sys.exit("Usage: odin3ctl fan fixed <0-100>")
+            res = send_req("fan_fixed", value=args[2])
+            print(f"Fan fixed at {args[2]}%" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        elif sub == "boost":
+            val = None
+            if len(args) >= 3:
+                val = args[2].lower() in ("1", "true", "on", "yes")
+            res = send_req("fan_boost", value=val)
+            boost_state = "enabled" if res.get("boost") else "disabled"
+            print(f"Fan boost {boost_state}" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        elif sub == "set":
+            if len(args) < 3:
+                sys.exit("Usage: odin3ctl fan set <0-255>")
+            res = send_req("fan_set", value=args[2])
+            print(f"Fan PWM set to {args[2]}" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        else:
+            sys.exit(f"Unknown fan command: {sub}")
+        return
+
+    if cmd == "rgb":
+        if len(args) < 2:
+            sys.exit("Usage: odin3ctl rgb <RRGGBB> [brightness] | rgb off")
+        if args[1].lower() in ("off", "none", "0"):
+            res = send_req("rgb_off")
+            print("Stick RGB LEDs turned off" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        else:
+            color = args[1]
+            bright = int(args[2]) if len(args) >= 3 else 160
+            res = send_req("rgb", color=color, brightness=bright)
+            print(f"Stick RGB set to #{color} (brightness {bright})" if res.get("status") == "ok" else f"Error: {res.get('error')}")
+        return
+
+    sys.exit(f"Unknown command: '{cmd}'. Run 'odin3ctl help' for usage.")
+
+
+if __name__ == "__main__":
+    main()

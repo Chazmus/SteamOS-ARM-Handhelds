@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+"""odin3d — AYN Odin 3 (Snapdragon 8 Elite / SM8750) Platform & Fan Daemon.
+
+Provides:
+  - Dynamic temperature-based fan curves (Silent, Balanced, Turbo) with hysteresis & smoothing
+  - Thermal runaway protection: 88°C critical override to 100% fan speed
+  - Failsafe fan speed if daemon stops or crashes
+  - CPU frequency scaling management (schedutil governor default, rate_limit tuning)
+  - GPU devfreq tuning (16ms polling interval, clock range per profile)
+  - Stick ring RGB LED control and profile indication
+  - Socket and state interface for CLI (odin3ctl) and Decky plugins
+
+Config: /etc/odin3.conf
+State:  /var/lib/odin3/state.json
+Socket: /run/odin3/request
+"""
+
+from __future__ import annotations
+
+import atexit
+import configparser
+import glob
+import json
+import os
+import re
+import select
+import signal
+import socket
+import sys
+import time
+from typing import Any
+
+CONF_PATH = "/etc/odin3.conf"
+STATE_DIR = "/var/lib/odin3"
+STATE_PATH = f"{STATE_DIR}/state.json"
+SOCK_DIR = "/run/odin3"
+SOCK_PATH = f"{SOCK_DIR}/request"
+
+PROFILES = ("silent", "balanced", "turbo")
+
+# Default fan curves (Temp °C -> PWM 0..255)
+DEFAULT_CURVES = {
+    "silent":   [(48, 0), (55, 30), (65, 55), (75, 90), (85, 160), (92, 255)],
+    "balanced": [(45, 0), (50, 35), (60, 65), (70, 105), (80, 165), (88, 220), (93, 255)],
+    "turbo":    [(40, 70), (50, 100), (60, 140), (70, 190), (80, 235), (86, 255)],
+}
+
+PROFILE_COLORS = {
+    "silent":   "0077ff",  # Blue
+    "balanced": "00ff66",  # Green
+    "turbo":    "ff3300",  # Red / Orange
+}
+
+
+def log(msg: str) -> None:
+    print(f"odin3d: {msg}", flush=True)
+
+
+def rd(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def wr(path: str, value: Any) -> bool:
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(str(value))
+        return True
+    except OSError:
+        return False
+
+
+def parse_curve(val: str) -> list[tuple[int, int]]:
+    points = []
+    for item in val.split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        try:
+            t, p = item.split(":", 1)
+            points.append((int(t.strip()), max(0, min(255, int(p.strip())))))
+        except ValueError:
+            continue
+    points.sort(key=lambda x: x[0])
+    return points
+
+
+def curve_pwm(curve: list[tuple[int, int]], temp: float) -> int:
+    if not curve:
+        return 70
+    if temp <= curve[0][0]:
+        return curve[0][1]
+    for (t0, p0), (t1, p1) in zip(curve, curve[1:]):
+        if temp <= t1:
+            if t1 == t0:
+                return p0
+            return int(p0 + (p1 - p0) * (temp - t0) / (t1 - t0))
+    return curve[-1][1]
+
+
+class Config:
+    def __init__(self, path: str = CONF_PATH):
+        self.path = path
+        self.reload()
+
+    def reload(self) -> None:
+        cp = configparser.ConfigParser()
+        cp.read_dict({
+            "fan": {
+                "enabled": "yes",
+                "min_pwm": "0",
+                "max_pwm": "255",
+                "failsafe_pwm": "150",
+                "poll_interval_s": "1.0",
+                "temp_smoothing": "0.30",
+                "hysteresis_c": "3.0",
+                "ramp_down_step": "15",
+                "critical_temp_c": "88.0",
+                "critical_exit_c": "78.0",
+            },
+            "power": {
+                "manage_cpu": "yes",
+                "manage_gpu": "yes",
+            },
+            "curves": {
+                "silent": "48:0, 55:30, 65:55, 75:90, 85:160, 92:255",
+                "balanced": "45:0, 50:35, 60:65, 70:105, 80:165, 88:220, 93:255",
+                "turbo": "40:70, 50:100, 60:140, 70:190, 80:235, 86:255",
+            },
+        })
+        cp.read(self.path)
+
+        self.fan_enabled = cp.getboolean("fan", "enabled")
+        self.min_pwm = max(0, min(255, cp.getint("fan", "min_pwm")))
+        self.max_pwm = max(0, min(255, cp.getint("fan", "max_pwm")))
+        self.failsafe_pwm = max(0, min(255, cp.getint("fan", "failsafe_pwm")))
+        self.poll_interval = max(0.2, cp.getfloat("fan", "poll_interval_s"))
+        self.smoothing = max(0.01, min(1.0, cp.getfloat("fan", "temp_smoothing")))
+        self.hysteresis = max(0.5, cp.getfloat("fan", "hysteresis_c"))
+        self.ramp_down_step = max(1, cp.getint("fan", "ramp_down_step"))
+        self.critical_temp = cp.getfloat("fan", "critical_temp_c")
+        self.critical_exit = cp.getfloat("fan", "critical_exit_c")
+
+        self.manage_cpu = cp.getboolean("power", "manage_cpu")
+        self.manage_gpu = cp.getboolean("power", "manage_gpu")
+
+        self.curves: dict[str, list[tuple[int, int]]] = {}
+        for p in PROFILES:
+            raw = cp.get("curves", p, fallback="")
+            parsed = parse_curve(raw)
+            self.curves[p] = parsed if parsed else DEFAULT_CURVES[p]
+
+
+class StateManager:
+    def __init__(self, path: str = STATE_PATH):
+        self.path = path
+        self.data: dict[str, Any] = {}
+        self.load()
+
+    def load(self) -> dict[str, Any]:
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                self.data = json.load(fh)
+        except (OSError, ValueError):
+            self.data = {}
+
+        self.data.setdefault("profile", "balanced")
+        if self.data["profile"] not in PROFILES:
+            self.data["profile"] = "balanced"
+
+        self.data.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
+        fan = self.data["fan"]
+        fan.setdefault("mode", "auto")
+        fan.setdefault("fixed", 50)
+        fan.setdefault("boost", False)
+
+        self.data.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
+        rgb = self.data["rgb"]
+        rgb.setdefault("mode", "static")
+        rgb.setdefault("color", "ff3c00")
+        rgb.setdefault("brightness", 160)
+
+        return self.data
+
+    def save(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = f"{self.path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.data, fh, indent=2)
+        os.replace(tmp, self.path)
+
+
+class Hardware:
+    def __init__(self, config: Config):
+        self.config = config
+        self.fan_dir: str | None = None
+        self.thermal_zones: list[tuple[str, str]] = []
+        self.hottest_zone_name: str = "?"
+        self.last_hottest_temp: float = 0.0
+        self.rescan()
+
+    def rescan(self) -> None:
+        self.fan_dir = None
+        for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+            if rd(f"{d}/name") == "pwmfan":
+                self.fan_dir = d
+                break
+
+        if self.fan_dir:
+            wr(f"{self.fan_dir}/pwm1_enable", 1)
+
+        # Collect CPU / GPU / DDR thermal zones
+        self.thermal_zones = []
+        for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
+            t = rd(f"{z}/type")
+            if t.startswith(("cpu", "gpu")) or "gpuss" in t or "cpuss" in t or t == "ddr-thermal":
+                self.thermal_zones.append((f"{z}/temp", t))
+
+    def get_soc_temp(self) -> float:
+        """Returns hottest temperature in °C across CPU/GPU sensors."""
+        if not self.thermal_zones:
+            self.rescan()
+
+        hottest = -100.0
+        hottest_name = "?"
+        for path, name in self.thermal_zones:
+            raw = rd(path)
+            if not raw:
+                continue
+            try:
+                val = int(raw) / 1000.0
+                if -20.0 <= val <= 150.0 and val > hottest:
+                    hottest = val
+                    hottest_name = name
+            except ValueError:
+                pass
+
+        if hottest > -100.0:
+            self.hottest_zone_name = hottest_name
+            self.last_hottest_temp = hottest
+            return hottest
+
+        raise RuntimeError("No valid thermal readings found")
+
+    def get_pwm(self) -> int:
+        if not self.fan_dir:
+            return 0
+        try:
+            return int(rd(f"{self.fan_dir}/pwm1", "0"))
+        except ValueError:
+            return 0
+
+    def set_pwm(self, val: int) -> bool:
+        if not self.fan_dir:
+            self.rescan()
+            if not self.fan_dir:
+                return False
+        val = max(0, min(255, int(val)))
+        return wr(f"{self.fan_dir}/pwm1", val)
+
+    def set_failsafe(self) -> None:
+        if self.fan_dir:
+            self.set_pwm(self.config.failsafe_pwm)
+
+
+class FanController:
+    def __init__(self, hw: Hardware, cfg: Config, state: StateManager):
+        self.hw = hw
+        self.cfg = cfg
+        self.state = state
+        self.cur_pwm = -1
+        self.smooth_temp: float | None = None
+        self.set_temp: float = 0.0
+        self.critical_override = False
+
+    def tick(self) -> None:
+        if not self.cfg.fan_enabled:
+            return
+
+        try:
+            raw_temp = self.hw.get_soc_temp()
+        except RuntimeError as e:
+            log(f"warning: {e} -> setting failsafe PWM")
+            self.hw.set_failsafe()
+            return
+
+        # Critical Temperature Latch
+        if not self.critical_override and raw_temp >= self.cfg.critical_temp:
+            self.critical_override = True
+            log(f"ALERT: {raw_temp:.1f}°C >= {self.cfg.critical_temp}°C! Critical thermal override active (100% fan).")
+        elif self.critical_override and raw_temp <= self.cfg.critical_exit:
+            self.critical_override = False
+            log(f"INFO: {raw_temp:.1f}°C <= {self.cfg.critical_exit}°C. Exiting critical thermal override.")
+
+        fan_st = self.state.data.get("fan", {})
+        mode = fan_st.get("mode", "auto")
+        boost = fan_st.get("boost", False)
+        profile = self.state.data.get("profile", "balanced")
+
+        if self.critical_override:
+            target_pwm = self.cfg.max_pwm
+            next_pwm = target_pwm
+            self.set_temp = raw_temp
+        elif boost:
+            target_pwm = self.cfg.max_pwm
+            next_pwm = target_pwm
+            self.set_temp = raw_temp
+        elif mode == "fixed":
+            fixed_pct = max(0, min(100, int(fan_st.get("fixed", 50))))
+            target_pwm = int(round(fixed_pct * 2.55))
+            next_pwm = target_pwm
+            self.set_temp = raw_temp
+        else:
+            # Auto mode with profile curve
+            # Instant smoothing response if hot (>82°C) or uninitialized
+            if self.smooth_temp is None or raw_temp >= 82.0:
+                self.smooth_temp = raw_temp
+            else:
+                alpha = self.cfg.smoothing
+                self.smooth_temp = alpha * raw_temp + (1.0 - alpha) * self.smooth_temp
+
+            curve = self.cfg.curves.get(profile, DEFAULT_CURVES["balanced"])
+            target_pwm = curve_pwm(curve, self.smooth_temp)
+            target_pwm = max(self.cfg.min_pwm, min(self.cfg.max_pwm, target_pwm))
+
+            temp_ref = self.smooth_temp if self.smooth_temp is not None else raw_temp
+
+            if self.cur_pwm < 0:
+                # First tick: apply immediately
+                next_pwm = target_pwm
+                self.set_temp = temp_ref
+            elif target_pwm > self.cur_pwm:
+                # Ramping UP: react immediately to heat
+                next_pwm = target_pwm
+                self.set_temp = temp_ref
+            elif target_pwm < self.cur_pwm:
+                # Ramping DOWN: check hysteresis or large delta (e.g. exiting boost/fixed)
+                large_gap = (self.cur_pwm - target_pwm) >= 30
+                cooling_down = temp_ref <= (self.set_temp - self.cfg.hysteresis)
+
+                if large_gap or cooling_down:
+                    next_pwm = max(target_pwm, self.cur_pwm - self.cfg.ramp_down_step)
+                    self.set_temp = temp_ref
+                else:
+                    next_pwm = self.cur_pwm
+            else:
+                next_pwm = self.cur_pwm
+
+        if next_pwm != self.cur_pwm:
+            if self.hw.set_pwm(next_pwm):
+                if abs(next_pwm - self.cur_pwm) >= 20 or self.cur_pwm < 0:
+                    pct = int(round(next_pwm / 2.55))
+                    log(f"fan: {raw_temp:.1f}°C ({self.hw.hottest_zone_name}) -> PWM {next_pwm}/255 ({pct}%) [{profile}/{mode}]")
+                self.cur_pwm = next_pwm
+
+
+class PowerManager:
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+
+    def apply(self, profile: str) -> None:
+        if self.cfg.manage_cpu:
+            self.apply_cpu(profile)
+        if self.cfg.manage_gpu:
+            self.apply_gpu(profile)
+
+    def apply_cpu(self, profile: str) -> None:
+        """Sets CPU governors. Schedutil for balanced/silent, Performance for turbo."""
+        for pol in sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*")):
+            avail = rd(f"{pol}/scaling_available_governors")
+            cpus = rd(f"{pol}/related_cpus")
+            # policy6 is the two Oryon Prime cores (cpus 6, 7)
+            is_prime = ("6" in cpus or "7" in cpus)
+
+            if profile == "turbo" and is_prime and "performance" in avail:
+                gov = "performance"
+            elif "schedutil" in avail:
+                gov = "schedutil"
+            elif "ondemand" in avail:
+                gov = "ondemand"
+            else:
+                continue
+
+            wr(f"{pol}/scaling_governor", gov)
+            if gov == "schedutil":
+                wr(f"{pol}/schedutil/rate_limit_us", 500)
+
+    def apply_gpu(self, profile: str) -> None:
+        """Configures GPU devfreq polling and frequency floors/ceilings."""
+        gpu_dir = "/sys/class/devfreq/3d00000.gpu"
+        if not os.path.isdir(gpu_dir):
+            return
+
+        wr(f"{gpu_dir}/polling_interval", 16)
+        freqs_str = rd(f"{gpu_dir}/available_frequencies")
+        freqs = sorted(int(f) for f in freqs_str.split() if f.isdigit())
+        if not freqs:
+            return
+
+        min_f, max_f = freqs[0], freqs[-1]
+        if profile == "silent":
+            # Cap GPU to 832 MHz (index ~9) to prevent heat/power spikes
+            cap = next((f for f in freqs if f >= 832000000), max_f)
+            wr(f"{gpu_dir}/min_freq", min_f)
+            wr(f"{gpu_dir}/max_freq", cap)
+        elif profile == "balanced":
+            # Full dynamic range 160MHz to 1100MHz
+            wr(f"{gpu_dir}/max_freq", max_f)
+            wr(f"{gpu_dir}/min_freq", min_f)
+        elif profile == "turbo":
+            # Raise floor to 443MHz (index ~4) to eliminate frame dips
+            floor = next((f for f in freqs if f >= 443000000), min_f)
+            wr(f"{gpu_dir}/max_freq", max_f)
+            wr(f"{gpu_dir}/min_freq", floor)
+
+
+class LedManager:
+    """Manages Left and Right analog stick ring RGB LEDs."""
+
+    def __init__(self):
+        self.left_leds = {
+            "r": [f"/sys/class/leds/l:r{i}" for i in range(1, 5)],
+            "g": [f"/sys/class/leds/l:g{i}" for i in range(1, 5)],
+            "b": [f"/sys/class/leds/l:b{i}" for i in range(1, 5)],
+        }
+        self.right_leds = {
+            "r": [f"/sys/class/leds/r:r{i}" for i in range(1, 5)],
+            "g": [f"/sys/class/leds/r:g{i}" for i in range(1, 5)],
+            "b": [f"/sys/class/leds/r:b{i}" for i in range(1, 5)],
+        }
+        self.flash_until = 0.0
+
+    def set_color(self, hex_color: str, brightness: int = 160) -> None:
+        hex_color = hex_color.lstrip("#")
+        if len(hex_color) != 6 or not all(c in "0123456789abcdefABCDEF" for c in hex_color):
+            hex_color = "ff3c00"
+
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+
+        scale = max(0, min(255, brightness)) / 255.0
+        r_val = int(round(r * scale))
+        g_val = int(round(g * scale))
+        b_val = int(round(b * scale))
+
+        for color_key, val in [("r", r_val), ("g", g_val), ("b", b_val)]:
+            for path in self.left_leds[color_key] + self.right_leds[color_key]:
+                wr(f"{path}/brightness", val)
+
+    def off(self) -> None:
+        for group in (self.left_leds, self.right_leds):
+            for paths in group.values():
+                for p in paths:
+                    wr(f"{p}/brightness", 0)
+
+    def flash_profile(self, profile: str) -> None:
+        color = PROFILE_COLORS.get(profile, "00ff66")
+        self.set_color(color, 255)
+        self.flash_until = time.monotonic() + 1.5
+
+    def tick(self, rgb_state: dict[str, Any]) -> None:
+        if time.monotonic() < self.flash_until:
+            return
+        mode = rgb_state.get("mode", "static")
+        if mode == "off":
+            self.off()
+        elif mode == "static":
+            color = rgb_state.get("color", "ff3c00")
+            bright = int(rgb_state.get("brightness", 160))
+            self.set_color(color, bright)
+
+
+class Odin3Daemon:
+    def __init__(self):
+        self.config = Config()
+        self.state = StateManager()
+        self.hw = Hardware(self.config)
+        self.fan = FanController(self.hw, self.config, self.state)
+        self.power = PowerManager(self.config)
+        self.leds = LedManager()
+        self.running = True
+        self.server_sock: socket.socket | None = None
+
+        signal.signal(signal.SIGTERM, self._sig_handler)
+        signal.signal(signal.SIGINT, self._sig_handler)
+        signal.signal(signal.SIGHUP, self._sighup_handler)
+        atexit.register(self.cleanup)
+
+    def _sig_handler(self, signum, frame):
+        log(f"Received signal {signum}, stopping...")
+        self.running = False
+
+    def _sighup_handler(self, signum, frame):
+        log("Received SIGHUP, reloading configuration and state...")
+        self.config.reload()
+        self.state.load()
+        self.power.apply(self.state.data["profile"])
+
+    def cleanup(self):
+        log("Cleaning up odin3d resources...")
+        self.hw.set_failsafe()
+        if self.server_sock:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
+        if os.path.exists(SOCK_PATH):
+            try:
+                os.remove(SOCK_PATH)
+            except OSError:
+                pass
+
+    def setup_socket(self) -> None:
+        os.makedirs(SOCK_DIR, exist_ok=True)
+        if os.path.exists(SOCK_PATH):
+            os.remove(SOCK_PATH)
+        self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server_sock.bind(SOCK_PATH)
+        self.server_sock.listen(5)
+        self.server_sock.setblocking(False)
+        # Allow standard users (steamos) to communicate with socket
+        os.chmod(SOCK_PATH, 0o666)
+
+    def handle_client(self, conn: socket.socket) -> None:
+        try:
+            conn.settimeout(2.0)
+            data = conn.recv(4096)
+            if not data:
+                return
+            req = data.decode(errors="replace").strip()
+            resp = self.process_request(req)
+            conn.sendall((json.dumps(resp) + "\n").encode())
+        except Exception as e:
+            log(f"socket request error: {e}")
+        finally:
+            conn.close()
+
+    def process_request(self, req_str: str) -> dict[str, Any]:
+        try:
+            cmd = json.loads(req_str)
+        except json.JSONDecodeError:
+            # Fallback to plain text command parsing
+            parts = req_str.split()
+            if not parts:
+                return {"error": "empty command"}
+            action = parts[0]
+            cmd = {"action": action, "args": parts[1:]}
+
+        action = cmd.get("action", "")
+
+        if action == "status":
+            try:
+                soc_temp = self.hw.get_soc_temp()
+            except RuntimeError:
+                soc_temp = 0.0
+            cur_pwm = self.hw.get_pwm()
+            return {
+                "status": "ok",
+                "device": "AYN Odin 3 (SM8750)",
+                "soc_temp_c": round(soc_temp, 1),
+                "hottest_zone": self.hw.hottest_zone_name,
+                "fan_pwm": cur_pwm,
+                "fan_pct": int(round(cur_pwm / 2.55)),
+                "fan_mode": self.state.data["fan"].get("mode", "auto"),
+                "fan_boost": self.state.data["fan"].get("boost", False),
+                "profile": self.state.data.get("profile", "balanced"),
+                "critical_override": self.fan.critical_override,
+                "rgb": self.state.data.get("rgb", {}),
+            }
+
+        if action == "profile":
+            val = cmd.get("value") or (cmd.get("args") and cmd["args"][0])
+            if val == "next":
+                idx = (PROFILES.index(self.state.data["profile"]) + 1) % len(PROFILES)
+                val = PROFILES[idx]
+            if val not in PROFILES:
+                return {"error": f"invalid profile: {val}. Choices: {PROFILES}"}
+            self.state.data["profile"] = val
+            self.state.save()
+            self.power.apply(val)
+            self.leds.flash_profile(val)
+            self.fan.tick()
+            log(f"Profile switched to {val}")
+            return {"status": "ok", "profile": val}
+
+        if action in ("fan_auto", "auto"):
+            self.state.data["fan"]["mode"] = "auto"
+            self.state.data["fan"]["boost"] = False
+            self.state.save()
+            self.fan.tick()
+            return {"status": "ok", "mode": "auto"}
+
+        if action in ("fan_fixed", "fixed"):
+            val = cmd.get("value") or (cmd.get("args") and cmd["args"][0])
+            try:
+                pct = max(0, min(100, int(val)))
+            except (ValueError, TypeError):
+                return {"error": "fixed speed must be 0-100%"}
+            self.state.data["fan"]["mode"] = "fixed"
+            self.state.data["fan"]["fixed"] = pct
+            self.state.data["fan"]["boost"] = False
+            self.state.save()
+            self.fan.tick()
+            return {"status": "ok", "mode": "fixed", "fixed": pct}
+
+        if action in ("fan_boost", "boost"):
+            cur = self.state.data["fan"].get("boost", False)
+            val = cmd.get("value")
+            new_val = (not cur) if val is None else bool(val)
+            self.state.data["fan"]["boost"] = new_val
+            self.state.save()
+            self.fan.tick()
+            return {"status": "ok", "boost": new_val}
+
+        if action == "fan_set":
+            val = cmd.get("value") or (cmd.get("args") and cmd["args"][0])
+            try:
+                pwm = max(0, min(255, int(val)))
+            except (ValueError, TypeError):
+                return {"error": "pwm must be 0-255"}
+            self.hw.set_pwm(pwm)
+            self.fan.cur_pwm = pwm
+            return {"status": "ok", "pwm": pwm}
+
+        if action == "rgb":
+            color = cmd.get("color") or (cmd.get("args") and cmd["args"][0])
+            bright = cmd.get("brightness") or (len(cmd.get("args", [])) > 1 and cmd["args"][1]) or 160
+            self.state.data["rgb"]["mode"] = "static"
+            self.state.data["rgb"]["color"] = str(color)
+            self.state.data["rgb"]["brightness"] = int(bright)
+            self.state.save()
+            self.leds.set_color(str(color), int(bright))
+            return {"status": "ok", "color": color, "brightness": bright}
+
+        if action in ("rgb_off", "rgb-off"):
+            self.state.data["rgb"]["mode"] = "off"
+            self.state.save()
+            self.leds.off()
+            return {"status": "ok", "mode": "off"}
+
+        return {"error": f"unknown action: {action}"}
+
+    def run(self) -> None:
+        log("Starting AYN Odin 3 platform daemon...")
+        self.setup_socket()
+
+        # Apply initial profile settings
+        cur_prof = self.state.data.get("profile", "balanced")
+        self.power.apply(cur_prof)
+        self.leds.tick(self.state.data.get("rgb", {}))
+        self.fan.tick()
+
+        last_tick = time.monotonic()
+        while self.running:
+            try:
+                # Poll server socket for requests
+                r, _, _ = select.select([self.server_sock], [], [], 0.5)
+                if self.server_sock in r:
+                    conn, _ = self.server_sock.accept()
+                    self.handle_client(conn)
+
+                now = time.monotonic()
+                if now - last_tick >= self.config.poll_interval:
+                    self.fan.tick()
+                    self.leds.tick(self.state.data.get("rgb", {}))
+                    last_tick = now
+
+            except Exception as e:
+                log(f"loop exception: {e}")
+                time.sleep(1.0)
+
+
+def main():
+    if os.geteuid() != 0:
+        sys.exit("odin3d must run as root")
+    daemon = Odin3Daemon()
+    daemon.run()
+
+
+if __name__ == "__main__":
+    main()
