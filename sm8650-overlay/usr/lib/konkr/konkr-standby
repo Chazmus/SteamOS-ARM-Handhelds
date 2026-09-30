@@ -266,10 +266,15 @@ def main() -> int:
             wr(f"{pol}/scaling_min_freq", rd(f"{pol}/cpuinfo_min_freq"))
             saved[f"{pol}/scaling_max_freq"] = rd(f"{pol}/scaling_max_freq")
             wr(f"{pol}/scaling_max_freq", rd(f"{pol}/cpuinfo_min_freq"))
-        for cpu in big_cpus():
+        # SM8550: no CPU hotplug and no GPU clamp. Even with one big core kept
+        # online the RP6 still never woke up from standby (only a 10 s hold
+        # got it back, beta 7); the Adreno 740's GMU is the fragile part.
+        # Frozen apps + screen off + CPU clocks at minimum are enough there.
+        sm8550 = is_sm8550()
+        for cpu in ([] if sm8550 else big_cpus()):
             if wr_ok(f"/sys/devices/system/cpu/cpu{cpu}/online", 0):
                 offlined.append(cpu)
-        for gpu in glob.glob("/sys/class/devfreq/*gpu*"):
+        for gpu in ([] if sm8550 else glob.glob("/sys/class/devfreq/*gpu*")):
             saved[f"{gpu}/max_freq"] = rd(f"{gpu}/max_freq")
             freqs = sorted(int(f) for f in rd(f"{gpu}/available_frequencies").split() if f.isdigit())
             if freqs:
