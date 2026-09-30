@@ -324,6 +324,9 @@ ln -sfn ../steamos-arm-bootdebug-file.service \
 printf '[Service]\nExecStartPre=-/bin/mount -o remount,rw /boot\n' \
   >"$R/usr/lib/systemd/system/steamos-arm-bootdebug-file.service.d/10-odin3-boot-rw.conf"
 
+install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" \
+  "$R/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" 0644
+
 # Audio setup service
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
 cat <<'UNIT' >"$R/etc/systemd/system/sm8750-audio-setup.service"

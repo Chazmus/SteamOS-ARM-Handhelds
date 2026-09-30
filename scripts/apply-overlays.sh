@@ -352,6 +352,8 @@ install_file "$OVL/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" \
   "$R/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" 0644
 install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/99-sm8550-buffers.conf" \
   "$R/usr/share/pipewire/pipewire-pulse.conf.d/99-sm8550-buffers.conf" 0644
+install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" \
+  "$R/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" 0644
 install_file "$OVL/usr/lib/udev/rules.d/90-sm8550-audio.rules" \
   "$R/usr/lib/udev/rules.d/90-sm8550-audio.rules" 0644
 install_file "$OVL/etc/wireplumber/wireplumber.conf.d/99-sm8550-no-vr-spatial.conf" \
