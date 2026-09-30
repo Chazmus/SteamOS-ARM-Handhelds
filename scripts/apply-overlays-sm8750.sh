@@ -312,6 +312,18 @@ else
   rm -f "$R/usr/lib/environment.d/60-sm8750-zink.conf"
 fi
 
+# Boot logs to BOOT/debug-logs when BOOT has an empty "debug" file, same
+# collector as the 8 Gen 2/3 images. /boot is mounted read-only here, so
+# switch it to read-write first.
+install -D -m0755 "$MOD/kernel-common/initramfs/bootdebug" "$R/usr/lib/steamos-arm/bootdebug"
+install -D -m0644 "${ROOT}/sm8550-overlay/usr/lib/systemd/system/steamos-arm-bootdebug-file.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-bootdebug-file.service"
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants" "$R/usr/lib/systemd/system/steamos-arm-bootdebug-file.service.d"
+ln -sfn ../steamos-arm-bootdebug-file.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-bootdebug-file.service"
+printf '[Service]\nExecStartPre=-/bin/mount -o remount,rw /boot\n' \
+  >"$R/usr/lib/systemd/system/steamos-arm-bootdebug-file.service.d/10-odin3-boot-rw.conf"
+
 # Audio setup service
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
 cat <<'UNIT' >"$R/etc/systemd/system/sm8750-audio-setup.service"
