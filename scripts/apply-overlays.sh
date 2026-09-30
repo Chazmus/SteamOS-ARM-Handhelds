@@ -664,6 +664,9 @@ chmod 0644 "$R/usr/lib/udev/hwdb.d/10-ayaneo.hwdb"
 # so the 8 Gen 2 handhelds fell back to generic radio data; upstream has 67
 # and newer firmware (WLAN.HMT.1.1.c7). regdb.bin stays as it is. The 8 Gen 3
 # images keep the Frame's set, which is what the Pocket FIT was tuned on.
+# Off by default since beta 8: with it the Odin 2 (7.0.14 kernel) found no
+# networks at all. Beta 7's set (the Frame's files + ROCKNIX's board.bin)
+# worked, so that's what ships; WIFI_FW_UPSTREAM=1 brings this back.
 WIFI_FW_TAG=20260916
 WIFI_FW_CACHE="${WORKDIR}/kernel-sm8550/cache/lfw-ath12k-${WIFI_FW_TAG}/WCN7850/hw2.0"
 declare -A WIFI_FW_SHA=(
@@ -673,7 +676,7 @@ declare -A WIFI_FW_SHA=(
   [Notice.txt]=515bf4c9d620a87458e4447fe01a0e9bc384d1c3e0037cc4c3d2037b1ff25525
 )
 WIFI_FW_DST="$R/usr/lib/firmware/ath12k/WCN7850/hw2.0"
-if [[ "${SOC:-sm8650}" == sm8550 ]]; then
+if [[ "${SOC:-sm8650}" == sm8550 && "${WIFI_FW_UPSTREAM:-0}" == 1 ]]; then
   mkdir -p "$WIFI_FW_CACHE"
   for f in "${!WIFI_FW_SHA[@]}"; do
     if [[ ! -f "$WIFI_FW_CACHE/$f" ]] || ! echo "${WIFI_FW_SHA[$f]}  $WIFI_FW_CACHE/$f" | sha256sum -c --quiet 2>/dev/null; then
@@ -691,7 +694,7 @@ if [[ "${SOC:-sm8650}" == sm8550 ]]; then
   install -m0644 "$WIFI_FW_CACHE/Notice.txt" "$WIFI_FW_DST/Notice.txt"
   log "== Wi-Fi: upstream WCN7850 firmware ${WIFI_FW_TAG}"
 elif [[ -d "$STOCK/wcn7850-frame" ]]; then
-  # An 8 Gen 3 build on a rootfs that had the 8 Gen 2 set: put the Frame's back.
+  # The rootfs had the upstream set from an earlier build: put the Frame's back.
   for f in amss.bin m3.bin board-2.bin; do
     [[ -f "$STOCK/wcn7850-frame/$f" ]] && install -m0644 "$STOCK/wcn7850-frame/$f" "$WIFI_FW_DST/$f"
   done
