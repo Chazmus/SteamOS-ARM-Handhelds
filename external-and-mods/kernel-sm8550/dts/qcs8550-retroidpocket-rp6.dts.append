@@ -1,0 +1,22 @@
+
+/*
+ * SteamOS ARM additions for the Retroid Pocket 6 (appended to ROCKNIX's
+ * qcs8550-retroidpocket-rp6.dts by kernel-common/build.sh; the TOP-DPAD
+ * tree includes this one).
+ *
+ * ROCKNIX 20260901 moved the panel to the vtdr6130 driver, which asks for
+ * vdd/vddio/vci/vdd18/vdd28, while this tree only names vddio and avdd.
+ * Nothing claimed the 2.8 V rail, the fixed regulator switched it off at
+ * probe (GPIO 142 low), and the panel stayed black with Game Mode running
+ * (beta 8 7.2.8 test). Hand the rail to the driver as vdd28 and keep it on
+ * from the bootloader.
+ */
+&vdd_disp_2v8 {
+	regulator-boot-on;
+};
+
+&mdss_dsi0 {
+	panel@0 {
+		vdd28-supply = <&vdd_disp_2v8>;
+	};
+};
