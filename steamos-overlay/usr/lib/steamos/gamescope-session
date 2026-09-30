@@ -37,9 +37,11 @@ fi
 
 export XCURSOR_THEME="${XCURSOR_THEME:-steam}"
 
+# SM8550: GL through zink, else Xwayland has no glamor/GLX. mangoapp was
+# off here because it needs GLX; with zink it has it again (the mangoapp
+# wrapper leaves it on the image's own A740 Turnip).
 if grep -aq "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
   export MESA_LOADER_DRIVER_OVERRIDE=zink
-  export GAMESCOPE_MANGOAPP="${GAMESCOPE_MANGOAPP:-0}"
 fi
 
 # Performance overlay (mangoapp). mangoapp is GL; GL on the Frame image is

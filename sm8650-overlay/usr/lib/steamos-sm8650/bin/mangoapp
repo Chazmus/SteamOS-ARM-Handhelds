@@ -9,7 +9,12 @@
 # the Frame's own Turnip, pinned at image build. Games keep whatever Turnip
 # is installed system-wide.
 PINNED_ICD=/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json
-if [[ -r "$PINNED_ICD" ]]; then
+# The 8 Gen 2 image ships its own matched Mesa (zink + Turnip with A740
+# support), and the Frame's Turnip doesn't know the A740: no pin there.
+if grep -aq "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  PINNED_ICD=
+fi
+if [[ -n "$PINNED_ICD" && -r "$PINNED_ICD" ]]; then
   export VK_ICD_FILENAMES="$PINNED_ICD"
   export VK_DRIVER_FILES="$PINNED_ICD"
 fi
