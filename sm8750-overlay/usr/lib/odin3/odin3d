@@ -22,10 +22,13 @@ import configparser
 import glob
 import json
 import os
+import pwd
 import re
 import select
 import signal
 import socket
+import struct
+import subprocess
 import sys
 import time
 from typing import Any
@@ -474,6 +477,190 @@ class LedManager:
             self.set_color(color, bright)
 
 
+# ----------------------------------------------------------- power button ----
+KEY_POWER = 116
+LONG_PRESS_S = 1.0
+WAKE_GRACE_S = 2.0
+EV_KEY = 1
+INPUT_EVENT_STRUCT = struct.Struct("qqHHi")
+
+
+def steam_url(url: str) -> None:
+    """Send steam:// URL command to the running Steam instance as user steamos."""
+    try:
+        uid = pwd.getpwnam("steamos").pw_uid
+    except KeyError:
+        return
+    env = {
+        "HOME": "/home/steamos",
+        "USER": "steamos",
+        "DISPLAY": ":0",
+        "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+        "PATH": "/usr/bin:/bin",
+    }
+    subprocess.Popen(
+        ["runuser", "-u", "steamos", "--", "/usr/bin/steam", "-ifrunning", url],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def desktop_running() -> bool:
+    """Check if KDE Plasma desktop shell is currently running."""
+    return subprocess.run(["pgrep", "-x", "plasmashell"], stdout=subprocess.DEVNULL).returncode == 0
+
+
+def power_press(long: bool) -> None:
+    """Handle power button press according to current session mode (Game Mode vs Desktop)."""
+    if not desktop_running():
+        # Game Mode: forward to Steam's internal power press handlers
+        # Short press puts Steam Deck/handheld into sleep
+        # Long press displays Steam's Power overlay menu
+        steam_url("steam://longpowerpress" if long else "steam://shortpowerpress")
+        return
+
+    # Desktop Mode (Plasma):
+    if not long:
+        log("Power short press (Desktop): suspending system")
+        subprocess.Popen(["systemctl", "suspend"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+
+    log("Power long press (Desktop): triggering KDE logout/shutdown prompt")
+    try:
+        uid = pwd.getpwnam("steamos").pw_uid
+    except KeyError:
+        return
+    env = {
+        "HOME": "/home/steamos",
+        "USER": "steamos",
+        "PATH": "/usr/bin:/bin",
+        "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus",
+    }
+    subprocess.Popen(
+        ["runuser", "-u", "steamos", "--", "qdbus6", "org.kde.LogoutPrompt", "/LogoutPrompt", "org.kde.LogoutPrompt.promptShutDown"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+class PowerButtonManager:
+    """Monitors PMIC power key (/dev/input/event0) and dispatches short/long press events."""
+
+    def __init__(self):
+        self.fd: int | None = None
+        self.dev_path: str | None = None
+        self.last_boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        self.last_wake = 0.0
+        self.power_down_at: float | None = None
+        self.power_long_sent = False
+        self.last_scan = 0.0
+        self.open_device()
+
+    def find_device(self) -> str | None:
+        for ev in glob.glob("/sys/class/input/event*"):
+            try:
+                with open(f"{ev}/device/name", encoding="utf-8") as fh:
+                    if fh.read().strip() == "pmic_pwrkey":
+                        return f"/dev/input/{os.path.basename(ev)}"
+            except OSError:
+                pass
+        return None
+
+    def open_device(self) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+            self.dev_path = None
+
+        path = self.find_device()
+        if not path:
+            return
+
+        try:
+            self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            self.dev_path = path
+            log(f"Power button monitoring initialized on {path}")
+        except OSError as e:
+            log(f"Failed to open power device {path}: {e}")
+            self.fd = None
+
+    def get_fd(self) -> int | None:
+        if self.fd is None and (time.monotonic() - self.last_scan > 5.0):
+            self.last_scan = time.monotonic()
+            self.open_device()
+        return self.fd
+
+    def check_resume(self) -> None:
+        now_boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        # Select timeout is at most 0.5s. If CLOCK_BOOTTIME advanced by > 1.5s,
+        # the system woke from kernel suspend (s2idle).
+        if now_boot - self.last_boot > 1.5:
+            log(f"System resumed from sleep (slept {now_boot - self.last_boot:.1f}s)")
+            self.last_wake = now_boot
+            self.power_down_at = None
+            self.power_long_sent = False
+        self.last_boot = now_boot
+
+    def handle_events(self) -> None:
+        if self.fd is None:
+            return
+
+        now_boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        try:
+            data = os.read(self.fd, INPUT_EVENT_STRUCT.size * 32)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError as e:
+            log(f"Power device read error: {e}, reopening...")
+            self.open_device()
+            return
+
+        for off in range(0, len(data) - INPUT_EVENT_STRUCT.size + 1, INPUT_EVENT_STRUCT.size):
+            _, _, etype, code, value = INPUT_EVENT_STRUCT.unpack_from(data, off)
+            if etype == EV_KEY and code == KEY_POWER:
+                # Discard events occurring within the wake grace period
+                if now_boot - self.last_wake < WAKE_GRACE_S:
+                    log(f"Ignored power key event (val={value}) during resume grace period")
+                    self.power_down_at = None
+                    continue
+
+                if value == 1:
+                    # Key down
+                    self.power_down_at = time.monotonic()
+                    self.power_long_sent = False
+                elif self.power_down_at is not None:
+                    # Key up
+                    if not self.power_long_sent:
+                        log("Power short press detected")
+                        power_press(long=False)
+                    self.power_down_at = None
+
+    def check_hold(self) -> None:
+        """Check if the power button has been held long enough to trigger a long press."""
+        if self.power_down_at is not None and not self.power_long_sent:
+            if time.monotonic() - self.power_down_at >= LONG_PRESS_S:
+                log(f"Power long press (held >={LONG_PRESS_S}s) detected")
+                self.power_long_sent = True
+                power_press(long=True)
+
+    def is_holding(self) -> bool:
+        return self.power_down_at is not None
+
+    def cleanup(self) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+
 class Odin3Daemon:
     def __init__(self):
         self.config = Config()
@@ -482,6 +669,7 @@ class Odin3Daemon:
         self.fan = FanController(self.hw, self.config, self.state)
         self.power = PowerManager(self.config)
         self.leds = LedManager()
+        self.power_btn = PowerButtonManager()
         self.running = True
         self.server_sock: socket.socket | None = None
 
@@ -503,6 +691,7 @@ class Odin3Daemon:
     def cleanup(self):
         log("Cleaning up odin3d resources...")
         self.hw.set_failsafe()
+        self.power_btn.cleanup()
         if self.server_sock:
             try:
                 self.server_sock.close()
@@ -657,11 +846,28 @@ class Odin3Daemon:
         last_tick = time.monotonic()
         while self.running:
             try:
-                # Poll server socket for requests
-                r, _, _ = select.select([self.server_sock], [], [], 0.5)
+                self.power_btn.check_resume()
+
+                # Adjust select timeout: 0.1s if user is currently holding power button, else 0.5s
+                timeout = 0.1 if self.power_btn.is_holding() else 0.5
+
+                r_fds = [self.server_sock]
+                pwr_fd = self.power_btn.get_fd()
+                if pwr_fd is not None:
+                    r_fds.append(pwr_fd)
+
+                r, _, _ = select.select(r_fds, [], [], timeout)
+
+                self.power_btn.check_resume()
+
                 if self.server_sock in r:
                     conn, _ = self.server_sock.accept()
                     self.handle_client(conn)
+
+                if pwr_fd is not None and pwr_fd in r:
+                    self.power_btn.handle_events()
+
+                self.power_btn.check_hold()
 
                 now = time.monotonic()
                 if now - last_tick >= self.config.poll_interval:
