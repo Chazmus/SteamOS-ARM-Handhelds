@@ -694,7 +694,7 @@ elif [[ -d "$STOCK/wcn7850-frame" ]]; then
   rm -f "$WIFI_FW_DST/Notice.txt"
 fi
 
-# 8 Gen 2 image only (zram, cpuidle, UFS, backlight, mic): sm8550-image-overlay.
+# 8 Gen 2 image only (zram, cpuidle, UFS, backlight, mic, CPU pins): sm8550-image-overlay.
 # The rootfs is reused between builds, so an 8 Gen 3 build removes them again.
 IMG_OVL="${ROOT}/sm8550-image-overlay"
 mapfile -t _img_files < <(cd "$IMG_OVL" && find usr -type f)
