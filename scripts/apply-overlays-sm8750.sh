@@ -120,6 +120,16 @@ install_file "$OVL/usr/share/wayland-sessions/plasma.desktop" \
 install_file "$OVL/usr/lib/systemd/user/sm8550-plasma-env.service" \
   "$R/usr/lib/systemd/user/sm8550-plasma-env.service" 0644
 
+# System update hooks, same as the 8 Gen 2/3 images: this image has no A/B
+# partitions or RAUC payload, so Valve's steamos-update failed with "Update
+# error" in Steam (Odin 3 tester). Ours reports up to date.
+backup "$R/usr/bin/steamos-update" "$STOCK/usr/bin/steamos-update"
+install_file "$OVL/usr/bin/steamos-update" "$R/usr/bin/steamos-update" 0755
+install_file "$OVL/usr/bin/steamos-polkit-helpers/steamos-update" \
+  "$R/usr/bin/steamos-polkit-helpers/steamos-update" 0755
+install_file "$OVL/usr/bin/jupiter-initial-firmware-update" "$R/usr/bin/jupiter-initial-firmware-update" 0755
+install_file "$OVL/usr/bin/steamos-mandatory-update" "$R/usr/bin/steamos-mandatory-update" 0755
+
 # Clean handheld RUNSTEAM.sh (handheld flags only, no VR headset flags)
 backup "$R/usr/share/deckard/RUNSTEAM.sh" "$STOCK/usr/share/deckard/RUNSTEAM.sh"
 install_file "$OVL/usr/share/deckard/RUNSTEAM.sh" \
