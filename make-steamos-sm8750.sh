@@ -288,8 +288,8 @@ EOF
   sudo_run cp "${MNT}/boot/KERNEL" "${MNT}/boot/boot/KERNEL"
   sudo_run bash -c "cd '${MNT}/boot' && md5sum KERNEL | tee KERNEL.md5 boot/KERNEL.md5 >/dev/null"
   if [[ -f "${MOD}/kernel-sm8750/post-flash.sh" ]]; then
-    sudo_run cp "${MOD}/kernel-sm8750/post-flash.sh" "${MNT}/boot/post-flash.sh"
-    sudo_run cp "${MOD}/kernel-sm8750/post-flash.sh" "${MNT}/boot/boot/post-flash.sh"
+    sed "s/@ROOT_UUID@/${root_uuid}/" "${MOD}/kernel-sm8750/post-flash.sh" \
+      | sudo_run tee "${MNT}/boot/post-flash.sh" "${MNT}/boot/boot/post-flash.sh" >/dev/null
   fi
 
   log "Writing p2 root"
@@ -302,9 +302,9 @@ EOF
   log "Writing fstab for 3-partition layout"
   sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
 # SteamOS Odin 3 (SM8750) — SD card layout
-LABEL=root         /      ext4  defaults,noatime                               0 1
-LABEL=BOOT         /boot  vfat  ro,defaults,umask=0077,nofail                  0 2
-LABEL=home         /home  ext4  defaults,noatime,commit=30,x-systemd.growfs   0 2
+UUID=${root_uuid}  /      ext4  defaults,noatime                               0 1
+PARTUUID=${disk_id}-01  /boot  vfat  ro,defaults,umask=0077,nofail            0 2
+UUID=${home_uuid}  /home  ext4  defaults,noatime,commit=30,x-systemd.growfs   0 2
 EOF
 
   log "Writing p3 home"

@@ -9,8 +9,21 @@ echo "Locating and mounting SteamOS system (root)..." > /dev/console
 
 mkdir -p /sysroot
 
+# The image build puts this card's root filesystem UUID here, so another
+# install with a partition called "root" (UFS, a second card) can't get
+# picked. LABEL=root and p2 are only the fallback for a hand-made card.
+ROOT_UUID="@ROOT_UUID@"
 ROOT_DEV=""
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  case "$ROOT_UUID" in
+    @*) ;;
+    *) if mount -o rw "UUID=$ROOT_UUID" /sysroot 2>/dev/null; then
+         ROOT_DEV="UUID=$ROOT_UUID"
+         break
+       fi
+       usleep 500000
+       continue ;;
+  esac
   if mount -o rw LABEL=root /sysroot 2>/dev/null; then
     ROOT_DEV="LABEL=root"
     break
@@ -23,6 +36,11 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   done
   usleep 500000
 done
+
+if [ -z "$ROOT_DEV" ] && mount -o rw LABEL=root /sysroot 2>/dev/null; then
+  ROOT_DEV="LABEL=root"
+  echo "WARNING: UUID=$ROOT_UUID not found, using LABEL=root" > /dev/console
+fi
 
 if [ -z "$ROOT_DEV" ] || [ ! -f /sysroot/usr/lib/systemd/systemd ]; then
   echo "ERROR: Could not mount SteamOS root partition!" > /dev/console

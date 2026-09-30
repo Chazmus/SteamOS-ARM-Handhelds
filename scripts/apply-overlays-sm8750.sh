@@ -301,7 +301,31 @@ if [[ -s "$DECKY_LOADER" ]]; then
   ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service" 2>/dev/null || true
 fi
 
-# Steam client seed and desktop theme
+# Complete Steam ARM client in the image, same as the 8 Gen 2 / 8 Gen 3 builds.
+# Otherwise first boot unpacks ~2.5 GB of Steam on the SD card behind a black
+# screen and a 10 min service timeout. No complete client = no image.
+STEAM_HOME="$HOME_DST/.local/share/Steam"
+log "== complete Steam ARM client"
+mkdir -p "$STEAM_HOME"
+"${SCRIPT_DIR}/install-complete-steam-client.sh" "$STEAM_HOME" \
+  || die "complete Steam client installation failed"
+[[ -x "$STEAM_HOME/steamrtarm64/steam" && -s "$STEAM_HOME/steamrtarm64/steamui.so" ]] \
+  || die "Steam client in $STEAM_HOME is incomplete"
+if [[ -x "$R/usr/lib/steamos/sm8550-patch-steamui" && -d "$STEAM_HOME/steamui" ]]; then
+  "$R/usr/lib/steamos/sm8550-patch-steamui" "$STEAM_HOME/steamui" || true
+fi
+touch "$STEAM_HOME/.install-complete"
+install_file "$OVL/usr/share/deckard/RUNSTEAM.sh" "$STEAM_HOME/RUNSTEAM.sh" 0755
+if [[ -d "$STEAM_HOME/linuxarm64" && -d "$STEAM_HOME/steamrtarm64" ]]; then
+  for _lib in steamclient.so crashhandler.so steam-launch-wrapper; do
+    if [[ -s "$STEAM_HOME/steamrtarm64/${_lib}" && ! -s "$STEAM_HOME/linuxarm64/${_lib}" ]]; then
+      cp -f "$STEAM_HOME/steamrtarm64/${_lib}" "$STEAM_HOME/linuxarm64/${_lib}"
+    fi
+  done
+  unset _lib
+fi
+
+# Desktop theme
 if [[ -f "$R/etc/xdg/kdeglobals" ]]; then
   sed -i 's/^LookAndFeelPackage=.*/LookAndFeelPackage=com.valve.vapor.deck.desktop/' "$R/etc/xdg/kdeglobals"
 fi
