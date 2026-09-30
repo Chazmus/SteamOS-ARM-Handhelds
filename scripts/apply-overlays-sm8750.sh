@@ -402,6 +402,20 @@ fi
 # Ensure correct root and user permissions across /usr and /etc
 find "$R/usr" "$R/etc" -xdev \( -uid +999 -o -gid +999 \) -exec chown -h root:root {} + 2>/dev/null || true
 
+# Source permissions, same as apply-overlays.sh: a copy that went through
+# the exFAT HDD has 0700 dirs and 0700/0600 files. gamescope runs as steamos
+# and aborts on any display script it can't read; three came in as 0700
+# (legiongo2, onexplayer f1, zotac zone) and kept Game Mode black on the Odin 3.
+for d in usr/share usr/local/share usr/lib/steamos usr/lib/systemd/user usr/lib/environment.d \
+         etc/gamescope etc/inputplumber etc/sdl2; do
+  [[ -d "$R/$d" ]] || continue
+  find "$R/$d" -xdev \( -path '*/guestos' -o -path '*/factory/root' \) -prune -o \
+    -type d \( ! -perm -o=rx -o ! -perm -u=x \) -exec chmod u+rwx,go+rx {} + -o \
+    -type f ! -perm -o=r -exec chmod go+r {} +
+done
+bad="$(find "$R/usr/share/gamescope" "$R/etc/gamescope" -xdev -type f ! -perm -o=r 2>/dev/null | head -3)"
+[[ -z "$bad" ]] || die "gamescope scripts not readable: $bad"
+
 # macOS AppleDouble files (._name) from copying the tree through a Mac.
 # gamescope runs every .lua in its script folders, and ._inspect.lua made it
 # abort on start, over and over: the Odin 3 test 1/2 black screen.
