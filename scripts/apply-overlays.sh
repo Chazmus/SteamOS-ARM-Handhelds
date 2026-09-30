@@ -344,6 +344,8 @@ install_file "$OVL/usr/share/wireplumber/wireplumber.conf.d/51-sm8550-hifi-prior
   "$R/usr/share/wireplumber/wireplumber.conf.d/51-sm8550-hifi-priority.conf" 0644
 install_file "$OVL/usr/share/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" \
   "$R/usr/share/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" 0644
+install_file "$OVL/usr/share/wireplumber/wireplumber.conf.d/56-first-boot-volume.conf" \
+  "$R/usr/share/wireplumber/wireplumber.conf.d/56-first-boot-volume.conf" 0644
 install_file "$OVL/etc/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" \
   "$R/etc/wireplumber/wireplumber.conf.d/52-sm8550-alsa.conf" 0644
 install_file "$OVL/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" \
