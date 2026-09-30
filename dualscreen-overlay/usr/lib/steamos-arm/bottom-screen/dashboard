@@ -56,7 +56,7 @@ DEFAULT_CONFIG = {"pinned": [], "show_stats": True}
 
 # Which backlight is which panel (else: listed by name).
 BACKLIGHT_NAMES = {
-    "AYN Thor": {"ae94000.dsi.0": "Top screen", "ae96000.dsi.0": "Bottom screen"},
+    "AYN Thor": {"ae96000.dsi.0": "Top screen", "ae94000.dsi.0": "Bottom screen"},
     "AYANEO Pocket DS": {"ae94000.dsi.0": "Top screen", "sy7758-backlight": "Bottom screen"},
 }
 
@@ -478,6 +478,113 @@ def watch_home_gesture() -> None:
             show_dashboard()
 
 
+# ----------------------------------------------------------- idle nudge ----
+# Touches on the bottom panel go to this gamescope, not Steam's, so Steam sees
+# no input and dims (then sleeps) the device while you use the dashboard.
+# Watch the bottom touchscreen (no grab) and, at most every NUDGE_S, tap right
+# Shift on Steam's X display through XTEST, which Steam counts as input.
+NUDGE_S = 20
+EVENT_SIZE = 24  # struct input_event on 64-bit
+EV_KEY, EV_ABS = 1, 3
+XK_SHIFT_R = 0xFFE2
+
+
+def touch_event_nodes() -> list[str]:
+    """/dev/input/event* for the entries in GAMESCOPE_INPUT_ONLY (names, or
+    path:<part of the sysfs path>), the same list this gamescope uses."""
+    want = [w for w in os.environ.get("GAMESCOPE_INPUT_ONLY", "").split(",") if w and w != "none"]
+    out = []
+    for ev in glob.glob("/sys/class/input/event*"):
+        name = rd(f"{ev}/device/name")
+        syspath = os.path.realpath(f"{ev}/device")
+        for w in want:
+            if (w.startswith("path:") and w[5:] in syspath) or w == name:
+                out.append(f"/dev/input/{os.path.basename(ev)}")
+                break
+    return out
+
+
+def steam_display() -> str:
+    """DISPLAY of the running Steam client (Game Mode's Xwayland)."""
+    uid = os.getuid()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or rd(f"/proc/{pid}/comm") != "steam":
+            continue
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != uid:
+                continue
+            env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        for e in env:
+            if e.startswith(b"DISPLAY="):
+                return e[8:].decode()
+    return ":0"
+
+
+def nudge_steam() -> None:
+    import ctypes
+    try:
+        x11 = ctypes.CDLL("libX11.so.6")
+        xtst = ctypes.CDLL("libXtst.so.6")
+    except OSError as err:
+        log(f"idle nudge: {err}")
+        return
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    x11.XFlush.argtypes = x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+    dpy = x11.XOpenDisplay(steam_display().encode())
+    if not dpy:
+        return
+    try:
+        code = x11.XKeysymToKeycode(dpy, XK_SHIFT_R)
+        if code:
+            xtst.XTestFakeKeyEvent(dpy, code, 1, 0)
+            xtst.XTestFakeKeyEvent(dpy, code, 0, 0)
+            x11.XFlush(dpy)
+    finally:
+        x11.XCloseDisplay(dpy)
+
+
+def watch_touch_activity() -> None:
+    import select
+    fds: dict[int, str] = {}
+    last_nudge = -NUDGE_S
+    while True:
+        if not fds:
+            for node in touch_event_nodes():
+                try:
+                    fds[os.open(node, os.O_RDONLY | os.O_NONBLOCK)] = node
+                except OSError:
+                    pass
+            if not fds:
+                time.sleep(10)
+                continue
+            log(f"idle nudge: watching {', '.join(fds.values())}")
+        touched = False
+        for fd in select.select(list(fds), [], [], 5.0)[0]:
+            try:
+                data = os.read(fd, EVENT_SIZE * 64)
+            except BlockingIOError:
+                continue
+            except OSError:
+                os.close(fd)
+                del fds[fd]
+                continue
+            # type is the u16 right after the 16-byte timestamp
+            touched = touched or any(
+                int.from_bytes(data[o + 16:o + 18], sys.byteorder) in (EV_KEY, EV_ABS)
+                for o in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE))
+        if touched and time.monotonic() - last_nudge >= NUDGE_S:
+            last_nudge = time.monotonic()
+            try:
+                nudge_steam()
+            except Exception as err:  # never take the dashboard down for this
+                log(f"idle nudge failed: {err}")
+
+
 # ------------------------------------------------------------------ http ----
 TOKEN = secrets.token_hex(16)
 APPS = Apps()
@@ -587,6 +694,7 @@ def main() -> int:
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=watch_home_gesture, daemon=True).start()
+    threading.Thread(target=watch_touch_activity, daemon=True).start()
     log(f"api on 127.0.0.1:{port}, model {MODEL!r}")
     # The UI reads the API address + token from a private file (argv and the
     # environment are readable by other users through /proc).
