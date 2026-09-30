@@ -208,6 +208,20 @@ for m in "$repo"/external-and-mods/kernel-sm8550/extra-modules/*/; do
     echo "extra module: $(basename "$ko")"
   done
 done
+# qcom_battmgr with our charge unit / CHARGE_NOW fix (kernel-sm8550/patches/
+# 0006): without it charge_full reads "no data" and there is no charge_now,
+# so nothing can work out the time left and Steam shows "?h ?m". Built the
+# same way and put over the stock module.
+bm="$work/extra-qcom_battmgr"; rm -rf "$bm"; mkdir -p "$bm"
+cp "$ksrc/drivers/power/supply/qcom_battmgr.c" "$bm/"
+patch -s -d "$bm" -p4 <"$repo/external-and-mods/kernel-sm8550/patches/0006-power-supply-qcom-battmgr-charge-now.patch"
+echo "obj-m += qcom_battmgr.o" >"$bm/Makefile"
+make -s -C "$ksrc" M="$bm" KBUILD_MODPOST_WARN=1 modules 2>/dev/null
+strip --strip-debug "$bm/qcom_battmgr.ko"
+bm_dst="$(find "$out/modules/$krel/kernel" -name qcom_battmgr.ko | head -1)"
+[[ -n "$bm_dst" ]] || { echo "qcom_battmgr.ko not in $krel" >&2; exit 1; }
+install -m0644 "$bm/qcom_battmgr.ko" "$bm_dst"
+echo "patched module: qcom_battmgr.ko"
 mkdir -p "$work/dm/lib" && ln -sfn "$out/modules" "$work/dm/lib/modules"
 depmod -b "$work/dm" "$krel"
 chown -R -h root:root "$out"
