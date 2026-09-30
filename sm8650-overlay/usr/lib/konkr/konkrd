@@ -196,6 +196,10 @@ def curve_pwm(curve, temp: float) -> int:
 
 FIXED_OVERRIDE_ON_C = 90
 FIXED_OVERRIDE_OFF_C = 82
+# Standby (konkr-standby, screen off): fan off while the SoC is below this.
+# The curves never go under their lowest point (35/255 on balanced), so the
+# fan kept spinning all night in standby and drained the battery (Pocket S2).
+STANDBY_FAN_OFF_C = 60
 
 
 class Fan:
@@ -214,7 +218,7 @@ class Fan:
         elif self.dir is None:
             log("fan: no pwmfan hwmon found")
 
-    def tick(self, profile: str, fan: dict | None = None) -> None:
+    def tick(self, profile: str, fan: dict | None = None, standby: bool = False) -> None:
         if not self.enabled:
             return
         fan = fan or {}
@@ -224,6 +228,14 @@ class Fan:
             wr(f"{self.dir}/pwm1", 255)
             self.cur = 255
             self.smooth = None
+            return
+        if standby and raw < STANDBY_FAN_OFF_C:
+            if self.cur != 0 and wr(f"{self.dir}/pwm1", 0):
+                log(f"fan: standby, {raw:.0f} C -> off")
+                self.cur = 0
+            # the curve picks up from here on wake (going up is immediate)
+            self.smooth = raw
+            self.set_temp = raw
             return
         # Safety: never hold a low fixed speed when hot. Latched with
         # hysteresis: under load the SoC sits right at 90 °C, and flipping
@@ -1010,7 +1022,7 @@ class Daemon:
             if now >= next_slow:
                 next_slow = now + 1.0
                 p = self.st["profile"]
-                self.fan.tick(p, self.st.get("fan"))
+                self.fan.tick(p, self.st.get("fan"), os.path.exists(STANDBY_FLAG))
                 self.leds.tick(self.st.get("power_led", True))
                 self.games.tick(p)
 
