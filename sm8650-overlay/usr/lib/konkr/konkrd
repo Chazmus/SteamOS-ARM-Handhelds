@@ -289,6 +289,15 @@ class Fan:
             wr(f"{self.dir}/pwm1", self.failsafe)
 
 
+def shutting_down() -> bool:
+    try:
+        r = subprocess.run(["systemctl", "is-system-running"], capture_output=True,
+                           text=True, timeout=2)
+        return r.stdout.strip() == "stopping"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 # ------------------------------------------------------------------ gpu ----
 def gpu_devfreq() -> str | None:
     for d in glob.glob("/sys/class/devfreq/*"):
@@ -899,6 +908,12 @@ class Daemon:
         ensure_gamepad_mode(self.conf)
 
     def stop(self, *_):
+        # On shutdown the device is off a few seconds later: the failsafe only
+        # ran the fan at full for that long (an RP6 tester heard it on every
+        # power off). Keep it for restarts and crashes.
+        if shutting_down():
+            log("stopped (shutdown, fan left as is)")
+            sys.exit(0)
         self.fan.failsafe_now()
         log("stopped (fan at failsafe)")
         sys.exit(0)

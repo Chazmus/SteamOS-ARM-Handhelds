@@ -7,8 +7,9 @@ Wants=inputplumber.service
 [Service]
 Type=simple
 ExecStart=/usr/lib/konkr/konkrd
-# Never leave the fan at a low fixed speed if the daemon goes away.
-ExecStopPost=/bin/sh -c 'for d in /sys/class/hwmon/hwmon*; do case "$(cat $d/name 2>/dev/null)" in pwmfan|nx669j_fan) echo 255 > $d/pwm1;; esac; done; true'
+# Never leave the fan at a low fixed speed if the daemon goes away (not on
+# shutdown, the device is off right after).
+ExecStopPost=/bin/sh -c '[ "$(systemctl is-system-running 2>/dev/null)" = stopping ] && exit 0; for d in /sys/class/hwmon/hwmon*; do case "$(cat $d/name 2>/dev/null)" in pwmfan|nx669j_fan) echo 255 > $d/pwm1;; esac; done; true'
 Restart=always
 RestartSec=2
 Nice=-5
