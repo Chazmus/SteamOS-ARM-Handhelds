@@ -137,30 +137,31 @@ for b in dtbs:
         out.append(b); continue
     with tempfile.TemporaryDirectory() as td:
         open(f"{td}/in.dtb", "wb").write(b)
-        dts = subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", f"{td}/in.dtb"], check=True, capture_output=True, text=True).stdout
-        new, dropped = [], 0
-        in_ts = 0
+        dec = lambda f: subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", f], check=True, capture_output=True, text=True).stdout
+        dts = dec(f"{td}/in.dtb")
+        # Find the touchscreen nodes' paths from the decompiled tree, then
+        # delete the flags in the binary with fdtput. No dts -> dtb compile:
+        # dtc prints some u32s as strings ("\0" "2K" for vreg_bob1's 3296000)
+        # and reads them back wrong ("\02K" -> 02 4b 00). That broke the
+        # main regulator in beta 8 and the RP6 and Thor stopped booting.
+        stack, edits = [], []
         for line in dts.splitlines():
-            if re.match(r"\s*touchscreen@[0-9a-f]+ \{", line):
-                in_ts = 1
-            elif in_ts and line.strip() == "};":
-                in_ts = 0
-            if in_ts and line.strip() in DROP:
-                dropped += 1; continue
-            new.append(line)
-        open(f"{td}/out.dts", "w").write("\n".join(new) + "\n")
-        subprocess.run(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", f"{td}/out.dtb", f"{td}/out.dts"], check=True)
-        nb = open(f"{td}/out.dtb", "rb").read()
-        # Only those lines may differ: round-trip the untouched tree the same
-        # way (dtc prints some byte strings differently the second time).
-        def rt(dts_text, name):
-            open(f"{td}/{name}.dts", "w").write(dts_text)
-            subprocess.run(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", f"{td}/{name}.dtb", f"{td}/{name}.dts"], check=True)
-            return subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", f"{td}/{name}.dtb"], check=True, capture_output=True, text=True).stdout.splitlines()
-        before, after = rt(dts, "orig"), rt("\n".join(new) + "\n", "check")
+            m = re.match(r"\s*(?:[\w-]+:\s*)?([^\s{]+) \{$", line)
+            if m:
+                stack.append("" if m.group(1) == "/" else m.group(1)); continue
+            if line.strip() == "};":
+                stack.pop(); continue
+            if stack and stack[-1].startswith("touchscreen@") and line.strip() in DROP:
+                edits.append(("/".join(stack) or "/", line.strip()[:-1]))
+        for node, prop in edits:
+            subprocess.run(["fdtput", "-d", f"{td}/in.dtb", node, prop], check=True)
+        dropped = len(edits)
+        nb = open(f"{td}/in.dtb", "rb").read()
+        # Straight decompile of both binaries: only the dropped lines may differ.
+        before, after = dts.splitlines(), dec(f"{td}/in.dtb").splitlines()
         gone = [l for l in before if l not in after]
         assert len(before) - len(after) == dropped and all(l.strip() in DROP for l in gone), \
-            "dtb round trip changed more than the touch flags"
+            "dtb edit changed more than the touch flags"
     print(f"touch fixup: {', '.join(x.decode() for x in names)}: dropped {dropped} flags")
     out.append(nb)
 assert sum(map(len, dtbs)) == len(rest), "unexpected data between the DTBs"
