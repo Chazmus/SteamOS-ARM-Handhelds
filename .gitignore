@@ -95,3 +95,7 @@ _agent_*
 
 # Decky loader binary (downloaded by apply-overlays)
 /external-and-mods/Decky/loader/
+
+# Allow overlay usr/bin scripts to be tracked despite user global gitignore
+!*overlay/usr/bin/
+!*overlay/usr/bin/**
