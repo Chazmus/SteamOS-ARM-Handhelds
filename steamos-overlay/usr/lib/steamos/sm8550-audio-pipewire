@@ -64,6 +64,15 @@ set_default() {
   log "default sink ${sink}"
   pactl_ok set-default-sink "$sink"
   pactl_ok set-sink-mute "$sink" 0
+  # First boot: 25% instead of full volume (Steam's boot sound was at 100%).
+  # The pro-audio outputs have no routes, so WirePlumber's
+  # device.routes.default-sink-volume never reaches them. Once per output;
+  # after that the user's own volume stays as it is.
+  local mark="${XDG_STATE_HOME:-$HOME/.local/state}/steamos-arm/first-volume-${sink//[^A-Za-z0-9._-]/_}"
+  if [[ ! -e "$mark" ]]; then
+    pactl_ok set-sink-volume "$sink" 25% && mkdir -p "${mark%/*}" && : >"$mark" \
+      && log "first boot: ${sink} at 25%"
+  fi
   while read -r idx; do
     [[ -n "${idx:-}" ]] || continue
     pactl_ok move-sink-input "$idx" "$sink"
