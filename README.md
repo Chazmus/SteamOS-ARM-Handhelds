@@ -7,7 +7,7 @@ This is Valve's official SteamOS for ARM, the build they made for the Steam Fram
 | Chip | Devices | Status |
 |---|---|---|
 | Snapdragon 8 Gen 3 (SM8650) | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | stable ([v1.2](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/releases/tag/v1.2)) |
-| Snapdragon 8 Gen 2 (SM8550) | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova | pre-release beta [v1.3 beta 7](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/releases/tag/v1.3-beta7) |
+| Snapdragon 8 Gen 2 (SM8550) | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova | pre-release beta [v1.3 beta 8](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/releases/tag/v1.3-beta8) |
 | Snapdragon 8 Elite (SM8750) | AYN Odin 3 | initial support ([docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md)) |
 
 There's one image per chip and you pick your device in the ABL menu, the system figures out the rest. More chips will come later.
