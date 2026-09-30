@@ -208,13 +208,15 @@ for m in "$repo"/external-and-mods/kernel-sm8550/extra-modules/*/; do
     echo "extra module: $(basename "$ko")"
   done
 done
-# qcom_battmgr with our charge unit / CHARGE_NOW fix (kernel-sm8550/patches/
-# 0006): without it charge_full reads "no data" and there is no charge_now,
+# qcom_battmgr with our battery fixes (kernel-sm8550/patches/*qcom-battmgr*:
+# charge unit / CHARGE_NOW, steady discharge current): without it charge_full reads "no data" and there is no charge_now,
 # so nothing can work out the time left and Steam shows "?h ?m". Built the
 # same way and put over the stock module.
 bm="$work/extra-qcom_battmgr"; rm -rf "$bm"; mkdir -p "$bm"
 cp "$ksrc/drivers/power/supply/qcom_battmgr.c" "$bm/"
-patch -s -d "$bm" -p4 <"$repo/external-and-mods/kernel-sm8550/patches/0006-power-supply-qcom-battmgr-charge-now.patch"
+for bp in "$repo"/external-and-mods/kernel-sm8550/patches/*qcom-battmgr*.patch; do
+  patch -s -d "$bm" -p4 <"$bp"
+done
 echo "obj-m += qcom_battmgr.o" >"$bm/Makefile"
 make -s -C "$ksrc" M="$bm" KBUILD_MODPOST_WARN=1 modules 2>/dev/null
 strip --strip-debug "$bm/qcom_battmgr.ko"
