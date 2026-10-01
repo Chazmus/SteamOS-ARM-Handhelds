@@ -399,7 +399,10 @@ log "== home/steamos setup"
 HOME_DST="${STEAMOS_HOME:-$R/home/steamos}"
 mkdir -p "$HOME_DST/.cache" "$HOME_DST/.config" "$HOME_DST/homebrew/services"
 
-DECKY_VERSION=v3.2.9
+# v3.2.9's bundled Python is missing http.server, socketserver and
+# configparser, so plugin backends that import them die at startup
+# (SteamGridDB). Fixed in v3.2.10 (decky-loader #968/#970).
+DECKY_VERSION=v3.2.10-pre1
 DECKY_LOADER="${MOD}/Decky/loader/PluginLoader-${DECKY_VERSION}"
 if [[ ! -s "$DECKY_LOADER" ]]; then
   mkdir -p "${DECKY_LOADER%/*}"
