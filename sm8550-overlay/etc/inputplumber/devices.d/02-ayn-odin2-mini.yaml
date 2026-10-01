@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# AYN Odin 2 Mini: same as 02-ayn-odin.yaml, with its own button map
+# (ayn_mini_mcu): its A/B come in the other way round from the Odin 2.
+version: 1
+kind: CompositeDevice
+name: AYN Odin 2 Mini
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYN Odin 2 Mini
+
+single_source: false
+
+source_devices:
+  - group: gamepad
+    evdev:
+      phys_path: rsinput-gamepad/input0
+      handler: event*
+    capability_map_id: ayn_mini_mcu
+    passthrough: false
+
+options:
+  auto_manage: true
+
+target_devices:
+  - deck-uhid
+  - keyboard
