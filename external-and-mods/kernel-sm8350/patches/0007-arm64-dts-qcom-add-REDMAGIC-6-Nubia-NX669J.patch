@@ -26,7 +26,7 @@ new file mode 100644
 index 0000000..15a5d96
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8350-nubia-nx669j.dts
-@@ -0,0 +1,1179 @@
+@@ -0,0 +1,1196 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * REDMAGIC 6 (Nubia NX669J), Snapdragon 888 (SM8350).
@@ -317,16 +317,22 @@ index 0000000..15a5d96
 +			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +		};
 +
++		/*
++		 * WCN6855 rails (s11, s12, pm8350c s1, pmr735a s2): the floors are the
++		 * voltages the stock DT asks for with BT/WLAN on (s11 rounded down to
++		 * its 8 mV grid). pwrseq-qcom-wcn only enables them, so without the
++		 * floors they sit at their minimum. See also pmr735a s3 (BT iPA).
++		 */
 +		pm8350_s11: smps11 {
 +			regulator-name = "pm8350_s11";
-+			regulator-min-microvolt = <752000>;
++			regulator-min-microvolt = <1008000>;
 +			regulator-max-microvolt = <1012000>;
 +			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +		};
 +
 +		pm8350_s12: smps12 {
 +			regulator-name = "pm8350_s12";
-+			regulator-min-microvolt = <1224000>;
++			regulator-min-microvolt = <1352000>;
 +			regulator-max-microvolt = <1360000>;
 +			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +		};
@@ -423,7 +429,7 @@ index 0000000..15a5d96
 +
 +		pm8350c_s1: smps1 {
 +			regulator-name = "pm8350c_s1";
-+			regulator-min-microvolt = <1800000>;
++			regulator-min-microvolt = <1904000>;
 +			regulator-max-microvolt = <1952000>;
 +			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +		};
@@ -572,14 +578,24 @@ index 0000000..15a5d96
 +		/* WCN6855 AON / PMU MX (qcom,vdd-wlan-aon-config 1.012 V) */
 +		pmr735a_s2: smps2 {
 +			regulator-name = "pmr735a_s2";
-+			regulator-min-microvolt = <500000>;
++			regulator-min-microvolt = <1012000>;
 +			regulator-max-microvolt = <1020000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +		};
 +
++		/*
++		 * 2.2 V for the WCN6855 Bluetooth internal PA: the NVM says iPA, and
++		 * Android's HAL turns this on before the download ("enable 2.2v power
++		 * supply for iPA", btpower qcom,tcs_offset_ipa). Off, or in a low-power
++		 * mode, BR/EDR links die ~100 ms in once TX power steps up, so classic
++		 * pads (GameSir X5s) never pair; LE still works.
++		 */
 +		pmr735a_s3: smps3 {
 +			regulator-name = "pmr735a_s3";
 +			regulator-min-microvolt = <2200000>;
 +			regulator-max-microvolt = <2352000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-always-on;
 +		};
 +
 +		pmr735a_l1: ldo1 {
@@ -620,6 +636,7 @@ index 0000000..15a5d96
 +			regulator-name = "pmr735a_l7";
 +			regulator-min-microvolt = <2800000>;
 +			regulator-max-microvolt = <2800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +			regulator-always-on;
 +		};
 +	};
