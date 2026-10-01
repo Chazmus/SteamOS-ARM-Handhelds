@@ -387,9 +387,9 @@ ln -sfn /usr/lib/systemd/system/odin3d.service \
   "$R/etc/systemd/system/multi-user.target.wants/odin3d.service"
 
 # Permissions
-find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
+find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/KONKR" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
   -type d -exec chmod 0755 {} + 2>/dev/null || true
-find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
+find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/KONKR" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
   -type f -exec chmod 0644 {} + 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
