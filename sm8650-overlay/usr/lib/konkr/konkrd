@@ -306,6 +306,13 @@ def gpu_devfreq() -> str | None:
     return None
 
 
+def is_sm8550() -> bool:
+    try:
+        return b"qcom,sm8550" in open("/proc/device-tree/compatible", "rb").read()
+    except OSError:
+        return False
+
+
 def apply_gpu(profile: str) -> None:
     d = gpu_devfreq()
     if not d:
@@ -320,7 +327,10 @@ def apply_gpu(profile: str) -> None:
     wr(f"{d}/max_freq", freqs[-1])
     wr(f"{d}/min_freq", fmin)
     wr(f"{d}/max_freq", fmax)
-    wr(f"{d}/polling_interval", 16)
+    # 16 ms polling is tuned for the 8 Gen 3. On the 8 Gen 2 it cost about
+    # 20% of the 1% lows (measured on an RP6), so it keeps the default there.
+    if not is_sm8550():
+        wr(f"{d}/polling_interval", 16)
 
 
 def apply_cpu(profile: str) -> None:
