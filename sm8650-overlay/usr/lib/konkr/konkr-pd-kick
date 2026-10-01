@@ -1,0 +1,34 @@
+#!/bin/bash
+# A charger that's already plugged in at boot stays on plain 5 V USB: the
+# ADSP charger firmware comes up a few seconds into boot and never redoes the
+# USB Power Delivery handshake, so a PD charger charges at ~7 W until it's
+# replugged (Pocket FIT, 12 h instead of 2 h to full). If a charger is online
+# with no PD partner and ~5 V, send UCSI CONNECTOR_RESET (hard reset), which
+# is what replugging does. Tried twice, then left alone.
+set -u
+P=/sys/class/power_supply/qcom-battmgr-usb
+CMD=/sys/kernel/debug/usb/ucsi/pmic_glink.ucsi.0/command
+log() { echo "konkr-pd-kick: $*"; }
+
+[[ -r "$P/online" ]] || exit 0
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+
+stuck() {
+  [[ "$(cat "$P/online" 2>/dev/null)" == 1 ]] || return 1
+  [[ -d /sys/class/typec/port0-partner ]] && return 1
+  # Below 6 V: nothing negotiated a PD contract.
+  (( $(cat "$P/voltage_now" 2>/dev/null || echo 0) < 6000000 ))
+}
+
+# Give the charger firmware and UCSI time to settle after boot.
+sleep 15
+for try in 1 2; do
+  stuck || { log "charger fine (or not connected)"; exit 0; }
+  [[ -w "$CMD" ]] || { log "no UCSI debugfs, can't reset"; exit 0; }
+  log "charger on 5 V without PD, resetting the connector (try $try)"
+  # CONNECTOR_RESET (0x03), connector 1 (bits 16+), hard reset (bit 23)
+  echo 0x810003 > "$CMD" 2>/dev/null
+  sleep 10
+done
+stuck && log "still no PD after 2 resets" || log "PD negotiated"
+exit 0
