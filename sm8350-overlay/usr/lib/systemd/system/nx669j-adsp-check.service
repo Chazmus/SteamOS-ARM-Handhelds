@@ -1,0 +1,13 @@
+# REDMAGIC 6: restart the ADSP if it booted without its audio and charger
+# services (no sound, battery at 0%).
+[Unit]
+Description=REDMAGIC 6 ADSP health check (sound card, battery)
+ConditionFirmware=device-tree-compatible(nubia,nx669j)
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /usr/lib/steamos-arm/nx669j-adsp-check
+
+[Install]
+WantedBy=multi-user.target

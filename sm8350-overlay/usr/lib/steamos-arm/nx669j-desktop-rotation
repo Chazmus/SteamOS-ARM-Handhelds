@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""REDMAGIC 6: turn the desktop layout upside down, like Game Mode.
+
+Game Mode runs the panel the other way up from the DT's panel orientation
+(environment.d/60-redmagic6-gamescope.conf). desktop-outputs takes the KWin
+transform from that orientation (left-up -> Rotated90), so the desktop would
+come out the other way round. This turns what desktop-outputs wrote by 180
+degrees and updates its stamp, so it keeps managing the file. A layout the
+user changed in System Settings is left alone.
+"""
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+HOME = Path(os.environ.get("HOME", "/home/steamos"))
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
+KWIN_OUTPUTS = CONFIG / "kwinoutputconfig.json"
+STAMP = CONFIG / "steamos-arm" / "desktop-outputs.sha256"
+FLIPPED = CONFIG / "steamos-arm" / "nx669j-rotation.sha256"
+
+FLIP = {"Normal": "Rotated180", "Rotated180": "Normal",
+        "Rotated90": "Rotated270", "Rotated270": "Rotated90"}
+
+
+def log(msg: str) -> None:
+    print(f"nx669j-desktop-rotation: {msg}", file=sys.stderr, flush=True)
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+
+
+def read(path: Path) -> str:
+    return path.read_text().strip() if path.exists() else ""
+
+
+def main() -> int:
+    try:
+        model = Path("/sys/firmware/devicetree/base/model").read_text()
+    except OSError:
+        return 0
+    if "REDMAGIC 6" not in model:
+        return 0
+    current = digest(KWIN_OUTPUTS)
+    if not current or current == read(FLIPPED):
+        return 0                      # nothing written, or already turned
+    if current != read(STAMP):
+        return 0                      # not desktop-outputs' file: the user's
+    data = json.loads(KWIN_OUTPUTS.read_text())
+    turned = []
+    for group in data:
+        if group.get("name") != "outputs":
+            continue
+        for out in group["data"]:
+            if out.get("connectorName") == "DSI-1" and out.get("transform") in FLIP:
+                out["transform"] = FLIP[out["transform"]]
+                turned.append(out["transform"])
+    if not turned:
+        return 0
+    tmp = KWIN_OUTPUTS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=4) + "\n")
+    os.replace(tmp, KWIN_OUTPUTS)
+    STAMP.write_text(digest(KWIN_OUTPUTS) + "\n")
+    FLIPPED.write_text(digest(KWIN_OUTPUTS) + "\n")
+    log("DSI-1 " + turned[0])
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:          # never block Plasma from starting
+        log(f"failed: {exc}")
+        sys.exit(0)

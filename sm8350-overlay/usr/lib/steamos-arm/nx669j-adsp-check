@@ -1,0 +1,56 @@
+#!/bin/bash
+# REDMAGIC 6: restart the ADSP when it comes up without its services.
+#
+# Now and then the ADSP boots but never brings up its audio and charger
+# protection domains: the sound card stays deferred ("MultiMedia1: error
+# getting cpu dai name", no sound) and qcom-battmgr answers EAGAIN (UPower
+# and Steam show 0%). Restarting the remoteproc brings both back. Healthy,
+# both are up within a second or two of the ADSP starting.
+set -u
+
+BAT=/sys/class/power_supply/qcom-battmgr-bat/capacity
+WAIT=25
+
+log() { echo "nx669j-adsp-check: $*"; }
+
+adsp() {
+  local r
+  for r in /sys/class/remoteproc/remoteproc*; do
+    [[ "$(cat "$r/name" 2>/dev/null)" == adsp ]] && { echo "$r"; return 0; }
+  done
+  return 1
+}
+
+healthy() {
+  cat "$BAT" >/dev/null 2>&1 && grep -q 'REDMAGIC 6' /proc/asound/cards 2>/dev/null
+}
+
+wait_healthy() {
+  local i
+  for ((i = 0; i < WAIT * 2; i++)); do
+    healthy && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+for _ in $(seq 60); do adsp >/dev/null && break; sleep 0.5; done
+rp="$(adsp)" || { log "no ADSP remoteproc"; exit 0; }
+
+wait_healthy && exit 0
+for attempt in 1 2; do
+  bat=down; cat "$BAT" >/dev/null 2>&1 && bat=up
+  snd=missing; grep -q 'REDMAGIC 6' /proc/asound/cards 2>/dev/null && snd=up
+  log "battery ${bat}, sound card ${snd}: restarting the ADSP (${attempt})"
+  echo stop >"$rp/state" 2>/dev/null
+  sleep 2
+  echo start >"$rp/state" 2>/dev/null
+  if wait_healthy; then
+    log "ADSP services up"
+    # UPower read the battery while it was down; let it start over.
+    systemctl try-restart upower.service
+    exit 0
+  fi
+done
+log "ADSP services still missing"
+exit 0

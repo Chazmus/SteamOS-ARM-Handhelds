@@ -1,0 +1,19 @@
+#!/bin/bash
+# REDMAGIC 6 Bluetooth power-on, in place of sm8550-bluetooth-setup's
+# (see sm8550-bluetooth-setup.service.d/10-nx669j.conf).
+#
+# Only through bluetoothd (mgmt), never `hciconfig hci0 up`: the legacy
+# ioctl clears HCI_AUTO_OFF behind mgmt's back, so the kernel never
+# registers the SMP channels and LE pads fail to pair ("security requested
+# but not available", HOG refused) until the adapter is power-cycled.
+# bluetoothctl segfaults here without a terminal; use busctl.
+set -u
+modprobe -q bluetooth btqca hci_uart 2>/dev/null || true
+rfkill unblock bluetooth wifi 2>/dev/null || true
+for _ in $(seq 30); do
+  busctl set-property org.bluez /org/bluez/hci0 org.bluez.Adapter1 \
+    Powered b true 2>/dev/null && exit 0
+  sleep 0.5
+done
+echo "nx669j-bt-power: bluetoothd has no hci0" >&2
+exit 0
