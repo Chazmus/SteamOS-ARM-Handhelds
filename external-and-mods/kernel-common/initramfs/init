@@ -145,6 +145,17 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
       exec sh
     fi
   fi
+  # SteamOS's /etc overlay. SteamOS mounts it from its own initramfs; with
+  # ours, systemd's etc.mount did it a moment after systemd had read its
+  # units from the bare /etc, so services enabled on the device (sshd, ...)
+  # never started at boot. systemd adopts the existing mount.
+  o=/newroot/var/lib/overlays/etc
+  if [ -d "$o" ] && ! grep -q " /newroot/etc " /proc/mounts; then
+    mkdir -p "$o/upper" "$o/work"
+    mount -t overlay overlay \
+      -o "lowerdir=/newroot/etc,upperdir=$o/upper,workdir=$o/work" /newroot/etc ||
+      echo "etc overlay failed, leaving it to etc.mount"
+  fi
   if [ "$debug" = 1 ]; then
     # Log collector (see bootdebug), only for this boot's root.
     d=/newroot/usr/lib/steamos-arm
