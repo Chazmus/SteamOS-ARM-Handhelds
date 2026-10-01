@@ -1,7 +1,9 @@
 [Unit]
 Description=SteamDeck Plugin Loader
 After=network-online.target systemd-binfmt.service local-fs.target home.mount
-Wants=systemd-binfmt.service
+# Wants too, or After alone doesn't wait: plugins that fetch at startup
+# (Animation Changer, SteamGridDB) failed with name resolution errors.
+Wants=network-online.target systemd-binfmt.service
 
 [Service]
 Type=simple
