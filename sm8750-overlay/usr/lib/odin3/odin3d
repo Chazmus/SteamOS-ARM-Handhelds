@@ -431,10 +431,22 @@ class PowerManager:
             wr(f"{gpu_dir}/min_freq", floor)
 
 
+# KONKR Pocket FIT Elite: one multicolor LED for both sticks, driven by the
+# MCU over its UART (konkr_sysbtn). Every write sends a frame to the MCU.
+KONKR_STICK_LED = "/sys/class/leds/konkr:rgb:joysticks"
+
+
 class LedManager:
     """Manages Left and Right analog stick ring RGB LEDs."""
 
     def __init__(self):
+        self.multi = KONKR_STICK_LED if os.path.isdir(KONKR_STICK_LED) else None
+        self.multi_order = ["red", "green", "blue"]
+        if self.multi:
+            idx = rd(f"{self.multi}/multi_index").split()
+            if sorted(idx) == ["blue", "green", "red"]:
+                self.multi_order = idx
+        self.last_multi = None
         self.left_leds = {
             "r": [f"/sys/class/leds/l:r{i}" for i in range(1, 5)],
             "g": [f"/sys/class/leds/l:g{i}" for i in range(1, 5)],
@@ -461,11 +473,27 @@ class LedManager:
         g_val = int(round(g * scale))
         b_val = int(round(b * scale))
 
+        if self.multi:
+            # Full colour in the intensities, the level in brightness; only
+            # write on a change, every write goes over the UART to the MCU.
+            chan = {"red": r, "green": g, "blue": b}
+            state = (tuple(chan[c] for c in self.multi_order), max(0, min(255, brightness)))
+            if state != self.last_multi:
+                wr(f"{self.multi}/multi_intensity", " ".join(str(v) for v in state[0]))
+                wr(f"{self.multi}/brightness", state[1])
+                self.last_multi = state
+            return
+
         for color_key, val in [("r", r_val), ("g", g_val), ("b", b_val)]:
             for path in self.left_leds[color_key] + self.right_leds[color_key]:
                 wr(f"{path}/brightness", val)
 
     def off(self) -> None:
+        if self.multi:
+            if self.last_multi is None or self.last_multi[1] != 0:
+                wr(f"{self.multi}/brightness", 0)
+                self.last_multi = ((0, 0, 0), 0)
+            return
         for group in (self.left_leds, self.right_leds):
             for paths in group.values():
                 for p in paths:
