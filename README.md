@@ -75,4 +75,4 @@ My scripts and overlays are GPL-2.0, everything in `external-and-mods/` keeps it
 
 ## Disclaimer
 
-Not affiliated with or endorsed by Valve. Steam and SteamOS are trademarks of Valve Corporation, used here only to say what this is based on. The kernels and device support are community work, so please don't ask Valve for help with this.
+Not affiliated with or endorsed by Valve. Steam and SteamOS are trademarks of Valve Corporation, used here only to say what this is based on. The kernels and device support are community work, so please don't ask Valve for help with this. It doesn't get updates from Valve either, the OS and the Steam client in it are updated through this project's releases.
