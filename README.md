@@ -18,7 +18,7 @@ There's one image per chip and you pick your device in the ABL menu, the system 
 
 | Chip | Devices | Status |
 |---|---|---|
-| Snapdragon 888 (SM8350) | REDMAGIC 6 (NX669J, North America / global) | experimental, build it yourself ([docs/redmagic6.md](docs/redmagic6.md)) |
+| Snapdragon 888 (SM8350) | REDMAGIC 6 (NX669J, North America / global) |  build it yourself ([docs/redmagic6.md](docs/redmagic6.md)) |
 
 I only own a Pocket FIT, so if you have one of the others please [let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/issues).
 
