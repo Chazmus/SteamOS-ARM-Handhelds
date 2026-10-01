@@ -1,6 +1,6 @@
 # SteamOS ARM for handhelds
 
-This is Valve's official SteamOS for ARM, the build they made for the Steam Frame, running on Snapdragon handhelds. You get Game Mode and the KDE desktop just like on a Steam Deck. The Frame software is made for a VR headset though, so I've spent a lot of time on the stuff that makes it annoying on a handheld (battery, fan, lag, broken overlay etc.).
+This is an unofficial port of Valve's SteamOS for ARM, the build they made for the Steam Frame, to Snapdragon handhelds. You get Game Mode and the KDE desktop just like on a Steam Deck. The Frame software is made for a VR headset though, so I've spent a lot of time on the stuff that makes it annoying on a handheld (battery, fan, lag, broken overlay etc.).
 
 ## Supported devices
 
@@ -72,3 +72,7 @@ The kernel and all the device support come from [ROCKNIX](https://github.com/ROC
 ## License
 
 My scripts and overlays are GPL-2.0, everything in `external-and-mods/` keeps its own license. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+Not affiliated with or endorsed by Valve. Steam and SteamOS are trademarks of Valve Corporation, used here only to say what this is based on. The kernels and device support are community work, so please don't ask Valve for help with this.

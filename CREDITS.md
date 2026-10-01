@@ -1,6 +1,6 @@
 # Credits
 
-**SteamOS-ARM-Handhelds** brings official SteamOS ARM to Snapdragon 8 Gen 3
+**SteamOS-ARM-Handhelds** is an unofficial port of Valve's SteamOS ARM to Snapdragon 8 Gen 3
 (SM8650: KONKR Pocket FIT, AYANEO Pocket S2) and 8 Gen 2 (SM8550: AYN, AYANEO
 and Retroid handhelds). Some of its groundwork (the image builder and a few scripts) came
 from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still applies.
@@ -22,7 +22,7 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 
 ## From SteamOS-ARM-SM8550 (MaSi)
 
-**SteamOS-ARM-SM8550** adapts official SteamOS ARM to Qualcomm SM8550
+**SteamOS-ARM-SM8550** adapts Valve's SteamOS ARM to Qualcomm SM8550
 handhelds. This file lists the sources this repository is built from.
 
 Original licenses remain with their authors. Project glue (scripts,

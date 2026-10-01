@@ -1,13 +1,13 @@
 # How SteamOS ARM runs on the KONKR Pocket FIT
 
-Official SteamOS ARM on the **KONKR Pocket FIT (Snapdragon G3 Gen 3 = SM8650, Adreno 750)**, with
+Valve's SteamOS ARM (unofficial port) on the **KONKR Pocket FIT (Snapdragon G3 Gen 3 = SM8650, Adreno 750)**, with
 some groundwork from [MaSi's SM8550 project](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550), plus
 Pocket FIT-specific controls and a set of native performance fixes. The
 AYANEO Pocket S2 shares the ROCKNIX dtsi and gets a DTB too (untested).
 
 ## Why this works at all
 
-- The official SteamOS ARM userspace this project repackages is Valve's
+- The SteamOS ARM userspace this project repackages is Valve's
   **Steam Frame** image, and the Steam Frame *is* SM8650 / Adreno 750. Valve's
   own Turnip, zink and GPU firmware target this exact GPU, so this build keeps
   the Frame Mesa untouched.

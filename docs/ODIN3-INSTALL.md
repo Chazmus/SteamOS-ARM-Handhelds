@@ -79,7 +79,7 @@ fastboot reboot
 
 ## What to Expect in SteamOS
 
-* **Game Mode:** The official Steam Gamepad UI will launch. Log in with your Steam account.
+* **Game Mode:** Steam's Gamepad UI will launch. Log in with your Steam account.
 * **Controller:** The built-in controller is mapped via InputPlumber as a native Steam Deck controller (`deck-uhid`). Analog sticks, triggers, D-pad, and face buttons work in Steam Input.
 * **Display:** 1080x1920 AMOLED panel running at 60 Hz or 120 Hz with dynamic frame limiting.
 * **Graphics:** Accelerated Vulkan via Mesa Freedreno Turnip (Adreno 830).
