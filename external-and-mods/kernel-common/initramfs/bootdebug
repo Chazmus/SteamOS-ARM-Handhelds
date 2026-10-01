@@ -5,7 +5,7 @@
 # SM8550 image also ships it as steamos-arm-bootdebug-file.service, for
 # kernels that bring their own initramfs.
 # Right away, then every 20 s for 3 minutes, it writes the logs to BOOT/debug-logs/, which
-# any PC can read.
+# any PC can read. After that perf.txt gets CPU/GPU/SD samples for 30 minutes.
 out=/boot/debug-logs
 mountpoint -q /boot || mount /boot 2>/dev/null
 mkdir -p "$out" || exit 0
@@ -48,4 +48,30 @@ while [ "$i" -lt 10 ]; do
   sync
 done
 echo "done, $(date)" > "$out/DONE.txt"
+sync
+
+# Then 30 minutes of performance samples every 5 s, so a tester can just play
+# a game and send the folder: CPU clocks per cluster, GPU clock/governor, the
+# hottest sensor and the SD card's bus mode.
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+gpu=$(ls -d /sys/class/devfreq/*gpu* /sys/class/devfreq/3d00000.gpu 2>/dev/null | head -1)
+{
+  echo "--- cpufreq"
+  for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    echo "${p##*/} cpus=$(cat $p/related_cpus) gov=$(cat $p/scaling_governor) max=$(cat $p/scaling_max_freq)/$(cat $p/cpuinfo_max_freq)"
+  done
+  echo "--- gpu ${gpu:-none}"
+  [ -n "$gpu" ] && echo "gov=$(cat $gpu/governor) min=$(cat $gpu/min_freq) max=$(cat $gpu/max_freq) avail=$(cat $gpu/available_frequencies)"
+  echo "--- sd"; cat /sys/kernel/debug/mmc0/ios 2>&1
+  echo "--- samples: uptime | cpu MHz per policy | gpu MHz (load) | max temp C"
+} > "$out/perf.txt" 2>&1
+n=0
+while [ "$n" -lt 360 ]; do
+  c=""; for p in /sys/devices/system/cpu/cpufreq/policy*; do c="$c $(( $(cat $p/scaling_cur_freq) / 1000 ))"; done
+  g="-"; [ -n "$gpu" ] && g="$(( $(cat $gpu/cur_freq) / 1000000 )) ($(cat $gpu/load 2>/dev/null || echo ?))"
+  t=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -n | tail -1)
+  echo "$(cut -d' ' -f1 /proc/uptime) |$c | $g | $(( ${t:-0} / 1000 ))" >> "$out/perf.txt"
+  n=$((n + 1)); [ $((n % 12)) -eq 0 ] && sync
+  sleep 5
+done
 sync
