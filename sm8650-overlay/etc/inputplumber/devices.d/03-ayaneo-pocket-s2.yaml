@@ -51,6 +51,10 @@ source_devices:
       vendor_id: "1c4f"
       product_id: "0002"
       handler: event*
+    # Two event devices (input0 and input1): both join this controller.
+    # With the default unique: true the second one became a second
+    # virtual pad, and Quick Access only worked when Steam used the right one.
+    unique: false
     capability_map_id: ayaneo_pocket_s2_aux
   # Whatever else is on the pad's internal USB port (port 2 on some units,
   # 1 on others): unclaimed, Steam shows the raw pad with the Xbox layout and
