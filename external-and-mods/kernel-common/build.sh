@@ -256,7 +256,8 @@ build_initramfs() {
   local bb=/bin/busybox d="${WORK}/initramfs"
   file "$bb" 2>/dev/null | grep -q "statically linked" \
     || die "need a static busybox (apt install busybox-static)"
-  rm -rf "$d"; mkdir -p "$d/root/bin" "$d/root/dev" "$d/root/proc" "$d/root/sys"
+  rm -rf "$d"; mkdir -p "$d/root/bin" "$d/root/dev" "$d/root/proc" "$d/root/sys" "$d/root/usr"
+  ln -sfn ../bin "$d/root/usr/bin"
   cp "$bb" "$d/root/bin/busybox"
   install -m0755 "${HERE}/initramfs/init" "$d/root/init"
   install -m0755 "${HERE}/initramfs/konkr-update-recover" "$d/root/konkr-update-recover"
