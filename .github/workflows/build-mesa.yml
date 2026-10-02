@@ -13,13 +13,6 @@ name: Build Mesa Stack
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'ci/github-actions-mvp'  # TODO: remove after CI is validated
-    paths:
-      - '.github/workflows/build-mesa.yml'
-      - 'scripts/build-mesa.sh'
-      - 'external-and-mods/mesa/**'
 
 jobs:
   build:
