@@ -96,21 +96,48 @@ The Steam client runs in user space under `/home/steamos/.local/share/Steam/`.
 
 ---
 
-## 4. Git Tag-Driven Releases
+## 4. Image Testing & Decoupled Release Promotion
 
-Official Snapdragon 8 Elite / Odin 3 image releases are triggered automatically by pushing Git tags matching the maintainer's naming convention (`v*8elite*`, e.g. `v1.3-8elite-beta2` or `v1.4-8elite`):
+To ensure quality and prevent non-booting images from reaching end users, image assembly and release publishing are strictly decoupled into a two-stage process:
 
-```bash
-git tag v1.3-8elite-beta3
-git push origin v1.3-8elite-beta3
+```
+┌────────────────────────────────────────────────────────┐
+│  build-image.yml (The Builder)                         │
+│  • Trigger: workflow_dispatch (manual test builds)      │
+│  • Output: steamos-odin3-image Actions artifact        │
+│  • Safe to test any commit or overlay change           │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                 1. Download & Flash to SD Card
+                 2. Verify boot, controls, audio on Odin 3
+                           │
+┌──────────────────────────▼─────────────────────────────┐
+│  release.yml (The Promoter / Publisher)                │
+│  • Trigger: workflow_dispatch                           │
+│  • Inputs: image_run_id (tested build) + tag_name      │
+│  • Action: Grabs tested artifact, attaches to Release   │
+│  • Duration: ~30 seconds (zero rebuild drift!)         │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Automated Release Actions:
-1. **Runner:** Spins up `ubuntu-24.04-arm`.
-2. **Asset Retrieval:** Pulls the pinned Kernel, Mesa stack, and Steam Client seed.
-3. **Assembly:** Downloads base rootfs, applies overlays, and packages the 3-partition image.
-4. **Compression:** Compresses to `steamos-odin3-<tag>.img.zst`.
-5. **Publishing:** Generates SHA256 checksums and attaches both files to the GitHub Release.
+### Step 1: Building a Test Image (`build-image.yml`)
+1. Trigger the **Build Odin 3 Image** workflow via `workflow_dispatch` on GitHub Actions.
+2. The workflow compiles the rootfs and uploads the compressed image as a workflow artifact named `steamos-odin3-image` (containing `steamos-odin3.img.zst` and `.sha256`).
+3. Download the artifact from the Actions run summary, flash to your micro-SD card:
+   ```bash
+   zstd -d steamos-odin3.img.zst -o steamos-odin3.img
+   sudo dd if=steamos-odin3.img of=/dev/sdX bs=4M status=progress conv=fsync
+   ```
+4. Verify hardware boot on the Odin 3 (DSI-1 display orientation, controls, audio, WiFi, and Steam login).
+
+### Step 2: Promoting to Official Release (`release.yml`)
+Once the image is verified working on hardware:
+1. Open the **Publish Odin 3 Release** workflow on GitHub Actions.
+2. Provide:
+   - **`tag_name`**: Must follow the maintainer's convention: `v*8elite*` (e.g. `v1.3-8elite-beta2` or `v1.4-8elite`).
+   - **`image_run_id`**: The Actions run ID of the tested `build-image` workflow (leave blank to promote the latest successful build).
+   - **`prerelease`**: Checked by default for beta/preview handheld releases.
+3. The workflow fetches the exact verified `.img.zst` artifact, generates checksums, and publishes the official GitHub Release in under 60 seconds without risk of rebuild divergence.
 
 ---
 

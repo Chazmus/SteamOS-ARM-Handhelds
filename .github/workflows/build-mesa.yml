@@ -57,7 +57,9 @@ jobs:
 
       - name: Load version manifest
         run: |
-          grep -v '^#' versions.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
+          sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
+              -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+              -e 's/"//g' -e "s/'//g" versions.env >> "$GITHUB_ENV"
 
       - name: Set up Python venv (Meson >= 1.4)
         run: |

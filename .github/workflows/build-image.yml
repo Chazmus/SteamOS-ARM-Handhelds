@@ -22,15 +22,14 @@ on:
       - 'ci/github-actions-mvp'  # TODO: remove after CI is validated
     paths:
       - '.github/workflows/build-image.yml'
-    tags:
-      - 'v*8elite*'
 
 jobs:
   build-image:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
+      actions: read
 
     env:
       STEAMOS_WORK: ${{ github.workspace }}/sm8750-work
@@ -62,7 +61,9 @@ jobs:
 
       - name: Load version manifest
         run: |
-          grep -v '^#' versions.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
+          sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
+              -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+              -e 's/"//g' -e "s/'//g" versions.env >> "$GITHUB_ENV"
 
       # ── Download pre-built kernel ────────────────────────────────────
       - name: Download kernel artifact
@@ -150,17 +151,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p ./seed-download
-          if gh release download "${STEAM_SEED_TAG:-steam-seed-v1}" \
+          SEED_REPO="${STEAM_SEED_REPO:-${{ github.repository }}}"
+          SEED_TAG="${STEAM_SEED_TAG:-steam-seed-v1}"
+          echo "Attempting to download Steam ARM seed from ${SEED_REPO} (tag: ${SEED_TAG})..."
+
+          DOWNLOADED=0
+          if gh release download "${SEED_TAG}" \
                --pattern "steam-arm-seed.tar.zst" \
-               --repo "${{ github.repository }}" \
+               --repo "${SEED_REPO}" \
                -D ./seed-download/; then
+            DOWNLOADED=1
+          elif curl -fsSL -o ./seed-download/steam-arm-seed.tar.zst \
+                 "https://github.com/${SEED_REPO}/releases/download/${SEED_TAG}/steam-arm-seed.tar.zst"; then
+            DOWNLOADED=1
+          fi
+
+          if [ "$DOWNLOADED" -eq 1 ] && [ -f ./seed-download/steam-arm-seed.tar.zst ]; then
             echo "Downloaded steam-arm-seed.tar.zst"
             tar -xf ./seed-download/steam-arm-seed.tar.zst --zstd -C "${STEAMOS_WORK}"
             rm -rf ./seed-download
             echo "Steam seed staged at ${STEAMOS_WORK}/steam-arm-seed"
             ls -la "${STEAMOS_WORK}/steam-arm-seed/"
           else
-            echo "::warning::Steam seed release not found; build will use fallback"
+            echo "::warning::Steam seed release not found; build will use fallback bootstrap"
           fi
           echo "=== Disk after seed staging ==="
           df -h /
@@ -200,20 +213,3 @@ jobs:
             steamos-odin3.img.zst.sha256
           retention-days: 14
           compression-level: 0  # already zstd compressed
-
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          echo "Publishing release assets for tag $TAG ..."
-          RELEASE_ASSET="steamos-odin3-${TAG}.img.zst"
-          cp steamos-odin3.img.zst "$RELEASE_ASSET"
-          sha256sum "$RELEASE_ASSET" > "${RELEASE_ASSET}.sha256"
-
-          gh release upload "$TAG" "$RELEASE_ASSET" "${RELEASE_ASSET}.sha256" --clobber || \
-            gh release create "$TAG" "$RELEASE_ASSET" "${RELEASE_ASSET}.sha256" \
-              --title "$TAG" \
-              --generate-notes \
-              --prerelease
