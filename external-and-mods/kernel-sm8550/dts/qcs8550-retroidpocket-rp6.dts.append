@@ -20,3 +20,16 @@
 		vdd28-supply = <&vdd_disp_2v8>;
 	};
 };
+
+/*
+ * Touch at the panel's 120 Hz instead of ~28 Hz: read each touch frame in
+ * one I2C transfer and run the bus at 400 kHz (ROCKNIX 3829f7c, measured
+ * 118.8 Hz on hardware, same as Android).
+ */
+&i2c_hub_3 {
+	clock-frequency = <400000>;
+
+	touchscreen@38 {
+		/delete-property/ no-regmap-bulk-read;
+	};
+};
