@@ -339,7 +339,9 @@ def dual_backlight(req: dict | None = None) -> dict | None:
 
 
 def stick_leds() -> bool:
-    return bool(glob.glob("/sys/class/leds/*joysticks*") or glob.glob("/sys/class/leds/rgb:[lr][0-9]"))
+    """Same LEDs konkrd drives (see stick_leds() there)."""
+    return bool(glob.glob("/sys/class/leds/*joysticks*") or glob.glob("/sys/class/leds/rgb:[lr][0-9]")
+                or glob.glob("/sys/class/leds/*-joystick"))
 
 
 def rgb_state() -> dict | None:

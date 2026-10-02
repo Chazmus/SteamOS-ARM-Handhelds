@@ -496,6 +496,15 @@ if [[ -s "$DECKY_LOADER" ]]; then
   mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
   ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service" 2>/dev/null || true
 fi
+# Handheld Control: profiles, fan and stick lighting in Quick Access (talks
+# to odin3d here, konkrd on the other images).
+HC_SRC="${MOD}/Decky/sm8650/konkr-control"
+HC_DST="$HOME_DST/homebrew/plugins/konkr-control"
+rm -rf "$HC_DST"; mkdir -p "$HC_DST/dist"
+install -m0644 "$HC_SRC/plugin.json" "$HC_SRC/main.py" "$HC_DST/"
+[[ -f "$HC_SRC/package.json" ]] && install -m0644 "$HC_SRC/package.json" "$HC_DST/"
+install -m0644 "$HC_SRC/dist/index.js" "$HC_DST/dist/"
+chown -R 1000:1000 "$HOME_DST/homebrew"
 
 # Complete Steam ARM client in the image, same as the 8 Gen 2 / 8 Gen 3 builds.
 # Otherwise first boot unpacks ~2.5 GB of Steam on the SD card behind a black

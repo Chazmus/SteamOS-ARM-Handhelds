@@ -321,7 +321,9 @@ def main() -> int:
             saved[f"{bl}/brightness"] = rd(f"{bl}/brightness")
             wr(f"{bl}/brightness", 0)
         for led in glob.glob("/sys/class/leds/*"):
-            if "joystick" in led or "power-led" in led:
+            n = os.path.basename(led)
+            zone = n.startswith("rgb:") and n[4:5] in ("l", "r") and n[5:].isdigit()
+            if "joystick" in n or "power-led" in n or zone:
                 saved[f"{led}/brightness"] = rd(f"{led}/brightness")
                 wr(f"{led}/brightness", 0)
         run("/usr/lib/konkr/konkr-sleep", "standby-pre")

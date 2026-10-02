@@ -1,4 +1,4 @@
-const manifest = {"name":"KONKR Control"};
+const manifest = {"name":"Handheld Control"};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!internalAPIConnection) {
@@ -79,7 +79,7 @@ function Content() {
                 selectedOption: st.profile,
                 onChange: (o) => setProfile(o.data).then(refresh),
             })),
-            note(st.daemon ? status : "konkrd is not running"),
+            note(st.daemon ? status : `${st.daemon_name || "konkrd"} is not running`),
         ] }),
         jsxs(DFL.PanelSection, { title: "Fan", children: [
             row(jsx(DFL.DropdownItem, {
@@ -106,8 +106,9 @@ function Content() {
             row(jsx(DFL.DropdownItem, {
                 label: "Stick lighting",
                 disabled: !st.sticks_led,
-                description: st.sticks_led ? "" : "Needs the controller MCU link (below)",
-                rgOptions: RGB_PRESETS.map((p, i) => ({ data: i, label: p.label })),
+                description: st.sticks_led ? "" : (st.has_mcu_link ? "Needs the controller MCU link (below)" : "No stick lights found on this device"),
+                rgOptions: RGB_PRESETS.map((p, i) => ({ data: i, label: p.label }))
+                    .filter((o) => st.has_breath || RGB_PRESETS[o.data].mode !== "breath"),
                 selectedOption: Math.max(0, RGB_PRESETS.findIndex((p) => p.mode === st.rgb.mode && p.color === st.rgb.color)),
                 onChange: (o) => {
                     const p = RGB_PRESETS[o.data];
@@ -120,28 +121,28 @@ function Content() {
                 disabled: !st.sticks_led || st.rgb.mode !== "static",
                 onChange: (v) => setRgb(st.rgb.mode, st.rgb.color, v),
             })),
-            row(jsx(DFL.ToggleField, {
+            st.has_power_led ? row(jsx(DFL.ToggleField, {
                 label: "Power LED",
                 description: "Charging / full / low-battery colours and profile flashes",
                 checked: st.power_led !== false,
                 onChange: (v) => setPowerLed(v).then(refresh),
-            })),
+            })) : null,
         ] }),
-        jsxs(DFL.PanelSection, { title: "Buttons", children: [
+        st.fit_buttons ? jsxs(DFL.PanelSection, { title: "Buttons", children: [
             note("KONKR cycles stick lighting · Performance cycles the performance profile"),
             note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
-        ] }),
-        jsxs(DFL.PanelSection, { title: "Hardware", children: [
+        ] }) : null,
+        st.has_mcu_link ? jsxs(DFL.PanelSection, { title: "Hardware", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Controller MCU link",
                 description: "Needed for the KONKR, Performance and Quick Access buttons and stick lighting",
                 checked: st.mcu_enabled,
                 onChange: (v) => setMcu(v).then(() => {
-                    toaster.toast({ title: "KONKR Control", body: v ? "MCU link enabled" : "MCU link disabled" });
+                    toaster.toast({ title: "Handheld Control", body: v ? "MCU link enabled" : "MCU link disabled" });
                     refresh();
                 }),
             })),
-        ] }),
+        ] }) : null,
     ] });
 }
 
@@ -163,9 +164,9 @@ function onMode(profile, boost, profileChanged) {
 var index = definePlugin(() => {
     api.addEventListener("konkr_mode", onMode);
     return {
-        name: "KONKR Control",
+        name: "Handheld Control",
         content: jsx(Content, {}),
-        icon: jsx("div", { style: { fontWeight: 800 }, children: "K" }),
+        icon: jsx("div", { style: { fontWeight: 800 }, children: "H" }),
         alwaysRender: false,
         onDismount() {
             api.removeEventListener("konkr_mode", onMode);

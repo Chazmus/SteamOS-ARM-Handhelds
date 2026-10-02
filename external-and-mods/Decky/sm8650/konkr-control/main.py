@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Decky backend — KONKR Control (KONKR Pocket FIT, SteamOS-ARM-SM8650).
+"""Decky backend — Handheld Control (SteamOS-ARM handhelds).
 
-Thin front for konkrd: every setting lives in /var/lib/konkrd/state.json and
-konkrd applies it on SIGHUP, so the buttons, konkrctl and this panel stay in
-sync.
+Thin front for the device daemon: konkrd (KONKR Pocket FIT, the 8 Gen 2
+devices) or odin3d (AYN Odin 3, KONKR Pocket FIT Elite). Every setting lives
+in the daemon's state.json, which it re-reads on SIGHUP, so the buttons,
+konkrctl/odin3ctl, the bottom screen and this panel stay in sync.
 """
 from __future__ import annotations
 
@@ -16,7 +17,9 @@ from typing import Any
 
 import decky
 
-STATE = "/var/lib/konkrd/state.json"
+ODIN3D = os.path.exists("/usr/lib/odin3/odin3d")
+STATE = "/var/lib/odin3/state.json" if ODIN3D else "/var/lib/konkrd/state.json"
+DAEMON = "odin3d" if ODIN3D else "konkrd"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 PROFILES = ("silent", "balanced", "turbo")
 ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "none")
@@ -49,7 +52,7 @@ def save(st: dict[str, Any]) -> None:
     with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(st, fh, indent=2)
     os.replace(STATE + ".tmp", STATE)
-    subprocess.run(["systemctl", "kill", "-s", "HUP", "konkrd.service"], check=False)
+    subprocess.run(["systemctl", "kill", "-s", "HUP", f"{DAEMON}.service"], check=False)
 
 
 def telemetry() -> dict[str, Any]:
@@ -80,7 +83,7 @@ def mode_of(st: dict[str, Any]) -> tuple[str, bool]:
 class Plugin:
     async def _main(self) -> None:
         self.watcher = asyncio.create_task(self._watch_mode())
-        decky.logger.info("KONKR Control ready")
+        decky.logger.info(f"Handheld Control ready ({DAEMON})")
 
     async def _unload(self) -> None:
         self.watcher.cancel()
@@ -116,16 +119,27 @@ class Plugin:
 
     async def get_state(self, **_: Any) -> dict[str, Any]:
         st = load()
+        model = rd("/sys/firmware/devicetree/base/model").rstrip("\0")
+        leds = glob.glob("/sys/class/leds/*joysticks*") + glob.glob("/sys/class/leds/*-joystick") \
+            + glob.glob("/sys/class/leds/rgb:[lr][0-9]") + glob.glob("/sys/class/leds/[lr]:r1")
+        fit = model == "KONKR Pocket FIT"
         return {
+            "model": model,
+            "daemon_name": DAEMON,
             "profile": st["profile"],
             "rgb": st["rgb"],
             "fan": st["fan"],
             "power_led": st["power_led"],
             "buttons": st["buttons"],
+            # What this device has, so the panel only shows what works here.
+            "has_power_led": not ODIN3D and bool(glob.glob("/sys/class/leds/*power-led*")),
+            "has_mcu_link": fit and not ODIN3D,
+            "has_breath": not ODIN3D and any(os.path.exists(f"{d}/effect") for d in leds),
+            "fit_buttons": fit,
             "mcu_enabled": not os.path.exists(BLACKLIST),
             "mcu_loaded": os.path.isdir("/sys/module/konkr_sysbtn"),
-            "sticks_led": bool(glob.glob("/sys/class/leds/*joysticks*")),
-            "daemon": subprocess.run(["systemctl", "is-active", "--quiet", "konkrd"]).returncode == 0,
+            "sticks_led": bool(leds),
+            "daemon": subprocess.run(["systemctl", "is-active", "--quiet", DAEMON]).returncode == 0,
             **await asyncio.to_thread(telemetry),
         }
 

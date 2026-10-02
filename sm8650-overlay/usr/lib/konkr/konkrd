@@ -559,6 +559,22 @@ def led_rgb(d: str | None, rgb, brightness: int = 255) -> None:
     wr(f"{d}/brightness", brightness)
 
 
+def stick_leds() -> list[str]:
+    """The stick lights as multicolor LEDs: one for both sticks (KONKR
+    konkr:rgb:joysticks), one per side (AYN Odin 2: left-/right-joystick) or
+    one per zone (Thor, Odin 2 Portal, RP6: rgb:l1-l4 and rgb:r1-r4)."""
+    one = led("joysticks")
+    if one:
+        return [one]
+    out = []
+    for d in sorted(glob.glob("/sys/class/leds/*")):
+        n = os.path.basename(d)
+        zone = n.startswith("rgb:") and n[4:5] in ("l", "r") and n[5:].isdigit()
+        if (zone or n in ("left-joystick", "right-joystick")) and os.path.exists(f"{d}/multi_intensity"):
+            out.append(d)
+    return out
+
+
 def battery() -> tuple[int, str]:
     for b in glob.glob("/sys/class/power_supply/*"):
         if rd(f"{b}/type") == "Battery":
@@ -572,12 +588,7 @@ def battery() -> tuple[int, str]:
 class Leds:
     def __init__(self):
         self.power = led("power-led")
-        # One multicolor LED for the sticks (KONKR), or one per zone around
-        # them (AYN Thor: rgb:l1-l4 and rgb:r1-r4).
-        one = led("joysticks")
-        self.sticks = [one] if one else sorted(
-            d for d in glob.glob("/sys/class/leds/rgb:[lr][0-9]")
-            if os.path.exists(f"{d}/multi_intensity"))
+        self.sticks = stick_leds()
         self.flash_until = 0.0
         self.pulse = False
 
