@@ -13,6 +13,13 @@ name: Build Mesa Stack
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'ci/github-actions-mvp'  # TODO: remove after CI is validated
+    paths:
+      - '.github/workflows/build-mesa.yml'
+      - 'scripts/build-mesa.sh'
+      - 'external-and-mods/mesa/**'
 
 jobs:
   build:
@@ -36,12 +43,17 @@ jobs:
           echo "=== After cleanup ==="
           df -h /
 
+      - name: Configure kernel settings for bwrap
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             python3-requests python3-zstandard python3-venv \
-            bubblewrap squashfs-tools rsync zstd \
+            bubblewrap squashfs-tools rsync zstd unzip \
+            clang lld llvm \
             gcc-x86-64-linux-gnu g++-x86-64-linux-gnu \
             gcc-i686-linux-gnu g++-i686-linux-gnu \
             libc6-dev-i386-cross \
