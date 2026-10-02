@@ -134,6 +134,7 @@ make_sysroot() {
     local stubs
     stubs="$(find /usr/i686-linux-gnu/include/gnu -name stubs-32.h 2>/dev/null | head -1)"
     [[ -n "$stubs" ]] || die "stubs-32.h not found (apt install libc6-dev-i386-cross)"
+    mkdir -p "$s/usr/include/gnu"
     cp "$stubs" "$s/usr/include/gnu/stubs-32.h"
   fi
   cp -a "$G/usr/share/pkgconfig/." "$s/usr/share/pkgconfig/"
