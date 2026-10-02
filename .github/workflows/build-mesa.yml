@@ -87,7 +87,7 @@ jobs:
           echo "Mounting and copying rootfs ..."
           mkdir -p rootfs rootfs-ro
           sudo mount -o loop,ro rootfs.img rootfs-ro
-          sudo rsync -aHAX --numeric-ids rootfs-ro/ rootfs/
+          sudo rsync -aHAX --filter="-x btrfs.*" --numeric-ids rootfs-ro/ rootfs/
           sudo umount rootfs-ro
           # Free disk: remove intermediate files (~18 GB saved)
           rm -rf bundle bundle.raucb rootfs.img rootfs-ro
