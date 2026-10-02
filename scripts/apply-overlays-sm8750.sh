@@ -380,6 +380,11 @@ if [[ -n "${MESA_STACK:-}" ]]; then
   cp -a "$MESA_STACK/x86_64/usr/share/." "$GUEST/usr/share/"
   cp -a "$MESA_STACK/i386/usr/lib32/." "$GUEST/usr/lib32/"
   cp -a "$MESA_STACK/i386/usr/share/vulkan/." "$GUEST/usr/share/vulkan/"
+  # Our zink and Turnip now come as a matched pair, so mangoapp needs no pin
+  # to the Frame's Turnip (which only knows some Odin 3 GPU IDs): drop it and
+  # the wrapper leaves the system Turnip alone.
+  rm -f "$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json"
+  rm -rf "$R/usr/lib/steamos-sm8650/frame-turnip"
   if [[ -f "$MESA_STACK/android/$ANDROID_VENDOR/hw/vulkan.freedreno.so" ]]; then
     mkdir -p "$R/$ANDROID_VENDOR"
     cp -a "$MESA_STACK/android/$ANDROID_VENDOR/." "$R/$ANDROID_VENDOR/"
