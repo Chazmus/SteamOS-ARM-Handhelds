@@ -22,11 +22,15 @@ on:
       - 'ci/github-actions-mvp'  # TODO: remove after CI is validated
     paths:
       - '.github/workflows/build-image.yml'
+    tags:
+      - 'v*8elite*'
 
 jobs:
   build-image:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
+    permissions:
+      contents: write
 
     env:
       STEAMOS_WORK: ${{ github.workspace }}/sm8750-work
@@ -185,11 +189,31 @@ jobs:
           ls -lh "$IMG"
           zstd -T0 -3 "$IMG" -o steamos-odin3.img.zst
           ls -lh steamos-odin3.img.zst
+          sha256sum steamos-odin3.img.zst > steamos-odin3.img.zst.sha256
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: steamos-odin3-image
-          path: steamos-odin3.img.zst
+          path: |
+            steamos-odin3.img.zst
+            steamos-odin3.img.zst.sha256
           retention-days: 14
           compression-level: 0  # already zstd compressed
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Publishing release assets for tag $TAG ..."
+          RELEASE_ASSET="steamos-odin3-${TAG}.img.zst"
+          cp steamos-odin3.img.zst "$RELEASE_ASSET"
+          sha256sum "$RELEASE_ASSET" > "${RELEASE_ASSET}.sha256"
+
+          gh release upload "$TAG" "$RELEASE_ASSET" "${RELEASE_ASSET}.sha256" --clobber || \
+            gh release create "$TAG" "$RELEASE_ASSET" "${RELEASE_ASSET}.sha256" \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease

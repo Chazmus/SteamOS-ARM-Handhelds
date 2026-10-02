@@ -98,11 +98,11 @@ The Steam client runs in user space under `/home/steamos/.local/share/Steam/`.
 
 ## 4. Git Tag-Driven Releases
 
-Official image releases should be triggered automatically by pushing Git tags (e.g. `v1.3-beta11` or `v1.3-odin3-beta1`):
+Official Snapdragon 8 Elite / Odin 3 image releases are triggered automatically by pushing Git tags matching the maintainer's naming convention (`v*8elite*`, e.g. `v1.3-8elite-beta2` or `v1.4-8elite`):
 
 ```bash
-git tag v1.3-odin3-beta1
-git push origin v1.3-odin3-beta1
+git tag v1.3-8elite-beta3
+git push origin v1.3-8elite-beta3
 ```
 
 ### Automated Release Actions:
