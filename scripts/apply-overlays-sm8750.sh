@@ -118,6 +118,14 @@ install_file "$OVL/usr/lib/steamos/gamescope-onready" \
   "$R/usr/lib/steamos/gamescope-onready" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-steam-focus" \
   "$R/usr/lib/steamos/sm8550-steam-focus" 0755
+# Game Mode: bring a game back when Quick Access / the Steam menu closes
+# (games that minimise themselves came back black or frozen).
+install_file "${ROOT}/sm8650-overlay/usr/lib/konkr/konkr-focusfix" "$R/usr/lib/konkr/konkr-focusfix" 0755
+install_file "${ROOT}/sm8650-overlay/usr/lib/systemd/user/konkr-focusfix.service" \
+  "$R/usr/lib/systemd/user/konkr-focusfix.service" 0644
+mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
+ln -sfn ../konkr-focusfix.service \
+  "$R/usr/lib/systemd/user/gamescope-session.target.wants/konkr-focusfix.service"
 install_file "$OVL/usr/lib/steamos/sm8550-volume-keys" \
   "$R/usr/lib/steamos/sm8550-volume-keys" 0755
 install_file "$OVL/usr/lib/steamos/odin-bin/steamvr" \
