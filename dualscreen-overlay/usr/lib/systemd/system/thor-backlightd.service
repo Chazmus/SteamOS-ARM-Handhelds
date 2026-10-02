@@ -1,0 +1,18 @@
+[Unit]
+Description=One brightness slider for both AYN Thor screens
+# Steam's Game Mode slider writes the first backlight it finds, the Thor's
+# bottom panel. This covers that file before Game Mode starts and drives
+# both panels from it (thor-backlightd explains the rest).
+ConditionFirmware=device-tree-compatible(ayn,thor)
+After=systemd-udev-settle.service local-fs.target
+Before=display-manager.service graphical.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/steamos-arm/bottom-screen/thor-backlightd
+ExecStopPost=-/bin/umount /sys/class/backlight/ae94000.dsi.0/brightness
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

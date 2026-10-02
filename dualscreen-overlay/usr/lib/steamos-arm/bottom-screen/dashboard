@@ -10,11 +10,16 @@ it starts and restarts.
                   virtual Deck pad (InputPlumber SendButtonChord), so Steam's
                   menus open on the main screen
   controls        performance profile + fan boost (konkrd request socket),
-                  brightness of both panels (logind), volume (wpctl)
-  stats           battery, temperatures, fan, GPU clock
+                  brightness (thor-backlightd on the Thor, logind elsewhere),
+                  volume (wpctl), stick lights (konkrd)
+  stats           frame rate, CPU/GPU load and clocks, temperatures, power,
+                  memory, fan, battery and time left
   apps            any desktop app, pinned or from the list, runs full screen
                   on the bottom panel; a swipe up from the bottom edge (or the
-                  app switcher) comes back here
+                  app switcher) comes back here. Text fields in them open the
+                  bottom screen's own keyboard (qml/Keyboard.qml)
+  top screen      the Trackpad and Keyboard pages move a virtual mouse and
+                  keyboard that only the top screen sees
 
 Settings: ~/.config/steamos-arm/bottom-screen.json
 """
@@ -28,6 +33,7 @@ import secrets
 import shlex
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -104,12 +110,62 @@ def save_config(cfg: dict) -> None:
 # ----------------------------------------------------------------- stats ----
 def battery() -> dict:
     for b in glob.glob("/sys/class/power_supply/*"):
-        if rd(f"{b}/type") == "Battery":
-            try:
-                return {"percent": int(rd(f"{b}/capacity", "0")), "status": rd(f"{b}/status")}
-            except ValueError:
-                pass
+        if rd(f"{b}/type") != "Battery":
+            continue
+        try:
+            out = {"percent": int(rd(f"{b}/capacity", "0")), "status": rd(f"{b}/status")}
+        except ValueError:
+            continue
+        # Time left at the current draw (energy, or charge x voltage).
+        try:
+            uv, ua = int(rd(f"{b}/voltage_now")), abs(int(rd(f"{b}/current_now")))
+            if rd(f"{b}/energy_now"):
+                wh = int(rd(f"{b}/energy_now")) / 1e6
+            else:
+                wh = int(rd(f"{b}/charge_now")) / 1e6 * uv / 1e6
+            w = uv * ua / 1e12
+            if out["status"] == "Discharging" and w > 0.3:
+                out["hours_left"] = round(wh / w, 2)
+        except ValueError:
+            pass
+        return out
     return {"percent": -1, "status": ""}
+
+
+class CpuLoad:
+    """Busy share of all CPUs since the last call (/proc/stat)."""
+    def __init__(self):
+        self.prev = self.sample()
+
+    @staticmethod
+    def sample() -> tuple[int, int]:
+        f = rd("/proc/stat").split("\n", 1)[0].split()[1:]
+        try:
+            v = [int(x) for x in f]
+        except ValueError:
+            return 0, 0
+        idle = v[3] + (v[4] if len(v) > 4 else 0)
+        return sum(v), idle
+
+    def get(self) -> int:
+        cur = self.sample()
+        total, idle = cur[0] - self.prev[0], cur[1] - self.prev[1]
+        self.prev = cur
+        return round(100 * (total - idle) / total) if total > 0 else 0
+
+
+CPU_LOAD = CpuLoad()
+
+
+def cpu() -> dict:
+    """Load, and the fastest cluster's clock (what a game runs on)."""
+    ghz = 0.0
+    for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
+        try:
+            ghz = max(ghz, int(rd(f"{pol}/scaling_cur_freq", "0")) / 1e6)
+        except ValueError:
+            pass
+    return {"ghz": round(ghz, 2), "load": CPU_LOAD.get()}
 
 
 def power_watts() -> float | None:
@@ -166,18 +222,22 @@ FPS = FpsReader()
 
 
 def temperatures() -> dict:
-    cpu = gpu = 0.0
+    cpu = gpu = hot = 0.0
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
         t = rd(f"{z}/type")
         try:
             v = int(rd(f"{z}/temp", "0")) / 1000.0
         except ValueError:
             continue
+        if v > 150:                  # unpopulated sensors read nonsense
+            continue
         if t.startswith("cpu"):
             cpu = max(cpu, v)
         elif t.startswith("gpu") or "gpuss" in t:
             gpu = max(gpu, v)
-    return {"cpu": round(cpu), "gpu": round(gpu)}
+        if t.startswith(("cpu", "gpu", "aoss", "mdmss", "nsp", "video", "camera", "ddr")):
+            hot = max(hot, v)
+    return {"cpu": round(cpu), "gpu": round(gpu), "hot": round(max(hot, cpu, gpu))}
 
 
 def fan_percent() -> int:
@@ -190,14 +250,15 @@ def fan_percent() -> int:
     return -1
 
 
-def gpu_mhz() -> int:
+def gpu() -> dict:
     for d in glob.glob("/sys/class/devfreq/*"):
         if "gpu" in os.path.basename(d) or "3d00000" in d:
             try:
-                return int(rd(f"{d}/cur_freq", "0")) // 1_000_000
+                return {"mhz": int(rd(f"{d}/cur_freq", "0")) // 1_000_000,
+                        "max_mhz": int(rd(f"{d}/max_freq", "0")) // 1_000_000}
             except ValueError:
-                return 0
-    return 0
+                break
+    return {"mhz": 0, "max_mhz": 0}
 
 
 def konkrd_state() -> dict:
@@ -250,6 +311,67 @@ def set_brightness(name: str, percent: int) -> bool:
     run("busctl", "call", "org.freedesktop.login1", path, "org.freedesktop.login1.Session",
         "SetBrightness", "ssu", "backlight", name, str(value))
     return True
+
+
+THOR_BACKLIGHT_SOCK = "/run/steamos-arm/thor-backlight.sock"
+
+
+def dual_backlight(req: dict | None = None) -> dict | None:
+    """thor-backlightd: Steam's level for both Thor screens, the bottom
+    screen's share of it, and the bottom screen on/off. None elsewhere."""
+    if not os.path.exists(THOR_BACKLIGHT_SOCK):
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2)
+            sock.connect(THOR_BACKLIGHT_SOCK)
+            sock.sendall(json.dumps(req or {"op": "get"}).encode() + b"\n")
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        reply = json.loads(data or b"{}")
+        return None if "error" in reply else reply
+    except (OSError, ValueError):
+        return None
+
+
+def stick_leds() -> bool:
+    return bool(glob.glob("/sys/class/leds/*joysticks*") or glob.glob("/sys/class/leds/rgb:[lr][0-9]"))
+
+
+def rgb_state() -> dict | None:
+    if not stick_leds():
+        return None
+    try:
+        rgb = json.loads(rd(KONKRD_STATE, "{}")).get("rgb", {})
+    except ValueError:
+        rgb = {}
+    return {"mode": rgb.get("mode", "static"), "color": str(rgb.get("color", "ff3c00")).lower(),
+            "brightness": int(rgb.get("brightness", 160))}
+
+
+def set_rgb(b: dict) -> bool:
+    cur = rgb_state()
+    if cur is None:
+        return False
+    mode = str(b.get("mode", cur["mode"]))
+    color = str(b.get("color", cur["color"])).lower()
+    try:
+        bri = max(0, min(255, int(b.get("brightness", cur["brightness"]))))
+    except (TypeError, ValueError):
+        return False
+    if mode not in ("static", "breath", "off") or not re.fullmatch(r"[0-9a-f]{6}", color):
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.sendto(f"rgb-set:{mode}:{color}:{bri}".encode(), KONKRD_SOCK)
+        return True
+    except OSError as exc:
+        log(f"konkrd: {exc}")
+        return False
 
 
 def volume() -> dict:
@@ -336,7 +458,21 @@ def parse_desktop(path: Path) -> dict | None:
             "exec": entry["Exec"], "categories": entry.get("Categories", "")}
 
 
+_APPS_CACHE: tuple[tuple, list[dict]] = ((), [])
+
+
 def list_apps() -> list[dict]:
+    """Every launchable app, re-read only when an app folder changed."""
+    global _APPS_CACHE
+    key = tuple(d.stat().st_mtime_ns if d.is_dir() else 0 for d in APP_DIRS)
+    if key == _APPS_CACHE[0]:
+        return _APPS_CACHE[1]
+    apps = _list_apps()
+    _APPS_CACHE = (key, apps)
+    return apps
+
+
+def _list_apps() -> list[dict]:
     seen: dict[str, dict] = {}
     for d in APP_DIRS:
         for f in sorted(d.glob("*.desktop")) if d.is_dir() else []:
@@ -374,6 +510,15 @@ class Apps:
             env.update(QT_QPA_PLATFORM="xcb", GDK_BACKEND="x11", SDL_VIDEODRIVER="x11",
                        MOZ_ENABLE_WAYLAND="0", ELECTRON_OZONE_PLATFORM_HINT="x11")
             env.pop("WAYLAND_DISPLAY", None)
+            # Accessibility on for this app only, so the keyboard sees its text
+            # fields (GTK/Firefox, Qt). Flatpak apps take it through --env.
+            a11y = {"GNOME_ACCESSIBILITY": "1", "QT_ACCESSIBILITY": "1",
+                    "QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1"}
+            env.update(a11y)
+            if os.path.basename(argv[0]) == "flatpak" and "run" in argv:
+                i = argv.index("run") + 1
+                argv[i:i] = [f"--env={k}={v}" for k, v in a11y.items()]
+            KEYBOARD.set(False)
             try:
                 self.procs[app_id] = subprocess.Popen(argv, env=env, start_new_session=True,
                                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -450,6 +595,7 @@ def set_base_window(wid: str | None) -> None:
 
 
 def show_dashboard() -> None:
+    KEYBOARD.set(False)
     for wid, title in toplevel_windows():
         if title == WINDOW_TITLE:
             set_base_window(wid)
@@ -585,6 +731,350 @@ def watch_touch_activity() -> None:
                 log(f"idle nudge failed: {err}")
 
 
+# ------------------------------------------------------- top screen input ----
+# The Trackpad and Keyboard pages drive the TOP screen: a virtual mouse and
+# keyboard (uinput, open to the seat's user). The bottom gamescope only takes
+# the devices in GAMESCOPE_INPUT_ONLY, so only the top screen's gamescope (and
+# through it Steam or the game) sees them; in Desktop Mode KWin does.
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_RELBIT = 0x40045564, 0x40045565, 0x40045566
+UI_DEV_SETUP, UI_DEV_CREATE = 0x405C5503, 0x5501
+EV_SYN, EV_REL = 0, 2
+REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0, 1, 6, 8
+BUTTONS = {"left": 0x110, "right": 0x111, "middle": 0x112}
+KEY_LEFTSHIFT = 42
+NAMED_KEYS = {"BackSpace": 14, "Return": 28, "Tab": 15, "Escape": 1,
+              "Left": 105, "Right": 106, "Up": 103, "Down": 108}
+# US layout: character -> (key code, shift)
+US_KEYS: dict[str, tuple[int, bool]] = {" ": (57, False)}
+for _row, _base in (("1234567890", 2), ("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)):
+    for _i, _c in enumerate(_row):
+        US_KEYS[_c] = (_base + _i, False)
+        if _c.isalpha():
+            US_KEYS[_c.upper()] = (_base + _i, True)
+for _c, _k in zip("!@#$%^&*()", range(2, 12)):
+    US_KEYS[_c] = (_k, True)
+for _plain, _shifted, _k in (("-", "_", 12), ("=", "+", 13), ("[", "{", 26), ("]", "}", 27),
+                             (";", ":", 39), ("'", '"', 40), ("`", "~", 41), ("\\", "|", 43),
+                             (",", "<", 51), (".", ">", 52), ("/", "?", 53)):
+    US_KEYS[_plain], US_KEYS[_shifted] = (_k, False), (_k, True)
+
+
+class UInputDevice:
+    def __init__(self, name: str, keys: list[int], rels: list[int], product: int):
+        import fcntl
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        if keys:
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
+            for k in keys:
+                fcntl.ioctl(self.fd, UI_SET_KEYBIT, k)
+        if rels:
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_REL)
+            for r in rels:
+                fcntl.ioctl(self.fd, UI_SET_RELBIT, r)
+        setup = struct.pack("HHHH80sI", 0x06, 0x1d6b, product, 1, name.encode()[:79], 0)
+        fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
+        fcntl.ioctl(self.fd, UI_DEV_CREATE)
+
+    def emit(self, events: list[tuple[int, int, int]]) -> None:
+        data = b"".join(struct.pack("qqHHi", 0, 0, t, c, v) for t, c, v in events)
+        os.write(self.fd, data + struct.pack("qqHHi", 0, 0, EV_SYN, 0, 0))
+
+
+class TopInput:
+    """Made on first use, so nothing appears until the pages are used."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.mouse: UInputDevice | None = None
+        self.keys: UInputDevice | None = None
+        self.scroll_rest = [0.0, 0.0]
+
+    def _devices(self) -> bool:
+        if self.mouse and self.keys:
+            return True
+        try:
+            self.mouse = UInputDevice("SteamOS Bottom Screen Trackpad", list(BUTTONS.values()),
+                                      [REL_X, REL_Y, REL_WHEEL, REL_HWHEEL], 0x5301)
+            self.keys = UInputDevice("SteamOS Bottom Screen Keys",
+                                     sorted({k for k, _ in US_KEYS.values()} | set(NAMED_KEYS.values())
+                                            | {KEY_LEFTSHIFT}), [], 0x5302)
+            return True
+        except OSError as exc:
+            log(f"top-screen input: {exc}")
+            self.mouse = self.keys = None
+            return False
+
+    def move(self, dx: int, dy: int) -> bool:
+        with self.lock:
+            if not self._devices():
+                return False
+            self.mouse.emit([(EV_REL, REL_X, max(-2000, min(2000, dx))),
+                             (EV_REL, REL_Y, max(-2000, min(2000, dy)))])
+            return True
+
+    def scroll(self, dx: int, dy: int) -> bool:
+        with self.lock:
+            if not self._devices():
+                return False
+            ev = []
+            if dy:
+                ev.append((EV_REL, REL_WHEEL, -max(-20, min(20, dy))))   # finger down = scroll up
+            if dx:
+                ev.append((EV_REL, REL_HWHEEL, max(-20, min(20, dx))))
+            if ev:
+                self.mouse.emit(ev)
+            return True
+
+    def button(self, name: str, state: str) -> bool:
+        code = BUTTONS.get(name)
+        if code is None:
+            return False
+        with self.lock:
+            if not self._devices():
+                return False
+            if state in ("down", "click"):
+                self.mouse.emit([(EV_KEY, code, 1)])
+            if state in ("up", "click"):
+                self.mouse.emit([(EV_KEY, code, 0)])
+            return True
+
+    def key(self, text, name) -> bool:
+        with self.lock:
+            if not self._devices():
+                return False
+            if name in NAMED_KEYS:
+                k = NAMED_KEYS[name]
+                self.keys.emit([(EV_KEY, k, 1)])
+                self.keys.emit([(EV_KEY, k, 0)])
+                return True
+            for ch in str(text or "")[:200]:
+                if ch not in US_KEYS:
+                    continue
+                k, shift = US_KEYS[ch]
+                if shift:
+                    self.keys.emit([(EV_KEY, KEY_LEFTSHIFT, 1)])
+                self.keys.emit([(EV_KEY, k, 1)])
+                self.keys.emit([(EV_KEY, k, 0)])
+                if shift:
+                    self.keys.emit([(EV_KEY, KEY_LEFTSHIFT, 0)])
+            return True
+
+
+# ------------------------------------------------ bottom screen keyboard ----
+class Typer:
+    """Types into whatever has keyboard focus on THIS screen's X display
+    (XTest), so the bottom screen's apps get the keys and the top never does.
+    Characters missing from the keymap borrow a spare key code for a moment."""
+    XK_SHIFT_L = 0xFFE1
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.dpy = None
+        self.x11 = self.xtst = None
+        self.borrowed: dict[int, int] = {}      # keysym -> spare key code, oldest first
+
+    def _open(self) -> bool:
+        if self.dpy:
+            return True
+        import ctypes
+        try:
+            self.x11 = ctypes.CDLL("libX11.so.6")
+            self.xtst = ctypes.CDLL("libXtst.so.6")
+        except OSError as exc:
+            log(f"typing: {exc}")
+            return False
+        x, c = self.x11, ctypes
+        x.XOpenDisplay.restype = c.c_void_p
+        x.XOpenDisplay.argtypes = [c.c_char_p]
+        x.XKeysymToKeycode.argtypes = [c.c_void_p, c.c_ulong]
+        x.XKeysymToKeycode.restype = c.c_ubyte
+        x.XkbKeycodeToKeysym.argtypes = [c.c_void_p, c.c_ubyte, c.c_int, c.c_int]
+        x.XkbKeycodeToKeysym.restype = c.c_ulong
+        x.XStringToKeysym.argtypes = [c.c_char_p]
+        x.XStringToKeysym.restype = c.c_ulong
+        x.XDisplayKeycodes.argtypes = [c.c_void_p, c.POINTER(c.c_int), c.POINTER(c.c_int)]
+        x.XGetKeyboardMapping.argtypes = [c.c_void_p, c.c_ubyte, c.c_int, c.POINTER(c.c_int)]
+        x.XGetKeyboardMapping.restype = c.POINTER(c.c_ulong)
+        x.XChangeKeyboardMapping.argtypes = [c.c_void_p, c.c_int, c.c_int, c.POINTER(c.c_ulong), c.c_int]
+        x.XFree.argtypes = [c.c_void_p]
+        x.XSync.argtypes = [c.c_void_p, c.c_int]
+        x.XFlush.argtypes = [c.c_void_p]
+        self.xtst.XTestFakeKeyEvent.argtypes = [c.c_void_p, c.c_uint, c.c_int, c.c_ulong]
+        self.dpy = x.XOpenDisplay(None)
+        return bool(self.dpy)
+
+    def _spare_keycode(self) -> int:
+        """An unused key code; once none is left, the longest-borrowed one."""
+        import ctypes as c
+        lo, hi, per = c.c_int(), c.c_int(), c.c_int()
+        self.x11.XDisplayKeycodes(self.dpy, c.byref(lo), c.byref(hi))
+        syms = self.x11.XGetKeyboardMapping(self.dpy, lo.value, hi.value - lo.value + 1, c.byref(per))
+        try:
+            for kc in range(hi.value, lo.value - 1, -1):
+                row = (kc - lo.value) * per.value
+                if all(syms[row + i] == 0 for i in range(per.value)):
+                    return kc
+        finally:
+            self.x11.XFree(syms)
+        if self.borrowed:
+            oldest = next(iter(self.borrowed))
+            return self.borrowed.pop(oldest)
+        return 0
+
+    def _tap(self, keysym: int) -> None:
+        import ctypes as c
+        x, t, d = self.x11, self.xtst, self.dpy
+        kc = x.XKeysymToKeycode(d, keysym)
+        shift = False
+        if kc:
+            shift = x.XkbKeycodeToKeysym(d, kc, 0, 0) != keysym and x.XkbKeycodeToKeysym(d, kc, 0, 1) == keysym
+        else:
+            # Map it onto a spare key and leave it there (apps pick up a new
+            # mapping a moment after MappingNotify; a key pressed before that,
+            # or a mapping taken back right after, types nothing).
+            kc = self._spare_keycode()
+            if not kc:
+                return
+            arr = (c.c_ulong * 2)(keysym, keysym)
+            x.XChangeKeyboardMapping(d, kc, 2, arr, 1)
+            x.XSync(d, 0)
+            self.borrowed[keysym] = kc
+            time.sleep(0.05)
+        sk = x.XKeysymToKeycode(d, self.XK_SHIFT_L) if shift else 0
+        if sk:
+            t.XTestFakeKeyEvent(d, sk, 1, 0)
+        t.XTestFakeKeyEvent(d, kc, 1, 0)
+        t.XTestFakeKeyEvent(d, kc, 0, 0)
+        if sk:
+            t.XTestFakeKeyEvent(d, sk, 0, 0)
+        x.XSync(d, 0)
+
+    def type(self, text, name) -> bool:
+        with self.lock:
+            if not self._open():
+                return False
+            if name:
+                ks = self.x11.XStringToKeysym(str(name).encode())
+                if ks:
+                    self._tap(ks)
+                return bool(ks)
+            for ch in str(text or "")[:500]:
+                cp = ord(ch)
+                self._tap(cp if 0x20 <= cp <= 0x7E or 0xA0 <= cp <= 0xFF else 0x1000000 | cp)
+            return True
+
+
+class KeyboardOverlay:
+    """The Keyboard.qml window as a gamescope overlay: shown = opaque and
+    STEAM_INPUT_FOCUS=2 (takes the touches, X keyboard focus stays on the app
+    underneath), hidden = transparent and no input. It stays mapped, as
+    Steam's keyboard does: gamescope stops watching an unmapped window."""
+    TITLE = "SteamOS Bottom Keyboard"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.visible = False
+        self.top = False
+        self.wid: str | None = None
+
+    def adopt(self) -> None:
+        """Make the keyboard window an overlay as soon as it maps (until then
+        gamescope could take it for the newest app window), hidden."""
+        while True:
+            with self.lock:
+                self.wid = None
+                wid = self._window()
+                if wid:
+                    run("xprop", "-id", wid, "-f", "STEAM_INPUT_FOCUS", "32c", "-set", "STEAM_INPUT_FOCUS", "0")
+                    run("xprop", "-id", wid, "-f", "_NET_WM_WINDOW_OPACITY", "32c", "-set", "_NET_WM_WINDOW_OPACITY", "0")
+                    self.visible = False
+            if wid:
+                show_dashboard()
+                return
+            time.sleep(0.3)
+
+    def _window(self) -> str | None:
+        if self.wid and any(w == self.wid for w, _ in toplevel_windows()):
+            return self.wid
+        self.wid = next((w for w, t in toplevel_windows() if t == self.TITLE), None)
+        if self.wid:
+            run("xprop", "-id", self.wid, "-f", "STEAM_OVERLAY", "32c", "-set", "STEAM_OVERLAY", "1")
+        return self.wid
+
+    def set(self, visible: bool, top=None) -> None:
+        with self.lock:
+            if top is not None:
+                self.top = bool(top)
+            if visible == self.visible:
+                return
+            self.visible = visible
+            wid = self._window()
+            if not wid:
+                return
+            run("xprop", "-id", wid, "-f", "STEAM_INPUT_FOCUS", "32c",
+                "-set", "STEAM_INPUT_FOCUS", "2" if visible else "0")
+            run("xprop", "-id", wid, "-f", "_NET_WM_WINDOW_OPACITY", "32c",
+                "-set", "_NET_WM_WINDOW_OPACITY", str(0xFFFFFFFF if visible else 0))
+
+    def state(self) -> dict:
+        return {"visible": self.visible, "top": self.top}
+
+
+def watch_text_focus() -> None:
+    """Show the keyboard when a text field in one of this screen's apps gets
+    focus, hide it when something else does (AT-SPI). The apps are started
+    with accessibility on (see Apps.launch), nothing else in the session is."""
+    try:
+        import gi
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi, GLib
+    except (ImportError, ValueError) as exc:
+        log(f"keyboard: no AT-SPI ({exc}), the keyboard only opens by hand")
+        return
+    screen_h = 1080
+    try:
+        out = run("xwininfo", "-root")
+        m = re.search(r"Height:\s+(\d+)", out)
+        screen_h = int(m.group(1)) if m else screen_h
+    except ValueError:
+        pass
+
+    def on_focus(event) -> None:
+        if not event.detail1:
+            return
+        try:
+            src = event.source
+            pids = set()
+            for app in APPS.running():
+                pids |= APPS.pids(app)
+            if src.get_process_id() not in pids:
+                return
+            states = src.get_state_set()
+            editable = states.contains(Atspi.StateType.EDITABLE) and not states.contains(Atspi.StateType.READ_ONLY)
+            if editable:
+                top = False
+                try:
+                    ext = src.get_extents(Atspi.CoordType.SCREEN)
+                    top = ext.y + ext.height / 2 > screen_h / 2
+                except Exception:
+                    pass
+                KEYBOARD.set(True, top)
+            else:
+                KEYBOARD.set(False)
+        except Exception as exc:  # an app going away mid-event
+            log(f"keyboard focus: {exc}")
+
+    Atspi.init()
+    listener = Atspi.EventListener.new(on_focus)
+    listener.register("object:state-changed:focused")
+    log("keyboard: watching text fields")
+    GLib.MainLoop().run()
+
+
+TOP_INPUT = TopInput()
+TYPER = Typer()
+KEYBOARD = KeyboardOverlay()
+
+
 # ------------------------------------------------------------------ http ----
 TOKEN = secrets.token_hex(16)
 APPS = Apps()
@@ -630,18 +1120,23 @@ class Handler(BaseHTTPRequestHandler):
                 "battery": battery(),
                 "temps": temperatures(),
                 "fan": fan_percent(),
-                "gpu_mhz": gpu_mhz(),
+                "cpu": cpu(),
+                "gpu": gpu(),
                 "fps": FPS.get(),
                 "power_w": power_watts(),
                 "memory": memory(),
                 **konkrd_state(),
                 "backlights": backlights(),
+                "dual": dual_backlight(),
+                "rgb": rgb_state(),
                 "volume": volume(),
                 "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
                 "running": [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
                             for i in APPS.running() if i in apps],
                 "show_stats": cfg.get("show_stats", True),
             })
+        elif self.path == "/keyboard":
+            self.reply(KEYBOARD.state())
         elif self.path == "/apps":
             pinned = set(load_config()["pinned"])
             self.reply([{"id": a["id"], "name": a["name"], "icon": a["icon"], "pinned": a["id"] in pinned}
@@ -659,7 +1154,25 @@ class Handler(BaseHTTPRequestHandler):
         elif path[0] == "konkrd" and len(path) == 2:
             ok = konkrd(path[1])
         elif path == ["brightness"]:
-            ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
+            if any(k in b for k in ("level", "bottom_share", "bottom_on")):
+                req = {"op": "set", **{k: b[k] for k in ("level", "bottom_share", "bottom_on") if k in b}}
+                ok = dual_backlight(req) is not None
+            else:
+                ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
+        elif path == ["rgb"]:
+            ok = set_rgb(b)
+        elif path == ["pointer"]:
+            ok = TOP_INPUT.move(int(b.get("dx", 0)), int(b.get("dy", 0)))
+        elif path == ["scroll"]:
+            ok = TOP_INPUT.scroll(int(b.get("dx", 0)), int(b.get("dy", 0)))
+        elif path == ["button"]:
+            ok = TOP_INPUT.button(str(b.get("button", "left")), str(b.get("state", "click")))
+        elif path == ["key"]:
+            ok = TOP_INPUT.key(b.get("text"), b.get("key"))
+        elif path == ["type"]:
+            ok = TYPER.type(b.get("text"), b.get("key"))
+        elif path == ["keyboard"]:
+            KEYBOARD.set(bool(b.get("visible")), b.get("top"))
         elif path == ["volume"]:
             set_volume(b.get("percent"), b.get("mute"))
         elif path == ["launch"]:
@@ -702,17 +1215,32 @@ def main() -> int:
     fd = os.open(api_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         json.dump({"url": f"http://127.0.0.1:{port}", "token": TOKEN}, fh)
-    # KDE platform theme: Breeze icons for the buttons and apps.
-    env = dict(os.environ, QT_QPA_PLATFORM="xcb", QT_QUICK_CONTROLS_MOBILE="1",
+    # KDE platform theme: Breeze icons for the buttons and apps. EGL straight
+    # on the GPU: through GLX the UI ended up on zink with gamescope's WSI
+    # layer in between, which recreated its swapchains and stuttered.
+    env = dict(os.environ, QT_QPA_PLATFORM="xcb", QT_XCB_GL_INTEGRATION="xcb_egl",
+               DISABLE_GAMESCOPE_WSI="1", QT_QUICK_CONTROLS_MOBILE="1",
                QML_XHR_ALLOW_FILE_READ="1", QT_QPA_PLATFORMTHEME="kde",
                XDG_CURRENT_DESKTOP="KDE")
     env.pop("WAYLAND_DISPLAY", None)
-    while True:
-        started = time.monotonic()
-        ui = subprocess.run(["qml6", str(QML), "--", str(api_file)], env=env)
-        if time.monotonic() - started < 3:
-            log(f"UI exited right away ({ui.returncode}), retrying in 5 s")
-            time.sleep(5)
+
+    def keep_running(qml: Path, name: str, after_start=None) -> None:
+        while True:
+            started = time.monotonic()
+            proc = subprocess.Popen(["qml6", str(qml), "--", str(api_file)], env=env)
+            if after_start:
+                threading.Thread(target=after_start, daemon=True).start()
+            rc = proc.wait()
+            if time.monotonic() - started < 3:
+                log(f"{name} exited right away ({rc}), retrying in 5 s")
+                time.sleep(5)
+
+    # The keyboard first, so it is an overlay before the dashboard maps.
+    threading.Thread(target=keep_running, args=(QML.parent / "Keyboard.qml", "keyboard", KEYBOARD.adopt),
+                     daemon=True).start()
+    threading.Thread(target=watch_text_focus, daemon=True).start()
+    time.sleep(1)
+    keep_running(QML, "UI")
 
 
 if __name__ == "__main__":

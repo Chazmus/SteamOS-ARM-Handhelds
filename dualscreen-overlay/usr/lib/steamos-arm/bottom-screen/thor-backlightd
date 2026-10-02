@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""thor-backlightd: one brightness slider for both AYN Thor screens.
+
+Steam's Game Mode brightness slider writes the first backlight it finds in
+/sys/class/backlight itself, and on the Thor that is the bottom panel
+(ae94000.dsi.0, before the top's ae96000.dsi.0). So moving the slider dimmed
+the bottom screen and left the top one alone.
+
+Before Game Mode starts (this unit runs before the display manager), this
+keeps the bottom panel's brightness file open and bind-mounts a plain file
+over it. Steam writes its level there and this is the only writer of both
+panels:
+
+  Game Mode     top    = Steam's level
+                bottom = Steam's level x the bottom share (10-100 %, set on
+                         the bottom-screen dashboard), on a gentler curve:
+                         the slider puts out its position to the power 2.2,
+                         and the bottom AMOLED is close to black that low
+  Desktop Mode  a write to the bottom panel's file goes to the bottom panel
+                as is (KDE sets each screen on its own)
+
+The bottom screen can also be switched off from the dashboard (backlight
+powered down; the panel driver powers it up again on every modeset and wake,
+so that is enforced on each pass).
+
+Requests on SOCKET (the user's group may write), one JSON object per
+connection, one reply line with the state:
+  {"op": "get"}
+  {"op": "set", "level": 0-100}        Steam's level, as Steam's slider would
+  {"op": "set", "bottom_share": 10-100}
+  {"op": "set", "bottom_on": bool}
+"""
+from __future__ import annotations
+
+import glob
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+import time
+
+TOP = "/sys/class/backlight/ae96000.dsi.0"
+BOTTOM = "/sys/class/backlight/ae94000.dsi.0"
+RUN_DIR = "/run/steamos-arm"
+STEAM_FILE = f"{RUN_DIR}/thor-steam-brightness"
+SOCKET = f"{RUN_DIR}/thor-backlight.sock"
+STATE = "/var/lib/steamos-arm/thor-backlight.json"
+STEAM_GAMMA = 2.2
+SHARE_MIN = 10
+POLL_S = 0.1
+ENFORCE_S = 2.0
+
+
+def log(msg: str) -> None:
+    print(f"thor-backlightd: {msg}", file=sys.stderr, flush=True)
+
+
+def rd(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def mounted(path: str) -> bool:
+    for line in rd("/proc/self/mountinfo").splitlines():
+        if line.split()[4:5] == [path]:
+            return True
+    return False
+
+
+def notify_ready() -> None:
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.sendto(b"READY=1", addr)
+    except OSError:
+        pass
+
+
+def game_mode() -> bool:
+    """A gamescope runs (Game Mode); Desktop Mode has none."""
+    for comm in glob.glob("/proc/[0-9]*/comm"):
+        try:
+            with open(comm, encoding="utf-8") as fh:
+                if fh.read().startswith("gamescope"):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+class Panel:
+    """A backlight written through a file descriptor kept open, so it still
+    works with something mounted over its brightness file."""
+
+    def __init__(self, d: str):
+        self.d = d
+        self.max = int(rd(f"{d}/max_brightness", "0") or 0)
+        self.fd = os.open(f"{d}/brightness", os.O_RDWR)
+        self.last = -1
+
+    def read(self) -> int:
+        try:
+            return int(os.pread(self.fd, 32, 0).decode().strip() or 0)
+        except (OSError, ValueError):
+            return -1
+
+    def write(self, value: int, force: bool = False) -> None:
+        value = max(0, min(self.max, int(value)))
+        if value == self.last and not force:
+            return
+        try:
+            os.pwrite(self.fd, str(value).encode(), 0)
+            self.last = value
+        except OSError as exc:
+            log(f"{os.path.basename(self.d)}: {exc}")
+
+    def power(self, on: bool) -> None:
+        want = "0" if on else "4"
+        if rd(f"{self.d}/bl_power") != want:
+            try:
+                with open(f"{self.d}/bl_power", "w", encoding="utf-8") as fh:
+                    fh.write(want)
+            except OSError as exc:
+                log(f"bl_power: {exc}")
+
+
+class Daemon:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cfg = {"bottom_share": 100, "bottom_on": True}
+        try:
+            saved = json.loads(rd(STATE, "{}"))
+            if isinstance(saved, dict):
+                self.cfg.update({k: saved[k] for k in self.cfg if k in saved})
+        except ValueError:
+            pass
+        os.makedirs(RUN_DIR, exist_ok=True)
+        # A restart finds its own mount still there: lift it to reach the
+        # real file again.
+        if mounted(f"{BOTTOM}/brightness"):
+            subprocess.run(["umount", f"{BOTTOM}/brightness"], check=False)
+        self.top = Panel(TOP)
+        self.bottom = Panel(BOTTOM)
+        # Steam sees the bottom panel's range; start from the top's level.
+        start = self.top.read()
+        frac = start / self.top.max if self.top.max and start >= 0 else 0.5
+        self.steam_max = self.bottom.max
+        self.write_steam_file(round(frac * self.steam_max))
+        subprocess.run(["mount", "--bind", STEAM_FILE, f"{BOTTOM}/brightness"], check=True)
+        self.mtime = os.stat(STEAM_FILE).st_mtime_ns
+        self.level = frac
+        log(f"Steam's slider now drives both screens (top max {self.top.max}, bottom max {self.bottom.max})")
+
+    def write_steam_file(self, value: int) -> None:
+        tmp = STEAM_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(f"{value}\n")
+        try:
+            import grp
+            os.chown(tmp, 0, grp.getgrnam("video").gr_gid)
+        except (KeyError, OSError):
+            pass
+        os.chmod(tmp, 0o664)
+        if os.path.exists(STEAM_FILE) and mounted(f"{BOTTOM}/brightness"):
+            # Bind mounts follow the inode: rewrite in place, never replace.
+            with open(STEAM_FILE, "w", encoding="utf-8") as fh:
+                fh.write(f"{value}\n")
+            os.unlink(tmp)
+        else:
+            os.replace(tmp, STEAM_FILE)
+
+    def save(self) -> None:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        tmp = STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.cfg, fh)
+        os.replace(tmp, STATE)
+
+    def steam_value(self) -> int | None:
+        try:
+            with open(STEAM_FILE, encoding="utf-8") as fh:
+                return int(fh.read().strip() or 0)
+        except (OSError, ValueError):
+            return None
+
+    def apply(self, force: bool = False, top: bool = True) -> None:
+        """top=False on the periodic pass: gamescope also sets the top panel
+        from Steam's brightness atom, so only a new level from Steam (or the
+        dashboard) touches it here; the bottom panel is enforced always."""
+        with self.lock:
+            v = self.steam_value()
+            if v is None:
+                return
+            if game_mode():
+                self.level = max(0.0, min(1.0, v / max(self.steam_max, 1)))
+                if top:
+                    self.top.write(max(1, round(self.level * self.top.max)), force)
+                share = max(SHARE_MIN, min(100, int(self.cfg["bottom_share"]))) / 100
+                pos = self.level ** (1 / STEAM_GAMMA)
+                self.bottom.write(max(1, round(pos * share * self.bottom.max)), force)
+            else:
+                self.bottom.write(v, force)
+            self.bottom.power(bool(self.cfg["bottom_on"]))
+
+    def state(self) -> dict:
+        return {"level": round(self.level * 100), **self.cfg}
+
+    def handle(self, req: dict) -> dict:
+        if req.get("op") == "set":
+            if "level" in req:
+                pct = max(1, min(100, int(req["level"])))
+                with self.lock:
+                    self.write_steam_file(round(pct / 100 * self.steam_max))
+            if "bottom_share" in req:
+                self.cfg["bottom_share"] = max(SHARE_MIN, min(100, int(req["bottom_share"])))
+            if "bottom_on" in req:
+                self.cfg["bottom_on"] = bool(req["bottom_on"])
+            self.save()
+            self.apply(force=True)
+        return self.state()
+
+    def serve(self) -> None:
+        if os.path.exists(SOCKET):
+            os.unlink(SOCKET)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(SOCKET)
+        try:
+            import grp
+            os.chown(SOCKET, 0, grp.getgrnam("video").gr_gid)
+        except (KeyError, OSError):
+            pass
+        os.chmod(SOCKET, 0o660)
+        srv.listen(4)
+        while True:
+            conn, _ = srv.accept()
+            with conn:
+                conn.settimeout(2)
+                try:
+                    data = b""
+                    while not data.endswith(b"\n") and len(data) < 4096:
+                        chunk = conn.recv(1024)
+                        if not chunk:
+                            break
+                        data += chunk
+                    reply = self.handle(json.loads(data or b"{}"))
+                except (OSError, ValueError, TypeError) as exc:
+                    reply = {"error": str(exc)}
+                try:
+                    conn.sendall(json.dumps(reply).encode() + b"\n")
+                except OSError:
+                    pass
+
+    def run(self) -> None:
+        threading.Thread(target=self.serve, daemon=True).start()
+        self.apply(force=True)
+        notify_ready()
+        next_enforce = time.monotonic() + ENFORCE_S
+        while True:
+            time.sleep(POLL_S)
+            try:
+                m = os.stat(STEAM_FILE).st_mtime_ns
+            except OSError:
+                continue
+            now = time.monotonic()
+            if m != self.mtime:
+                self.mtime = m
+                self.apply()
+            elif now >= next_enforce:
+                next_enforce = now + ENFORCE_S
+                self.apply(force=True, top=False)
+
+
+def main() -> int:
+    if not (os.path.isdir(TOP) and os.path.isdir(BOTTOM)):
+        log("no Thor backlights, nothing to do")
+        notify_ready()
+        return 0
+    Daemon().run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

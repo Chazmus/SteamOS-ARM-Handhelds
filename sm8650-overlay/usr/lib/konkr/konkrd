@@ -572,7 +572,12 @@ def battery() -> tuple[int, str]:
 class Leds:
     def __init__(self):
         self.power = led("power-led")
-        self.sticks = led("joysticks")
+        # One multicolor LED for the sticks (KONKR), or one per zone around
+        # them (AYN Thor: rgb:l1-l4 and rgb:r1-r4).
+        one = led("joysticks")
+        self.sticks = [one] if one else sorted(
+            d for d in glob.glob("/sys/class/leds/rgb:[lr][0-9]")
+            if os.path.exists(f"{d}/multi_intensity"))
         self.flash_until = 0.0
         self.pulse = False
 
@@ -598,23 +603,23 @@ class Leds:
             wr(f"{self.power}/brightness", 0)
 
     def apply_sticks(self, st: dict) -> None:
-        if not self.sticks:
-            return
         cfg = st["rgb"]
         mode = cfg.get("mode", "static")
-        if mode == "off":
-            wr(f"{self.sticks}/brightness", 0)
-            return
         color = cfg.get("color", "ff3c00")
         if not isinstance(color, str) or len(color) != 6 or any(c not in "0123456789abcdefABCDEF" for c in color):
             color = "ff3c00"
         rgb = tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
-        eff = f"{self.sticks}/effect"
-        if mode == "breath":
-            wr(eff, "breath {} {} {}".format(*rgb))
-        else:
-            wr(eff, "static")
-            led_rgb(self.sticks, rgb, int(cfg.get("brightness", 160)))
+        for d in self.sticks:
+            if mode == "off":
+                wr(f"{d}/brightness", 0)
+                continue
+            eff = f"{d}/effect"
+            if mode == "breath" and os.path.exists(eff):
+                wr(eff, "breath {} {} {}".format(*rgb))
+                continue
+            if os.path.exists(eff):
+                wr(eff, "static")
+            led_rgb(d, rgb, int(cfg.get("brightness", 160)))
 
 
 RGB_PRESETS = [("static", "ff3c00"), ("static", "00b4ff"), ("static", "a000ff"),
@@ -937,6 +942,23 @@ class Daemon:
             self.leds.flash(PROFILE_RGB[p])
         log(f"profile {p}")
 
+    def set_rgb(self, req: str) -> None:
+        """rgb-set:<static|breath|off>:<rrggbb>:<brightness 0-255> from the
+        bottom-screen dashboard's colour picker."""
+        parts = req.split(":")
+        if len(parts) != 4 or parts[1] not in ("static", "breath", "off"):
+            return
+        color = parts[2].lower()
+        if len(color) != 6 or any(c not in "0123456789abcdef" for c in color):
+            return
+        try:
+            bri = max(0, min(255, int(parts[3])))
+        except ValueError:
+            return
+        self.st["rgb"].update(mode=parts[1], color=color, brightness=bri)
+        save_state(self.st)
+        self.leds.apply_sticks(self.st)
+
     def action(self, name: str) -> None:
         if name == "profile-next":
             i = PROFILES.index(self.st["profile"])
@@ -1040,6 +1062,8 @@ class Daemon:
                     break
                 if req in REQUEST_ACTIONS and not os.path.exists(STANDBY_FLAG):
                     self.action(req)
+                elif req.startswith("rgb-set:") and not os.path.exists(STANDBY_FLAG):
+                    self.set_rgb(req)
             if (power_down_at is not None and not power_long_sent
                     and time.monotonic() - power_down_at >= LONG_PRESS_S):
                 power_press(long=True)

@@ -544,8 +544,13 @@ chmod 0755 "$R/usr/lib/steamos/sm8550-audio-setup" "$R/usr/lib/konkr/konkrd" \
   "$R/usr/bin/konkrctl" "$R/usr/bin/konkr-game" "$R/usr/lib/konkr/konkr-standby" \
   "$R/usr/lib/konkr/konkr-volume" "$R/usr/lib/konkr/konkr-sleep" \
   "$R/usr/lib/konkr/konkr-suspend" "$R/usr/lib/konkr/konkr-focusfix" \
-  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" \
+  "$R/usr/bin/konkr-apk" "$R/usr/lib/konkr/apk-info" "$R/usr/lib/konkr/konkr-pd-kick" \
   "$R/usr/lib/NetworkManager/dispatcher.d/60-konkr-timesync"
+# The copy above drops modes: keep every script in /usr/lib/konkr runnable
+# (konkr-pd-kick was missed once and its service could not start).
+for f in "$R/usr/lib/konkr/"*; do
+  [ -f "$f" ] && head -c2 "$f" | grep -q '^#!' && chmod 0755 "$f"
+done
 # Game mode: re-activate the game after Quick Access / Steam menu closes.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
 ln -sfn ../konkr-focusfix.service \
@@ -641,14 +646,19 @@ cp -r --no-preserve=mode,ownership "$DS_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
   "$R/usr/lib/steamos-arm/bottom-screen/qml" \
   "$R/usr/lib/steamos-arm/bottom-screen/bottom-screen-session" \
-  "$R/usr/lib/steamos-arm/bottom-screen/dashboard"
-chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/Main.qml" \
+  "$R/usr/lib/steamos-arm/bottom-screen/dashboard" \
+  "$R/usr/lib/steamos-arm/bottom-screen/thor-backlightd"
+chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/"*.qml \
   "$R/usr/lib/systemd/user/bottom-screen.service" \
   "$R/usr/lib/systemd/system/bottom-screen-bootflag.service" \
+  "$R/usr/lib/systemd/system/thor-backlightd.service" \
   "$R/usr/share/polkit-1/rules.d/60-steamos-arm-bottom-screen.rules"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../bottom-screen-bootflag.service \
   "$R/usr/lib/systemd/system/multi-user.target.wants/bottom-screen-bootflag.service"
+# Thor only (ConditionFirmware): Steam's brightness slider for both screens.
+ln -sfn ../thor-backlightd.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/thor-backlightd.service"
 # /etc is an overlay mounted after systemd reads units: enable under /usr.
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
 ln -sfn ../bottom-screen.service \
