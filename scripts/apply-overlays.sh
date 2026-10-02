@@ -518,8 +518,9 @@ chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-a
 # so drop both layers; the loader then just warns that they're missing.
 mkdir -p "$R/usr/share/vulkan/explicit_layer.d.frame"
 for _l in VkLayer_VALVE_rpo.json VkLayer_VALVE_fdm_injection.json; do
-  [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]] &&
+  if [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]]; then
     mv -f "$R/usr/share/vulkan/explicit_layer.d/$_l" "$R/usr/share/vulkan/explicit_layer.d.frame/"
+  fi
 done
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
 # so its VR speaker filter chain owns it; that chain is disabled here, which

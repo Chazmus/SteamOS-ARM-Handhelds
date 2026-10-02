@@ -454,8 +454,9 @@ ln -sfn /usr/lib/systemd/system/odin3d.service \
 # so drop both layers; the loader then just warns that they're missing.
 mkdir -p "$R/usr/share/vulkan/explicit_layer.d.frame"
 for _l in VkLayer_VALVE_rpo.json VkLayer_VALVE_fdm_injection.json; do
-  [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]] &&
+  if [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]]; then
     mv -f "$R/usr/share/vulkan/explicit_layer.d/$_l" "$R/usr/share/vulkan/explicit_layer.d.frame/"
+  fi
 done
 # Permissions
 find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/KONKR" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
