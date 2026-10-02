@@ -51,7 +51,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            python3-requests python3-zstandard python3-venv \
+            python3-requests python3-zstandard python3-venv python3-packaging \
             bubblewrap squashfs-tools rsync zstd unzip \
             clang lld llvm \
             gcc-x86-64-linux-gnu g++-x86-64-linux-gnu \
@@ -65,7 +65,7 @@ jobs:
       - name: Set up Python venv (Meson >= 1.4)
         run: |
           python3 -m venv "$MESA_WORK/venv"
-          "$MESA_WORK/venv/bin/pip" install meson mako pyyaml
+          "$MESA_WORK/venv/bin/pip" install meson mako pyyaml packaging ply
 
       # Download the SteamOS rootfs — required as the build environment
       # for the native aarch64 Mesa build (bwrap mounts it as /).
