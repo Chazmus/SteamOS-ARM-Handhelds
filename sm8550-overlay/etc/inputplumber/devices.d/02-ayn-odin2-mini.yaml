@@ -1,9 +1,10 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYN Odin 2 Mini: same as 02-ayn-odin.yaml, with its own button map
-# (ayn_mini_mcu): its A/B come in the other way round from the Odin 2.
+# AYN Odin 2 Mini and Portal: same as 02-ayn-odin.yaml, with their own button
+# map (ayn_mini_mcu): their A/B come in the other way round from the Odin 2
+# (a Mini tester, and a Portal evtest from a contributor: A=BTN_SOUTH).
 version: 1
 kind: CompositeDevice
-name: AYN Odin 2 Mini
+name: AYN Odin 2 Mini / Portal
 
 matches:
   - udev:
@@ -11,6 +12,11 @@ matches:
       attributes:
         - name: model
           value: AYN Odin 2 Mini
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYN Odin 2 Portal
 
 single_source: false
 

@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# AYN Odin 2 Mini: same rsinput pad, but A/B come in positionally, unlike the
-# Odin 2 (a Mini tester had A/B backwards with the Odin 2 map in beta 9).
+# AYN Odin 2 Mini and Portal: same rsinput pad, but A/B come in positionally,
+# unlike the Odin 2 (a Mini tester had A/B backwards with the Odin 2 map in beta 9).
 # D-pad as buttons, QAM, Guide, West/North swap.
 version: 2
 kind: CapabilityMap
-name: AYN Odin 2 Mini MCU Mapping
+name: AYN Odin 2 Mini / Portal MCU Mapping
 id: ayn_mini_mcu
 
 mapping:

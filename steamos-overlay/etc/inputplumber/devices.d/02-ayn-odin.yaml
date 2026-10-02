@@ -18,11 +18,6 @@ matches:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Odin 2 Portal
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
           value: AYN Thor
 
 single_source: false
