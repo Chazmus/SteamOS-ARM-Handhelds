@@ -130,7 +130,7 @@ Active-set votes are never modified.
 +static int rpmh_regulator_vrm_active_pmic_mode(struct rpmh_vreg *vreg)
 +{
 +	if (vreg->bypassed)
-+		return vreg->hw_data->pmic_bypass_mode;
++		return PMIC4_BOB_MODE_PASS;	/* 7.2.0 has no per-PMIC bypass value yet */
 +
 +	if (vreg->mode == REGULATOR_MODE_INVALID)
 +		return -EINVAL;
