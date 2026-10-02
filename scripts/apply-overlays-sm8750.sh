@@ -447,6 +447,16 @@ chmod 0644 "$R/etc/odin3.conf" "$R/usr/lib/systemd/system/odin3d.service" 2>/dev
 ln -sfn /usr/lib/systemd/system/odin3d.service \
   "$R/etc/systemd/system/multi-user.target.wants/odin3d.service"
 
+# Steam (Frame client) launches every game with
+# VK_INSTANCE_LAYERS=VK_LAYER_VALVE_rpo:VK_LAYER_VALVE_fdm_injection: the
+# headset's renderpass optimizer (rewrites shaders, tuned for the Frame's
+# Adreno 750) and eye-tracked foveation (FDM). A handheld has no headset,
+# so drop both layers; the loader then just warns that they're missing.
+mkdir -p "$R/usr/share/vulkan/explicit_layer.d.frame"
+for _l in VkLayer_VALVE_rpo.json VkLayer_VALVE_fdm_injection.json; do
+  [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]] &&
+    mv -f "$R/usr/share/vulkan/explicit_layer.d/$_l" "$R/usr/share/vulkan/explicit_layer.d.frame/"
+done
 # Permissions
 find "$R/usr/share/alsa/ucm2/AYN/Odin3" "$R/usr/share/alsa/ucm2/KONKR" "$R/usr/share/alsa/ucm2/conf.d/sm8750" \
   -type d -exec chmod 0755 {} + 2>/dev/null || true

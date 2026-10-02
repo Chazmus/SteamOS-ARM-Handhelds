@@ -511,6 +511,16 @@ fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
 chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README"
+# Steam (Frame client) launches every game with
+# VK_INSTANCE_LAYERS=VK_LAYER_VALVE_rpo:VK_LAYER_VALVE_fdm_injection: the
+# headset's renderpass optimizer (rewrites shaders, tuned for the Frame's
+# Adreno 750) and eye-tracked foveation (FDM). A handheld has no headset,
+# so drop both layers; the loader then just warns that they're missing.
+mkdir -p "$R/usr/share/vulkan/explicit_layer.d.frame"
+for _l in VkLayer_VALVE_rpo.json VkLayer_VALVE_fdm_injection.json; do
+  [[ -f "$R/usr/share/vulkan/explicit_layer.d/$_l" ]] &&
+    mv -f "$R/usr/share/vulkan/explicit_layer.d/$_l" "$R/usr/share/vulkan/explicit_layer.d.frame/"
+done
 # Audio: the Frame (also SM8650) hides the raw speaker node from every client
 # so its VR speaker filter chain owns it; that chain is disabled here, which
 # left the speakers unreachable. Drop the speaker from Valve's access rules.
