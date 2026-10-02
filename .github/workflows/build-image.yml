@@ -130,9 +130,31 @@ jobs:
           MESA_DIR="${STEAMOS_WORK}/mesa-stack"
           mkdir -p "$MESA_DIR"
           tar -xf mesa-download/mesa-sm8750.tar.zst --zstd -C "$MESA_DIR"
+          rm -rf ./mesa-download
           echo "Mesa staged at $MESA_DIR"
           ls -la "$MESA_DIR/"
           echo "=== Disk after staging ==="
+          df -h /
+
+      # ── Download pre-built Steam ARM seed ────────────────────────────
+      - name: Download Steam ARM seed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ./seed-download
+          if gh release download steam-seed-v1 \
+               --pattern "steam-arm-seed.tar.zst" \
+               --repo "${{ github.repository }}" \
+               -D ./seed-download/; then
+            echo "Downloaded steam-arm-seed.tar.zst"
+            tar -xf ./seed-download/steam-arm-seed.tar.zst --zstd -C "${STEAMOS_WORK}"
+            rm -rf ./seed-download
+            echo "Steam seed staged at ${STEAMOS_WORK}/steam-arm-seed"
+            ls -la "${STEAMOS_WORK}/steam-arm-seed/"
+          else
+            echo "::warning::Steam seed release not found; build will use fallback"
+          fi
+          echo "=== Disk after seed staging ==="
           df -h /
 
       # ── Build the image ──────────────────────────────────────────────
@@ -141,7 +163,10 @@ jobs:
           export SM8750_KERNEL=source
           export SM8750_KERNEL_WORK="${STEAMOS_WORK}/kernel-sm8750-src"
           export MESA_STACK="${STEAMOS_WORK}/mesa-stack"
-          # No STEAM_ARM_SEED — MVP: first boot downloads Steam client
+          if [ -d "${STEAMOS_WORK}/steam-arm-seed" ]; then
+            export STEAM_ARM_SEED="${STEAMOS_WORK}/steam-arm-seed"
+            echo "Using STEAM_ARM_SEED=$STEAM_ARM_SEED"
+          fi
           ./make-steamos-sm8750.sh
 
       - name: Check disk after build

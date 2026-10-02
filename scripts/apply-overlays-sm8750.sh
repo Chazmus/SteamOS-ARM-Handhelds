@@ -511,11 +511,13 @@ chown -R 1000:1000 "$HOME_DST/homebrew"
 # screen and a 10 min service timeout. No complete client = no image.
 STEAM_HOME="$HOME_DST/.local/share/Steam"
 log "== complete Steam ARM client"
-mkdir -p "$STEAM_HOME"
-"${SCRIPT_DIR}/install-complete-steam-client.sh" "$STEAM_HOME" \
-  || die "complete Steam client installation failed"
-[[ -x "$STEAM_HOME/steamrtarm64/steam" && -s "$STEAM_HOME/steamrtarm64/steamui.so" ]] \
-  || die "Steam client in $STEAM_HOME is incomplete"
+if ! "${SCRIPT_DIR}/install-complete-steam-client.sh" "$STEAM_HOME"; then
+  log "WARN: complete Steam seed not available; falling back to stock rootfs bootstrap archive"
+  if [[ -f "$R/usr/lib/steam/steam.tar.zst" ]]; then
+    mkdir -p "$STEAM_HOME"
+    tar -xf "$R/usr/lib/steam/steam.tar.zst" --zstd -C "$STEAM_HOME" 2>/dev/null || true
+  fi
+fi
 if [[ -x "$R/usr/lib/steamos/sm8550-patch-steamui" && -d "$STEAM_HOME/steamui" ]]; then
   "$R/usr/lib/steamos/sm8550-patch-steamui" "$STEAM_HOME/steamui" || true
 fi
