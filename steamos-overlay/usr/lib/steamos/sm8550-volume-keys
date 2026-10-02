@@ -11,6 +11,7 @@ import glob
 import os
 import select
 import struct
+import time
 import subprocess
 import sys
 
@@ -22,7 +23,10 @@ KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP = 115
 STEP = os.environ.get("SM8550_VOLUME_STEP", "5%")
 LIMIT = os.environ.get("SM8550_VOLUME_LIMIT", "1.0")
-ALLOW = ("gpio-keys", "pmic_resin")
+# InputPlumber's keyboard too: on the RP6 it grabs gpio-keys for the back
+# paddles, so Volume Up only comes through its keyboard (a grabbed device's
+# raw events reach nobody else, so nothing is counted twice).
+ALLOW = ("gpio-keys", "pmic_resin", "inputplumber keyboard")
 
 
 def log(msg: str) -> None:
@@ -69,9 +73,11 @@ def has_volume_keys(fd: int) -> bool:
     return bit(KEY_VOLUMEUP) or bit(KEY_VOLUMEDOWN) or bit(KEY_MUTE)
 
 
-def open_devices() -> list[tuple[str, int]]:
+def open_devices(skip: frozenset = frozenset()) -> list[tuple[str, int]]:
     opened: list[tuple[str, int]] = []
     for path in sorted(glob.glob("/dev/input/event*")):
+        if path in skip:
+            continue
         dname = device_name(path).lower()
         if not any(a in dname for a in ALLOW):
             continue
@@ -114,12 +120,24 @@ def apply(code: int) -> None:
 
 
 def main() -> int:
-    devs = open_devices()
-    if not devs:
-        log("no gpio-keys/pmic_resin volume devices")
-        return 0
-    fds = {fd: path for path, fd in devs}
+    fds = {fd: path for path, fd in open_devices()}
+    if not fds:
+        log("no volume devices yet, waiting")
+    last_scan = time.monotonic()
     while True:
+        # InputPlumber recreates its keyboard when its devices change: drop
+        # handles that died and pick up new devices every 10 s.
+        if time.monotonic() - last_scan >= 10:
+            last_scan = time.monotonic()
+            for fd, path in list(fds.items()):
+                if not os.path.exists(path):
+                    os.close(fd)
+                    del fds[fd]
+            for path, fd in open_devices(frozenset(fds.values())):
+                fds[fd] = path
+        if not fds:
+            time.sleep(2)
+            continue
         try:
             ready, _, _ = select.select(list(fds), [], [], 2.0)
         except InterruptedError:
@@ -128,6 +146,9 @@ def main() -> int:
             try:
                 data = os.read(fd, EVENT_SIZE * 8)
             except OSError:
+                log(f"lost {fds[fd]}")
+                os.close(fd)
+                del fds[fd]
                 continue
             for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                 _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
