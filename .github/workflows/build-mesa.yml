@@ -55,6 +55,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Load version manifest
+        run: |
+          grep -v '^#' versions.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
+
       - name: Set up Python venv (Meson >= 1.4)
         run: |
           python3 -m venv "$MESA_WORK/venv"

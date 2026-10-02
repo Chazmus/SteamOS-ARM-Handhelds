@@ -56,6 +56,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Load version manifest
+        run: |
+          grep -v '^#' versions.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
+
       # ── Download pre-built kernel ────────────────────────────────────
       - name: Download kernel artifact
         env:
@@ -142,7 +146,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p ./seed-download
-          if gh release download steam-seed-v1 \
+          if gh release download "${STEAM_SEED_TAG:-steam-seed-v1}" \
                --pattern "steam-arm-seed.tar.zst" \
                --repo "${{ github.repository }}" \
                -D ./seed-download/; then

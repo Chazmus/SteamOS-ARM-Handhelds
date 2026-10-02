@@ -6,6 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${ROOT}/versions.env" ]] && source "${ROOT}/versions.env"
 SCRIPTS="${ROOT}/scripts"
 WORKDIR="${STEAMOS_WORK:-${ROOT}/sm8750-work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
