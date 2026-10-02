@@ -66,10 +66,17 @@ if [[ "$MANGOAPP" == 1 ]]; then
   export STEAM_MANGOAPP_PRESETS_SUPPORTED=1
   export STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
   export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
-  MANGOHUD_CONFIGFILE="$(mktemp "$XDG_RUNTIME_DIR/mangohud.XXXXXXXX")"
+  # A stable name, not mktemp's random one: Steam races gamescope-session
+  # to write the real preset into this file before mangoapp's first read,
+  # and losing that race (switch to Desktop and back, a bare
+  # gamescope-session restart) left the overlay stuck on "no_display"
+  # forever, since a fresh random name each time meant Steam's last write
+  # was never seen again. Reusing one path across restarts within the same
+  # login means mangoapp's first read already has Steam's last-known-good
+  # content, so there's nothing to race.
+  MANGOHUD_CONFIGFILE="$XDG_RUNTIME_DIR/mangohud-config"
   export MANGOHUD_CONFIGFILE
-  # Steam writes presets into this file; start hidden.
-  echo "no_display" >"$MANGOHUD_CONFIGFILE"
+  [[ -s "$MANGOHUD_CONFIGFILE" ]] || echo "no_display" >"$MANGOHUD_CONFIGFILE"
 else
   export GAMESCOPE_MANGOAPP_SOCKET_DISABLE=1
 fi

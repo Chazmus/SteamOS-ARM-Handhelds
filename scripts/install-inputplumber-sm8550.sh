@@ -96,7 +96,25 @@ install_libiio() {
   fi
   command -v cmake >/dev/null || die "cmake required to build libiio"
   local bld="${CACHE}/libiio-src/build-steamos"
+  # Wipe rather than reconfigure: a stale cache from a prior compiler
+  # silently dropped our -D...=OFF backend flags on CMake's forced
+  # reconfigure, re-enabling USB/network/iiod and breaking the build.
+  rm -rf "$bld"
+  # Cross-compile when the build host isn't aarch64: a native build here
+  # silently links a host-arch libiio.so into the rootfs, and InputPlumber
+  # fails on-device with a misleading "cannot open shared object file".
+  local cross_args=()
+  if [[ "$(uname -m)" != aarch64 ]]; then
+    command -v aarch64-linux-gnu-gcc >/dev/null \
+      || die "building libiio for aarch64 on a $(uname -m) host needs a cross compiler (pacman -S aarch64-linux-gnu-gcc, or apt install gcc-aarch64-linux-gnu)"
+    cross_args=(
+      -DCMAKE_SYSTEM_NAME=Linux
+      -DCMAKE_SYSTEM_PROCESSOR=aarch64
+      -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+    )
+  fi
   cmake -S "$src" -B "$bld" \
+    "${cross_args[@]}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_INSTALL_LIBDIR=lib \
@@ -113,6 +131,12 @@ install_libiio() {
     -DWITH_AIO=OFF \
     -DWITH_HWMON=ON
   cmake --build "$bld" -j"$(nproc)"
+  if command -v file >/dev/null; then
+    local built_so
+    built_so="$(readlink -f "$bld/libiio.so")"
+    file "$built_so" | grep -q "ARM aarch64" \
+      || die "built libiio ($built_so) is not aarch64: $(file "$built_so")"
+  fi
   DESTDIR="$R" cmake --install "$bld"
   if [[ -e "${R}/usr/lib/aarch64-linux-gnu/libiio.so.0" && ! -e "${R}/usr/lib/libiio.so.0" ]]; then
     ln -sfn aarch64-linux-gnu/libiio.so.0 "${R}/usr/lib/libiio.so.0"
