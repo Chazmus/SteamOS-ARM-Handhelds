@@ -83,16 +83,19 @@ jobs:
       - name: Stage kernel
         run: |
           # The kernel build (SM8750_KERNEL=source) produces output in a
-          # release-named directory. Create the structure that ensure_kernel()
-          # expects for the source path.
+          # release-named directory (e.g. 7.2.0-sm8750-steamos). Create the
+          # structure that ensure_kernel() expects for the source path.
           KWORK="${STEAMOS_WORK}/kernel-sm8750-src"
-          mkdir -p "$KWORK/output"
-          # Extract kernel artifact into a release directory
-          KREL_DIR="$KWORK/output/kernel-release"
-          mkdir -p "$KREL_DIR"
-          tar -xzf kernel-download/kernel-sm8750.tar.gz -C "$KREL_DIR"
+          mkdir -p "$KWORK/output/tmp"
+          tar -xzf kernel-download/kernel-sm8750.tar.gz -C "$KWORK/output/tmp"
+          # Discover the exact kernel release name from the modules directory:
+          KREL="$(basename "$KWORK/output/tmp/modules/"*)"
+          echo "Kernel release detected: $KREL"
+          KREL_DIR="$KWORK/output/$KREL"
+          rm -rf "$KREL_DIR"
+          mv "$KWORK/output/tmp" "$KREL_DIR"
           # Create the 'current' symlink that ensure_kernel looks for
-          ln -sfn kernel-release "$KWORK/output/current"
+          ln -sfn "$KREL" "$KWORK/output/current"
           echo "Kernel staged at $KREL_DIR"
           ls -la "$KREL_DIR/boot/"
           echo "Kernel config FTRACE check:"
