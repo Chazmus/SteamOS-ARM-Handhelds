@@ -189,6 +189,73 @@ def freeze_targets() -> list[str]:
             if own != path and not own.startswith(path + "/")]
 
 
+# System services that only turn input into input while the screen is off.
+# InputPlumber reads every report the controller MCU streams (hundreds a
+# second) and keeps the CPUs from their deepest idle all night. The power key
+# is read here directly, so waking does not need it.
+FREEZE_SYSTEM = ["/sys/fs/cgroup/system.slice/inputplumber.service"]
+
+
+def battery_now() -> dict:
+    for b in glob.glob("/sys/class/power_supply/*"):
+        if rd(f"{b}/type") != "Battery":
+            continue
+        out = {"pct": rd(f"{b}/capacity")}
+        for k in ("energy_now", "charge_now", "voltage_now", "status"):
+            out[k] = rd(f"{b}/{k}")
+        return out
+    return {}
+
+
+def interrupts() -> dict[str, int]:
+    """IRQ name -> count summed over CPUs."""
+    out: dict[str, int] = {}
+    lines = rd("/proc/interrupts").splitlines()
+    if not lines:
+        return out
+    ncpu = len(lines[0].split())
+    for line in lines[1:]:
+        f = line.split()
+        if not f:
+            continue
+        counts = [int(x) for x in f[1:1 + ncpu] if x.isdigit()]
+        name = " ".join(f[1 + len(counts):])[-40:] or f[0]
+        out[f"{f[0]} {name}"] = sum(counts)
+    return out
+
+
+def standby_report(t0: float, b0: dict, irq0: dict[str, int]) -> None:
+    """Battery used and the busiest interrupts, for standby drain reports
+    (journalctl -b | grep konkr-standby)."""
+    hours = (time.monotonic() - t0) / 3600
+    b1 = battery_now()
+    msg = f"standby report: {hours:.2f} h"
+    try:
+        p0, p1 = int(b0["pct"]), int(b1["pct"])
+        msg += f", battery {p0}% -> {p1}%"
+        if hours > 0.05:
+            msg += f" ({(p0 - p1) / hours:.1f} %/h)"
+    except (KeyError, ValueError):
+        pass
+    try:
+        if b0.get("energy_now") and b1.get("energy_now"):
+            mwh = (int(b0["energy_now"]) - int(b1["energy_now"])) / 1000
+        else:
+            uv = int(b1.get("voltage_now") or 0)
+            mwh = (int(b0["charge_now"]) - int(b1["charge_now"])) / 1000 * uv / 1e6
+        if hours > 0.05 and mwh > 0:
+            msg += f", ~{mwh / hours:.0f} mW"
+    except (KeyError, ValueError):
+        pass
+    if b1.get("status") and b1["status"] != "Discharging":
+        msg += f" ({b1['status'].lower()})"
+    irq1 = interrupts()
+    secs = max(1.0, hours * 3600)
+    top = sorted(((irq1[k] - irq0.get(k, 0), k) for k in irq1), reverse=True)[:6]
+    msg += "; irq/s: " + ", ".join(f"{k} {d / secs:.1f}" for d, k in top if d > 0)
+    log(msg)
+
+
 def set_frozen(cgroups: list[str], frozen: bool) -> list[str]:
     """Write cgroup.freeze; returns the cgroups that took it."""
     done = [cg for cg in cgroups if wr_ok(f"{cg}/cgroup.freeze", 1 if frozen else 0)]
@@ -259,7 +326,7 @@ def main() -> int:
                 wr(f"{led}/brightness", 0)
         run("/usr/lib/konkr/konkr-sleep", "standby-pre")
         time.sleep(0.3)               # let gamescope commit the panel-off
-        frozen = set_frozen(freeze_targets(), True)
+        frozen = set_frozen(freeze_targets() + [c for c in FREEZE_SYSTEM if os.path.isdir(c)], True)
         for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
             # konkrd's touch boost may still hold the floor up (it drops it
             # within 0.5 s of this flag); a max below the min would be refused.
@@ -283,8 +350,13 @@ def main() -> int:
                else "session NOT frozen")
         log(f"standby: paused {len(paused)} game processes, {how}, "
             f"cpus {offlined} offline, screen off")
+        t0, b0, irq0 = time.monotonic(), battery_now(), interrupts()
         wait_power_press(fd)
         log("wake")
+        try:
+            standby_report(t0, b0, irq0)
+        except Exception as exc:  # never keep the device asleep over a report
+            log(f"standby report failed: {exc}")
     finally:
         # CPUs and clocks first, then audio (PipeWire is still running), then
         # the apps, so they wake to a ready speaker and a current clock.

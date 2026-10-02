@@ -70,8 +70,35 @@ touch_off() {
   echo "$n"
 }
 
+battery_pct() {
+  local b
+  for b in /sys/class/power_supply/*; do
+    [[ $(cat "$b/type" 2>/dev/null) == Battery ]] && { cat "$b/capacity" 2>/dev/null; return; }
+  done
+}
+
+# One journal line per sleep, for s2idle reports:
+#   journalctl -b | grep "s2idle report"
+report_start() {
+  mkdir -p /run/konkr
+  echo "$(date +%s) $(battery_pct) $(cat /sys/power/suspend_stats/success 2>/dev/null) $(cat /sys/power/suspend_stats/fail 2>/dev/null)" >/run/konkr/sleep-start
+}
+
+report_end() {
+  local t0 b0 ok0 fail0 t1 b1 ok1 fail1 irq name h
+  read -r t0 b0 ok0 fail0 </run/konkr/sleep-start 2>/dev/null || return 0
+  t1=$(date +%s); b1=$(battery_pct)
+  ok1=$(cat /sys/power/suspend_stats/success 2>/dev/null); fail1=$(cat /sys/power/suspend_stats/fail 2>/dev/null)
+  irq=$(cat /sys/power/pm_wakeup_irq 2>/dev/null)
+  [[ -n $irq ]] && name=$(awk -v i="$irq:" '$1 == i {for (n = NF; n > 1; n--) if ($n !~ /^[0-9]+$/) {print $n; exit}}' /proc/interrupts)
+  h=$(awk -v s=$((t1 - t0)) 'BEGIN {printf "%.2f", s / 3600}')
+  log "s2idle report: ${h} h, battery ${b0}% -> ${b1}%, suspends ok $((ok1 - ok0)) failed $((fail1 - fail0)), woken by irq ${irq:-?} ${name:-}, last failed step $(cat /sys/power/suspend_stats/last_failed_step 2>/dev/null) $(cat /sys/power/suspend_stats/last_failed_dev 2>/dev/null)"
+  rm -f /run/konkr/sleep-start
+}
+
 pre() {
   local n
+  report_start
   audio 1
   wake_sources
   n=$(touch_off)
@@ -100,6 +127,7 @@ touch_on() {
 }
 
 post() {
+  report_end
   touch_on
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"

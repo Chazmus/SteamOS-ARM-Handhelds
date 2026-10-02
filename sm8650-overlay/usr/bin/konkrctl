@@ -82,7 +82,7 @@ def status() -> None:
     if temps:
         print(f"soc temp: {max(temps):.1f} °C (hottest cpu/gpu zone)")
     mcu = "loaded" if os.path.isdir("/sys/module/konkr_sysbtn") else "not loaded"
-    print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
+    print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) or os.path.exists("/run/konkr/s2idle") else "standby")
     print(f"mcu     : {mcu} ({'blacklisted' if os.path.exists(BLACKLIST) else 'enabled at boot'})")
 
 
@@ -109,7 +109,7 @@ def mcu(cmd: str) -> None:
 
 def sleep_mode(cmd: str) -> None:
     if cmd == "status":
-        print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) else "standby")
+        print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) or os.path.exists("/run/konkr/s2idle") else "standby")
         return
     need_root()
     if cmd == "s2idle":

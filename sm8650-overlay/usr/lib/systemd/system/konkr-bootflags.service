@@ -1,0 +1,15 @@
+[Unit]
+Description=Sleep mode switch on the BOOT drive
+# BOOT is root-only, so konkr-suspend and konkr-sleep.service read the flag
+# from /run. A file called "s2idle" (or s2idle.txt) on BOOT turns real
+# kernel sleep on for this boot, same as `konkrctl sleep s2idle`.
+After=local-fs.target
+Before=konkrd.service display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'mkdir -p /run/konkr; rm -f /run/konkr/s2idle; mountpoint -q /boot || mount /boot 2>/dev/null; for f in s2idle s2idle.txt; do [ -e /boot/$f ] && touch /run/konkr/s2idle; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target

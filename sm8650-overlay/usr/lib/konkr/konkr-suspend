@@ -5,7 +5,8 @@
 # screen-off-only standby). Kernel s2idle is opt-in (`konkrctl sleep s2idle`)
 # until it stops hanging on the 7.1.2 kernel (2026-09-24: first entry bounced
 # straight back, the second never resumed).
-if [ -e /var/lib/konkrd/sleep-s2idle ]; then
+# s2idle on: `konkrctl sleep s2idle`, or an "s2idle" file on BOOT (konkr-bootflags).
+if [ -e /var/lib/konkrd/sleep-s2idle ] || [ -e /run/konkr/s2idle ]; then
   exec /usr/lib/systemd/systemd-sleep suspend
 fi
 exec /usr/lib/konkr/konkr-standby
