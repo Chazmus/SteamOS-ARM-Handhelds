@@ -491,6 +491,42 @@
       ]
     },
     {
+      "id": "ymir",
+      "title": "Ymir",
+      "plays": "Sega Saturn",
+      "kind": "emulator",
+      "systems": [
+        "saturn"
+      ],
+      "icon": "flathub:io.github.strikerx3.ymir",
+      "setup": "ymir",
+      "esde": "YMIR",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "io.github.strikerx3.ymir"
+        }
+      ]
+    },
+    {
+      "id": "bigpemu",
+      "title": "BigPEmu",
+      "plays": "Atari Jaguar",
+      "kind": "emulator",
+      "systems": [
+        "atarijaguar"
+      ],
+      "icon": "flathub:com.richwhitehouse.BigPEmu",
+      "setup": "bigpemu",
+      "esde": "BIGPEMU",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "com.richwhitehouse.BigPEmu"
+        }
+      ]
+    },
+    {
       "id": "esde",
       "title": "ES-DE",
       "plays": "one game library for every emulator, with box art",
@@ -520,7 +556,8 @@
           "kind": "builtin",
           "exec": "/usr/bin/steam-rom-manager"
         }
-      ]
+      ],
+      "desktop_only": true
     },
     {
       "id": "moonlight",
@@ -597,6 +634,77 @@
         {
           "kind": "flathub",
           "ref": "org.prismlauncher.PrismLauncher"
+        }
+      ]
+    },
+    {
+      "id": "optiscaler",
+      "title": "OptiScaler",
+      "plays": "FSR and XeSS upscaling in more PC games (Decky plugin, ARM64EC build)",
+      "kind": "plugin",
+      "icon": "github:justradical",
+      "sources": [
+        {
+          "kind": "github",
+          "repo": "justradical/decky-optiscaler-arm64ec",
+          "file": "^OptiScaler\\.zip$",
+          "plugin": true
+        }
+      ]
+    },
+    {
+      "id": "protonplus",
+      "title": "ProtonPlus",
+      "plays": "install other Proton and Wine builds",
+      "kind": "tool",
+      "desktop_only": true,
+      "icon": "flathub:com.vysp3r.ProtonPlus",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "com.vysp3r.ProtonPlus"
+        }
+      ]
+    },
+    {
+      "id": "protonupqt",
+      "title": "ProtonUp-Qt",
+      "plays": "Proton and Wine builds, the other popular manager",
+      "kind": "tool",
+      "desktop_only": true,
+      "icon": "flathub:net.davidotek.pupgui2",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "net.davidotek.pupgui2"
+        }
+      ]
+    },
+    {
+      "id": "flatseal",
+      "title": "Flatseal",
+      "plays": "what each Flatpak app may see and use",
+      "kind": "tool",
+      "desktop_only": true,
+      "icon": "flathub:com.github.tchx84.Flatseal",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "com.github.tchx84.Flatseal"
+        }
+      ]
+    },
+    {
+      "id": "distroshelf",
+      "title": "DistroShelf",
+      "plays": "other Linux distros in containers, for apps SteamOS lacks",
+      "kind": "tool",
+      "desktop_only": true,
+      "icon": "flathub:com.ranfdev.DistroShelf",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "com.ranfdev.DistroShelf"
         }
       ]
     }

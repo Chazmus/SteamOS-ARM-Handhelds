@@ -35,6 +35,9 @@ const hub = {
     updateAll: callable("update_all"),
     library: callable("library"),
     steamPending: callable("steam_pending"),
+    reset: callable("reset"),
+    addFile: callable("add_file"),
+    desktop: callable("desktop"),
     steamMade: callable("steam_made"),
     steamGone: callable("steam_gone"),
 };
@@ -44,6 +47,8 @@ const SECTIONS = [
     { kind: "emulator", title: "Emulators" },
     { kind: "frontend", title: "Game libraries" },
     { kind: "app", title: "Streaming and apps" },
+    { kind: "tool", title: "Desktop tools" },
+    { kind: "plugin", title: "Decky plugins" },
 ];
 
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
@@ -124,6 +129,13 @@ function Progress({ job, onCancel }) {
 function AppRow({ app, refresh }) {
     const job = app.job && app.job.state === "running" ? app.job : null;
     const act = (fn) => () => fn(app.id).then(refresh);
+    const askReset = () => DFL.showModal(jsx(DFL.ConfirmModal, {
+        strTitle: `Reset ${app.title}'s settings?`,
+        strDescription: "Back to how the hub sets it up: controls, folders, paths. Your old settings file is kept next to it, and games and saves aren't touched.",
+        strOKButtonText: "Reset",
+        strCancelButtonText: "Keep",
+        onOK: () => hub.reset(app.id).then((r) => { toaster.toast({ title: app.title, body: r && r.error ? r.error : "Settings reset" }); refresh(); }),
+    }));
     const ask = () => DFL.showModal(jsx(DFL.ConfirmModal, {
         strTitle: `Remove ${app.title}?`,
         strDescription: "Your games, saves and settings stay. Choose “Remove everything” to clear its settings and saves too.",
@@ -137,6 +149,7 @@ function AppRow({ app, refresh }) {
         app.plays,
         app.label ? `· ${app.label}` : "",
         app.heavy ? "· Heavy for this chip, simpler games run best" : "",
+        app.bios ? `· ${app.bios}` : "",
         app.note ? `· ${app.note}` : "",
     ].filter(Boolean).join(" ");
     const state = app.installed
@@ -156,6 +169,8 @@ function AppRow({ app, refresh }) {
                 : app.installed
                     ? jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
                         app.steam_appid ? jsx(DFL.DialogButton, { onClick: () => play(app.steam_appid), children: "Play" }) : null,
+                        app.desktop_only ? jsx(DFL.DialogButton, { onClick: () => hub.desktop(), children: "Desktop Mode" }) : null,
+                        app.resettable ? jsx(DFL.DialogButton, { onClick: askReset, children: "Reset" }) : null,
                         app.update ? jsx(DFL.DialogButton, { onClick: act(hub.update), children: "Update" }) : null,
                         jsx(DFL.DialogButton, { onClick: ask, children: "Remove" }),
                     ] })
@@ -215,6 +230,17 @@ function Content() {
                 ...(open[sec.kind] ? apps.map((a) => jsx(AppRow, { app: a, refresh }, a.id)) : []),
             ] });
         }),
+        (st.found || []).length ? jsxs(DFL.PanelSection, { title: "Found on this device", children: [
+            row(small("AppImages you put in Applications or Downloads yourself. Add one and it shows up in your Steam library.")),
+            ...st.found.map((f) => row(jsx(DFL.Field, {
+                label: f.name,
+                description: f.path,
+                childrenLayout: "below",
+                bottomSeparator: "none",
+                children: f.added ? small("In your Steam library", { color: "#7bd88f" })
+                    : jsx(DFL.DialogButton, { onClick: () => hub.addFile(f.path).then(() => { syncShortcuts(); refresh(); }), children: "Add to Steam" }),
+            }), f.key)),
+        ] }) : null,
         jsxs(DFL.PanelSection, { title: "Game library", children: [
             row(small(st.library)),
             row(jsx(DFL.DropdownItem, {

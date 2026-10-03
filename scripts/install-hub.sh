@@ -27,4 +27,13 @@ if [[ -n "$HOME_DST" && -d "$HOME_DST" ]]; then
   cp -a "$BUNDLE/." "$DST/"
   chown -R 1000:1000 "$HOME_DST/homebrew"
 fi
+# Steam's own power controls (Performance Profile, TDP, GPU clock, charge
+# limit) relayed to the device daemon; every image, it finds konkrd/odin3d.
+install -m0644 "$OVL/usr/lib/steamos-arm/power_limits.py" "$R/usr/lib/steamos-arm/power_limits.py"
+install -m0755 "$OVL/usr/lib/steamos-arm/steamos-arm-power" "$R/usr/lib/steamos-arm/steamos-arm-power"
+install -D -m0644 "$OVL/usr/share/dbus-1/system.d/org.steamos_arm.Power.conf" "$R/usr/share/dbus-1/system.d/org.steamos_arm.Power.conf"
+install -D -m0644 "$OVL/usr/lib/systemd/system/steamos-arm-power.service" "$R/usr/lib/systemd/system/steamos-arm-power.service"
+install -D -m0644 "$OVL/usr/share/steamos-manager/remotes.d/50-steamos-arm.toml" "$R/usr/share/steamos-manager/remotes.d/50-steamos-arm.toml"
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../steamos-arm-power.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-power.service"
 echo "Emulator Hub installed"

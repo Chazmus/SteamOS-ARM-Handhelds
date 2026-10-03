@@ -11,7 +11,9 @@ Item {
     id: hp
     property var st: ({ apps: [], device: {}, sd: [] })
     property string kind: "emulator"
-    readonly property var shown: (st.apps || []).filter(function (a) { return a.kind === hp.kind })
+    readonly property var shown: (st.apps || []).filter(function (a) {
+        return hp.kind === "tool" ? (a.kind === "tool" || a.kind === "plugin") : a.kind === hp.kind
+    })
     readonly property var starterLeft: (st.apps || []).filter(function (a) {
         return a.starter && !a.installed && a.available && !(a.job && a.job.state === "running")
     })
@@ -40,8 +42,8 @@ Item {
             Layout.fillWidth: true
             spacing: 14 * Ui.s
             Seg {
-                Layout.preferredWidth: 640 * Ui.s
-                options: [["emulator", "Emulators"], ["frontend", "Libraries"], ["app", "Apps"]]
+                Layout.preferredWidth: 760 * Ui.s
+                options: [["emulator", "Emulators"], ["frontend", "Libraries"], ["app", "Apps"], ["tool", "Tools"]]
                 current: hp.kind
                 fontSize: 24
                 onPicked: function (v) { hp.kind = v }
@@ -160,10 +162,11 @@ Item {
                                 visible: !cell.job
                                 text: cell.a.builtin ? "Built in"
                                       : cell.a.update ? "Update ready · " + cell.a.update
+                                      : cell.a.bios ? cell.a.bios
                                       : cell.a.installed ? "Installed" + (cell.a.version ? " · " + cell.a.version : "")
                                       : cell.a.elsewhere ? "Installed from Discover · Set up adds it to Steam and the library"
                                       : cell.a.heavy ? "Heavy for this chip" : (cell.a.note || "")
-                                color: cell.a.update || (cell.a.heavy && !cell.a.installed) ? "#ffc857" : (cell.a.installed ? Ui.good : Ui.dim)
+                                color: cell.a.update || cell.a.bios || (cell.a.heavy && !cell.a.installed) ? "#ffc857" : (cell.a.installed ? Ui.good : Ui.dim)
                                 font.pixelSize: 21 * Ui.s
                                 elide: Text.ElideRight
                             }
@@ -201,6 +204,7 @@ Item {
                             fontSize: 22
                             label: cell.job ? "Stop"
                                    : cell.a.update ? "Update"
+                                   : cell.a.installed && cell.a.desktop_only ? "Desktop Mode"
                                    : cell.a.installed ? "Remove"
                                    : cell.a.elsewhere ? "Set up"
                                    : cell.a.available ? "Install" : "Not here"
@@ -208,6 +212,7 @@ Item {
                             onClicked: {
                                 if (cell.job) hp.act("cancel", { job: cell.job.id })
                                 else if (cell.a.update) hp.act("update", { app: cell.a.id })
+                                else if (cell.a.installed && cell.a.desktop_only) hp.act("desktop")
                                 else if (!cell.a.installed && cell.a.available) hp.act("install", { app: cell.a.id })
                                 else if (cell.a.installed) hp.note = "Hold Remove to remove " + cell.a.title + " (your games and saves stay)"
                             }

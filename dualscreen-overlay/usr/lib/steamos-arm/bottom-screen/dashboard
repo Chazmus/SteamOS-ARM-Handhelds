@@ -2179,6 +2179,10 @@ class Handler(BaseHTTPRequestHandler):
                 out = hub("remove", app, *(["--wipe"] if b.get("wipe") else []))
             elif act == "cancel":
                 out = hub("cancel", str(b.get("job", "")))
+            elif act == "reset" and app:
+                out = hub("reset", app)
+            elif act == "desktop":
+                out = hub("desktop")
             elif act in ("starter", "update-all"):
                 out = hub(act)
             elif act == "check-updates":

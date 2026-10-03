@@ -63,6 +63,15 @@ class Plugin:
     async def library(self, where=None):
         return await asyncio.to_thread(hub, "library", *([where] if where else []), timeout=600)
 
+    async def reset(self, app):
+        return await asyncio.to_thread(hub, "reset", app)
+
+    async def add_file(self, path):
+        return await asyncio.to_thread(hub, "add-file", path)
+
+    async def desktop(self):
+        return await asyncio.to_thread(hub, "desktop")
+
     async def steam_pending(self):
         return await asyncio.to_thread(hub, "steam-pending")
 

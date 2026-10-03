@@ -57,6 +57,7 @@ DATA = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share"))
 BIN = DATA / "steamos-arm" / "hub" / "bin"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "steamos-arm" / "hub"
 APPS = HOME / "Applications"
+PLUGINS = HOME / "homebrew" / "plugins"
 DESKTOP_DIR = DATA / "applications"
 ICON_DIR = DATA / "icons" / "hicolor" / "256x256" / "apps"
 CHIPS = ("sm8350", "sm8550", "sm8650", "sm8750")
@@ -192,6 +193,7 @@ SYSTEM_NAMES = {
     "ps2": "PlayStation 2", "switch": "Switch", "wiiu": "Wii U", "ps3": "PlayStation 3",
     "psvita": "PS Vita", "xbox": "Xbox", "dreamcast": "Dreamcast", "naomi": "Naomi",
     "atomiswave": "Atomiswave", "scummvm": "ScummVM", "dos": "DOS",
+    "saturn": "Saturn", "atarijaguar": "Atari Jaguar",
 }
 
 
@@ -631,6 +633,32 @@ def do_install(job: Job, update: bool = False) -> None:
     record = {"how": pick["how"], "source": idx, "version": pick.get("version", ""),
               "stamp": pick.get("stamp", ""), "label": src.get("label", ""), "lease": src.get("lease", ""),
               "at": time.time()}
+    if pick["how"] == "file" and src.get("plugin"):
+        # A Decky plugin: its zip unpacked into ~/homebrew/plugins, which
+        # Decky picks up by itself (an update takes a Decky restart).
+        PLUGINS.mkdir(parents=True, exist_ok=True)
+        staging = PLUGINS.parent / f".{app_id}.hub.zip"
+        download(pick["url"], staging, job, pick.get("size", 0), pick.get("sha256", ""))
+        job.step("Unpacking", 94, force=True)
+        with zipfile.ZipFile(staging) as z:
+            names = [n for n in z.namelist() if n and not n.startswith(("/", "."))]
+            if any(".." in n.split("/") for n in names):
+                raise RuntimeError("the plugin archive has unsafe paths")
+            tops = {n.split("/", 1)[0] for n in names}
+            if len(tops) != 1:
+                raise RuntimeError("unexpected plugin archive layout")
+            top = tops.pop()
+            shutil.rmtree(PLUGINS / top, ignore_errors=True)
+            z.extractall(PLUGINS)
+            for info in z.infolist():          # keep the exec bits zip stores
+                mode = info.external_attr >> 16
+                if mode & 0o111:
+                    target = PLUGINS / info.filename
+                    target.chmod(target.stat().st_mode | 0o111)
+        staging.unlink(missing_ok=True)
+        record.update(how="plugin", dir=top)
+        update_json(STATE / "installed.json", lambda d: d.__setitem__(app_id, record))
+        return
     if pick["how"] == "file":
         APPS.mkdir(parents=True, exist_ok=True)
         name = e.get("save_as") or pick["name"]
@@ -673,7 +701,7 @@ def do_install(job: Job, update: bool = False) -> None:
     write_desktop(e)
     update_json(STATE / "installed.json", lambda d: d.__setitem__(app_id, record))
     write_esde_rules()
-    if e.get("kind") != "frontend" or app_id == "esde":
+    if not e.get("desktop_only") and (e.get("kind") != "frontend" or app_id == "esde"):
         want_shortcut(app_id)
 
 
@@ -682,6 +710,10 @@ def do_remove(job: Job) -> None:
     e = entry(app_id)
     rec = installed_db().get(app_id, {})
     job.step("Removing", 30, force=True)
+    if rec.get("how") == "plugin" and rec.get("dir") and "/" not in rec["dir"]:
+        shutil.rmtree(PLUGINS / rec["dir"], ignore_errors=True)
+        update_json(STATE / "installed.json", lambda d: d.pop(app_id, None))
+        return
     if rec.get("file"):
         (APPS / rec["file"]).unlink(missing_ok=True)
     if rec.get("ref"):
@@ -1095,6 +1127,7 @@ SETUPS = {
     "vita3k": setup_simple("psvita"), "xemu": setup_simple("xbox"), "flycast": setup_simple("dreamcast"),
     "mgba": setup_simple("gba"), "rmg": setup_simple("n64"), "mame": setup_simple("arcade"),
     "scummvm": setup_simple("scummvm"), "dosbox": setup_simple("dos"),
+    "ymir": setup_simple("saturn"), "bigpemu": setup_simple("atarijaguar"),
 }
 
 
@@ -1140,7 +1173,12 @@ def shortcut_spec(app_id: str) -> dict:
 
 def steam_pending() -> dict:
     s = read_json(STEAM_FILE, dict)
-    return {"add": [shortcut_spec(a) for a in s.get("owed", []) if a in installed_db()],
+    custom = s.get("custom", {})
+    adds = [shortcut_spec(a) for a in s.get("owed", []) if a in installed_db()]
+    adds += [{"app": a, "name": custom[a[7:]]["name"], "exe": custom[a[7:]]["exe"],
+              "dir": str(Path(custom[a[7:]]["exe"]).parent), "icon": "", "options": "", "tag": "Apps"}
+             for a in s.get("owed", []) if a.startswith("custom:") and a[7:] in custom]
+    return {"add": adds,
             "remove": [{"app": a, "appid": s["made"][a]} for a in s.get("drop", []) if a in s.get("made", {})]}
 
 
@@ -1248,6 +1286,110 @@ def flush_shortcuts_offline() -> None:
         path.write_bytes(vdf_write(root))
 
 
+# -------------------------------------------------------------- BIOS ----
+# What an emulator can't run games without, and where in the library it
+# goes. Checked by name pattern only: the files are the user's own dumps.
+BIOS_NEEDS = {
+    "duckstation": ("bios", r"(?i)^(scph|psxonpsp|ps1_rom).*\.bin$", "a PlayStation BIOS (scph….bin) in bios/"),
+    "armsx2": ("bios", r"(?i)^(scph|ps2).*\.bin$", "a PlayStation 2 BIOS (….bin) in bios/"),
+    "flycast": ("bios/dc", r"(?i)^dc_boot\.bin$", "dc_boot.bin in bios/dc/"),
+    "eden": ("bios/switch/keys", r"(?i)^prod\.keys$", "prod.keys in bios/switch/keys/ and firmware in bios/switch/firmware/"),
+    "ryujinx": ("bios/switch/keys", r"(?i)^prod\.keys$", "prod.keys in bios/switch/keys/"),
+    "ymir": ("bios", r"(?i)^(sega_|saturn|mpr-).*\.bin$", "a Saturn BIOS (….bin) in bios/"),
+}
+
+
+def bios_missing(app_id: str) -> str:
+    need = BIOS_NEEDS.get(app_id)
+    if not need:
+        return ""
+    folder, pattern, what = need
+    d = library() / folder
+    try:
+        if any(re.match(pattern, f.name) for f in d.iterdir() if f.is_file() or f.is_symlink()):
+            return ""
+    except OSError:
+        pass
+    return f"Needs {what}"
+
+
+# --------------------------------------------------- reset & your own ----
+# The settings files the setups seed, per app and install kind ({cfg} is
+# the emulator's config home, ~/.config or the Flatpak's own).
+CONFIG_FILES = {
+    "retroarch": [".var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"],
+    "duckstation": [".local/share/duckstation/settings.ini"],
+    "dolphin": ["{cfg}/dolphin-emu/Dolphin.ini"],
+    "ppsspp": ["{cfg}/ppsspp/PSP/SYSTEM/ppsspp.ini"],
+    "melonds": ["{cfg}/melonDS/melonDS.toml"],
+    "azahar": ["{cfg}/azahar-emu/qt-config.ini"],
+    "eden": [".config/eden/qt-config.ini"],
+}
+
+
+def reset_settings(app_id: str) -> dict:
+    """Put an emulator's settings back to how the hub sets it up. The old
+    file is kept next to it (.before-reset-<date>), games and saves stay."""
+    rec = installed_db().get(app_id)
+    if not rec or app_id not in CONFIG_FILES:
+        raise RuntimeError("Nothing to reset for that app")
+    cfg_home = (f".var/app/{rec['ref']}/config" if rec.get("how") == "flatpak" else ".config")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved = []
+    for rel in CONFIG_FILES[app_id]:
+        f = HOME / rel.format(cfg=cfg_home)
+        if f.exists():
+            f.rename(f.with_name(f"{f.name}.before-reset-{stamp}"))
+            moved.append(str(f))
+    e = entry(app_id)
+    SETUPS.get(e.get("setup", ""), lambda *_: None)(e, rec, False)
+    return {"reset": moved}
+
+
+def found_files() -> list[dict]:
+    """AppImages put on the device by hand, not by the hub: offered as Steam
+    shortcuts (the hub's own files and half-done downloads are left out)."""
+    ours = {r.get("file") for r in installed_db().values()}
+    made = read_json(STEAM_FILE, dict).get("custom", {})
+    out = []
+    for d in (APPS, HOME / "Downloads", *[Path(c) / "Downloads" for c in sd_cards()]):
+        for f in sorted(d.glob("*")) if d.is_dir() else []:
+            if f.is_file() and f.suffix.lower() == ".appimage" and not f.name.startswith(".") and f.name not in ours:
+                key = hashlib.sha1(str(f).encode()).hexdigest()[:12]
+                out.append({"key": key, "path": str(f), "name": nice_name(f.name), "added": key in made})
+    return out
+
+
+def nice_name(filename: str) -> str:
+    base = re.sub(r"\.appimage$", "", filename, flags=re.I)
+    base = re.sub(r"[-_](x86_64|aarch64|arm64|anylinux|linux|v?\d[\w.]*)\b.*$", "", base, flags=re.I)
+    return re.sub(r"[-_.]+", " ", base).strip() or filename
+
+
+def add_file(path: str) -> dict:
+    f = Path(path).expanduser()
+    if not f.is_file():
+        raise RuntimeError("That file isn't there")
+    f.chmod(f.stat().st_mode | 0o100)       # owner exec, nothing wider
+    key = hashlib.sha1(str(f).encode()).hexdigest()[:12]
+
+    def change(s):
+        s.setdefault("custom", {})[key] = {"name": nice_name(f.name), "exe": str(f)}
+        s.setdefault("owed", [])
+        if f"custom:{key}" not in s["owed"]:
+            s["owed"].append(f"custom:{key}")
+    update_json(STEAM_FILE, change)
+    if not steam_running():
+        flush_shortcuts_offline()
+    return {"ok": True, "key": key}
+
+
+def open_desktop() -> dict:
+    """Desktop-only tools: switch to Desktop Mode to use them."""
+    subprocess.Popen(["steamos-session-select", "plasma"], start_new_session=True)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------- status ----
 def status() -> dict:
     dev = device()
@@ -1269,12 +1411,16 @@ def status() -> dict:
             adopt = False
         if rec and rec.get("how") == "file" and not (APPS / rec.get("file", "")).exists():
             rec = None
+        if rec and rec.get("how") == "plugin" and not (PLUGINS / rec.get("dir", "-")).is_dir():
+            rec = None
         builtin = e["sources"][0]["kind"] == "builtin" and Path(e["sources"][0]["exec"]).exists()
         heavy = "heavy_below" in e and chip_rank(dev["chip"]) < chip_rank(e["heavy_below"])
         best = next((s for s in e["sources"] if fits(s.get("when"), dev)), None)
         apps.append({
             "id": e["id"], "title": e["title"], "plays": e.get("plays", ""), "kind": e.get("kind", "app"),
-            "note": e.get("note", ""), "heavy": heavy,
+            "note": e.get("note", ""), "heavy": heavy, "desktop_only": bool(e.get("desktop_only")),
+            "resettable": e["id"] in CONFIG_FILES,
+            "bios": bios_missing(e["id"]) if rec else "",
             "starter": "starter" in e and chip_rank(dev["chip"]) >= chip_rank(e["starter"]),
             "installed": bool(rec) or builtin, "builtin": builtin, "elsewhere": adopt,
             "version": (rec or {}).get("version", ""), "label": (rec or {}).get("label") or (best or {}).get("label", ""),
@@ -1284,7 +1430,7 @@ def status() -> dict:
             "icon": str(ICON_DIR / f"steamos-arm-hub-{e['id']}.png") if (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists() else "",
             "available": best is not None,
         })
-    return {"device": dev, "library": str(library()), "sd": sd_cards(), "apps": apps}
+    return {"device": dev, "library": str(library()), "sd": sd_cards(), "apps": apps, "found": found_files()}
 
 
 def check_updates() -> dict:
@@ -1369,6 +1515,12 @@ def main(argv: list[str]) -> int:
     elif cmd == "steam-gone":
         steam_gone(rest[0])
         out = {"ok": True}
+    elif cmd == "reset":
+        out = reset_settings(rest[0])
+    elif cmd == "add-file":
+        out = add_file(rest[0])
+    elif cmd == "desktop":
+        out = open_desktop()
     elif cmd == "icons":
         for e in catalog():
             icon_for(e)

@@ -37,6 +37,14 @@ import subprocess
 import sys
 import time
 
+# Steam's TDP slider and manual GPU clock, on top of the profile (shared with
+# the other device daemon).
+sys.path.insert(0, "/usr/lib/steamos-arm")
+try:
+    import power_limits
+except ImportError:
+    power_limits = None
+
 CONF = "/etc/konkrd.conf"
 STATE_DIR = "/var/lib/konkrd"
 STATE = f"{STATE_DIR}/state.json"
@@ -992,6 +1000,8 @@ class Daemon:
         p = self.st["profile"]
         apply_cpu(p)
         apply_gpu(p)
+        if power_limits:
+            power_limits.apply(self.st)
         self.games.done.clear()
         if flash:
             self.leds.flash(PROFILE_RGB[p])
