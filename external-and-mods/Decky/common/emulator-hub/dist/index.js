@@ -54,17 +54,22 @@ const small = (text, extra) => jsx("div", { style: Object.assign({ fontSize: "12
 // API adds it here, at once, without restarting Steam. Runs from plugin load,
 // so it works with the panel closed (installs started on the bottom screen too).
 let syncing = false;
+// AddShortcut can succeed and the record after it fail; asking again would
+// make a second shortcut, so each app is added at most once per load.
+const added = new Set();
 async function syncShortcuts() {
     if (syncing || !window.SteamClient || !SteamClient.Apps) return;
     syncing = true;
     try {
         const p = await hub.steamPending();
         for (const s of (p && p.add) || []) {
-            const appid = await SteamClient.Apps.AddShortcut(s.name, s.exe, s.dir, s.options || "");
+            if (added.has(s.app)) continue;
+            added.add(s.app);
+            const appid = Number(await SteamClient.Apps.AddShortcut(s.name, s.exe, s.dir, s.options || ""));
             if (!appid) continue;
+            // New shortcuts are named after the file until renamed.
             try { SteamClient.Apps.SetShortcutName(appid, s.name); } catch (e) {}
-            try { SteamClient.Apps.SetShortcutStartDir(appid, s.dir); } catch (e) {}
-            try { if (s.icon && s.icon.startsWith("/")) SteamClient.Apps.SetShortcutIcon(appid, s.icon); } catch (e) {}
+            try { if (s.options) SteamClient.Apps.SetShortcutLaunchOptions(appid, s.options); } catch (e) {}
             await hub.steamMade(s.app, appid);
             toaster.toast({ title: s.name, body: "Added to your Steam library", duration: 2500 });
         }
@@ -77,6 +82,13 @@ async function syncShortcuts() {
     } finally {
         syncing = false;
     }
+}
+
+// Non-Steam shortcuts run by their 64-bit game id.
+function play(appid) {
+    const gameid = ((BigInt(appid >>> 0) << 32n) | 0x02000000n).toString();
+    if (SteamClient.Apps.RunGame) SteamClient.Apps.RunGame(gameid, "", -1, 100);
+    else SteamClient.URL.ExecuteSteamURL("steam://rungameid/" + gameid);
 }
 
 // Toast when a job ends, whoever started it and whether the panel is open.
@@ -143,6 +155,7 @@ function AppRow({ app, refresh }) {
                 : app.builtin ? null
                 : app.installed
                     ? jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
+                        app.steam_appid ? jsx(DFL.DialogButton, { onClick: () => play(app.steam_appid), children: "Play" }) : null,
                         app.update ? jsx(DFL.DialogButton, { onClick: act(hub.update), children: "Update" }) : null,
                         jsx(DFL.DialogButton, { onClick: ask, children: "Remove" }),
                     ] })

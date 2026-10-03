@@ -824,6 +824,33 @@ def write_esde_rules() -> None:
     d = HOME / "ES-DE" / "custom_systems"
     d.mkdir(parents=True, exist_ok=True)
     (d / "es_find_rules.xml").write_text("\n".join(rules) + "\n")
+    # ES-DE has no ARMSX2 command. A custom system replaces the bundled one,
+    # so this is ES-DE's own ps2 entry with ARMSX2 put first.
+    systems = d / "es_systems.xml"
+    ours = not systems.exists() or "Emulator Hub" in systems.read_text(errors="replace")
+    if ours and "armsx2" in installed_db():
+        systems.write_text(ESDE_PS2)
+    elif ours and systems.exists():
+        systems.unlink()
+
+
+ESDE_PS2 = """<?xml version="1.0"?>
+<!-- Written by the Emulator Hub: ES-DE's ps2 system with ARMSX2 added. -->
+<systemList>
+    <system>
+        <name>ps2</name>
+        <fullname>Sony PlayStation 2</fullname>
+        <path>%ROMPATH%/ps2</path>
+        <extension>.bin .BIN .chd .CHD .ciso .CISO .cso .CSO .desktop .dump .DUMP .elf .ELF .gz .GZ .m3u .M3U .mdf .MDF .img .IMG .iso .ISO .isz .ISZ .ngr .NRG .zso .ZSO</extension>
+        <command label="ARMSX2 (Standalone)">%EMULATOR_ARMSX2% %ROM%</command>
+        <command label="PCEE2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcee2_libretro.so %ROM%</command>
+        <command label="LRPS2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcsx2_libretro.so %ROM%</command>
+        <command label="Shortcut or script">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <platform>ps2</platform>
+        <theme>ps2</theme>
+    </system>
+</systemList>
+"""
 
 
 # ------------------------------------------------------ emulator setup ----
@@ -924,16 +951,27 @@ def setup_ppsspp(e, rec, moved):
     ini_set(base / "ppsspp.ini", "General", {"CurrentDirectory": str(lib / "roms" / "psp")}, only_new=not moved)
 
 
+# Games see Steam's virtual pad in Game Mode. melonDS maps raw SDL joystick
+# numbers (out of the box it maps none, so no button works): face buttons
+# by position, as on a DS (its A is the right-hand button), d-pad on the
+# hat, R3 swaps the screens, L3 toggles fast forward.
+MELONDS_PAD = {"A": 1, "B": 0, "X": 3, "Y": 2, "L": 4, "R": 5, "Select": 6, "Start": 7,
+               "Up": 257, "Right": 258, "Down": 260, "Left": 264,
+               "HK_SwapScreens": 10, "HK_FastForwardToggle": 9}
+
+
 def setup_melonds(e, rec, moved):
     lib = library()
     cfg = config_home(rec, "melonDS") / "melonDS.toml"
     if cfg.exists() and not moved:
         return
     text = cfg.read_text() if cfg.exists() else ""
-    line = f'LastROMFolder = "{lib / "roms" / "nds"}"'
-    text = re.sub(r"^LastROMFolder\s*=.*$", line, text, flags=re.M) if "LastROMFolder" in text else line + "\n" + text
-    if "LastBIOSFolder" not in text:
-        text = f'LastBIOSFolder = "{lib / "bios"}"\n' + text
+    head = {"LastROMFolder": lib / "roms" / "nds", "LastBIOSFolder": lib / "bios"}
+    for k, v in head.items():
+        line = f'{k} = "{v}"'
+        text = re.sub(rf"^{k}\s*=.*$", line, text, flags=re.M) if re.search(rf"^{k}\s*=", text, re.M) else line + "\n" + text
+    if "[Instance0.Joystick]" not in text:
+        text += "\n[Instance0]\nJoystickID = 0\n\n[Instance0.Joystick]\n" + "".join(f"{k} = {v}\n" for k, v in MELONDS_PAD.items())
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(text)
 
@@ -968,12 +1006,38 @@ def setup_ryujinx(e, rec, moved):
     link_into_library(HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx/system", lib / "bios" / "switch" / "keys")
 
 
+STEAM_PAD = "engine:sdl,api:controller,guid:030079f6de280000ff11000001000000,maptype:guid+port,port:0"
+# SDL game controller numbering; 3DS face buttons by position.
+AZAHAR_PAD = {"button_a": "button:1", "button_b": "button:0", "button_x": "button:3", "button_y": "button:2",
+              "button_l": "button:9", "button_r": "button:10", "button_select": "button:4",
+              "button_start": "button:6", "button_home": "button:5",
+              "button_up": "button:11", "button_down": "button:12", "button_left": "button:13", "button_right": "button:14",
+              "button_zl": "axis:4,direction:+,threshold:0.500000", "button_zr": "axis:5,direction:+,threshold:0.500000",
+              "circle_pad": "axis_x:0,axis_y:1,deadzone:0.050000", "c_stick": "axis_x:2,axis_y:3,deadzone:0.050000"}
+
+
 def setup_azahar(e, rec, moved):
     lib = library()
-    base = config_home(rec, "azahar-emu")
-    ini_set(base / "qt-config.ini", "UI",
-            {"Paths\\gamedirs\\size": "1", "Paths\\gamedirs\\1\\path": str(lib / "roms" / "n3ds"),
-             "Paths\\gamedirs\\1\\deep_scan": "false", "Paths\\gamedirs\\1\\expanded": "true"}, only_new=not moved)
+    cfg = config_home(rec, "azahar-emu") / "qt-config.ini"
+    if not cfg.exists():
+        controls = {"profile": "0", "profiles\\size": "1", "profiles\\1\\name": "Default", "profiles\\1\\input_maptype": "2"}
+        for k, v in AZAHAR_PAD.items():
+            controls[f"profiles\\1\\{k}"] = f'"{STEAM_PAD},{v}"'
+            controls[f"profiles\\1\\{k}\\default"] = "false"
+        ini_set(cfg, "Controls", controls, only_new=False)
+        if rec.get("lease"):
+            # The touch screen is on the lower panel: the top window shows
+            # the top screen alone.
+            ini_set(cfg, "Layout", {"layout_option": "5", "layout_option\\default": "false"}, only_new=False)
+    elif not moved:
+        return
+    # Its own INSTALLED and SYSTEM entries stay first; the library third.
+    ini_set(cfg, "UI", {
+        "Paths\\gamedirs\\size": "3",
+        "Paths\\gamedirs\\1\\path": "INSTALLED", "Paths\\gamedirs\\1\\expanded": "true",
+        "Paths\\gamedirs\\2\\path": "SYSTEM", "Paths\\gamedirs\\2\\expanded": "true",
+        "Paths\\gamedirs\\3\\path": str(lib / "roms" / "n3ds"),
+        "Paths\\gamedirs\\3\\deep_scan": "false", "Paths\\gamedirs\\3\\expanded": "true"}, only_new=False)
 
 
 def setup_esde(e, rec, moved):
@@ -1164,6 +1228,7 @@ def status() -> dict:
     db = installed_db()
     flat = flatpak_installed()
     running = {j["app"]: j for j in jobs()}
+    made = read_json(STEAM_FILE, dict).get("made", {})
     apps = []
     for e in catalog():
         rec = db.get(e["id"])
@@ -1182,6 +1247,7 @@ def status() -> dict:
             "version": (rec or {}).get("version", ""), "label": (rec or {}).get("label") or (best or {}).get("label", ""),
             "update": (rec or {}).get("update", ""),
             "job": running.get(e["id"]),
+            "steam_appid": made.get(e["id"]) if rec else None,
             "icon": str(ICON_DIR / f"steamos-arm-hub-{e['id']}.png") if (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists() else "",
             "available": best is not None,
         })
