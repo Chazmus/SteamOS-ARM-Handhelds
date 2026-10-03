@@ -659,7 +659,7 @@ chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
   "$R/usr/lib/steamos-arm/bottom-screen/thor-backlightd"
 chmod 0755 "$R/usr/share/steamos-arm" "$R/usr/share/steamos-arm/bottom-screen"
 chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/qmldir" \
-  "$R/usr/lib/steamos-arm/bottom-screen/glide.py" \
+  "$R/usr/lib/steamos-arm/bottom-screen/swipetype.py" \
   "$R/usr/share/steamos-arm/bottom-screen/"* \
   "$R/usr/lib/steamos-arm/bottom-screen/qml/"*.qml \
   "$R/usr/lib/systemd/user/bottom-screen.service" \

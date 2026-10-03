@@ -1,22 +1,26 @@
-// The on-screen keys, shared by the top screen's keyboard (TopInput.qml) and
-// the keyboard that pops up over apps on the bottom screen (Keyboard.qml).
+// Keys for both keyboards: the one that types on the top screen
+// (RemotePad.qml) and the one over bottom-screen apps (Keyboard.qml).
 //
-// typed(kind, value):
-//   "text"   the characters
-//   "key"    an X key name (BackSpace, Return, Tab, Escape, Left, Delete...)
-//   "combo"  ["ctrl", "c"] and the like, from the modifiers
-//   "replace" {back: n, text: "..."}: n backspaces then the text (glide and
-//            autocorrect swapping a word)
+// What it sends out, through typed(kind, value):
+//   "text"     characters
+//   "key"      a key by X name: BackSpace, Return, Tab, Escape, Left, Delete...
+//   "combo"    a shortcut, e.g. ["ctrl", "c"]
+//   "replace"  {back: n, text: s}: n backspaces, then s (swapping a word)
 //
-// Three pages: letters, symbols, Fn (Esc, Tab, Home/End, PgUp/PgDn, Del,
-// arrows, Copy/Paste/Cut/All/Undo/Redo). Ctrl, Alt, Super and Shift on the
-// Fn page stick: lit until the next key, from any page, which then goes out
-// as a combo. asciiOnly swaps the symbol page's row of non-ASCII characters
-// (a uinput keyboard can't type them) for more punctuation.
+// Pages: letters (QWERTY, QWERTZ or AZERTY, from Settings), numbers and
+// symbols (two of them), and Edit: navigation, clipboard shortcuts and the
+// modifier latches. A latched Ctrl/Alt/Super/Shift applies to the next key
+// from any page and then lets go.
 //
-// Glide typing: a finger that starts on a letter and slides across the keys
-// spells a word, decoded by the backend (/glide); the strip above the keys
-// offers the next best words, and backspace right after takes the word back.
+// Touch tricks:
+//   swipe over the letters   a whole word (the backend's swipetype matches
+//                            the trace; the strip offers the runners-up and
+//                            backspace right after removes the word)
+//   slide along the spacebar moves the cursor, a key per 40 px
+//   hold a top-row letter    its digit (q = 1 ... p = 0)
+// Finished words (a space or punctuation after letters, a swiped word, a
+// picked suggestion) are sent to /learn, so the ones this user types rank
+// higher next time.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
@@ -25,89 +29,128 @@ ColumnLayout {
     id: kb
     property bool asciiOnly: false
     property bool showHide: false
-    property bool glide: Ui.cfg.glide !== false
-    property string page: "abc"           // abc, sym, fn
+    property bool swipe: Ui.cfg.swipe !== false
+    property string layout: Ui.cfg.layout || "qwerty"
+    property string page: "letters"       // letters, numbers, symbols, edit
     property bool shift: false
-    property bool caps: false
-    property var mods: ({})               // sticky ctrl/alt/super/shift
-    // Suggestions from the backend: the strip above the keys.
+    property bool capsLock: false
+    property var latched: ({})            // ctrl/alt/super/shift held for the next key
     property var suggestions: []
-    property string lastGlide: ""         // backspace right after takes it back
-    // The last character this keyboard typed: a glided word gets a space in
-    // front of it when it follows a word or punctuation.
-    property string lastChar: ""
+    property string swiped: ""            // the last swiped word, as typed
+    property string word: ""              // letters typed since the last break
+    property string prev: ""              // last character this keyboard typed
     signal typed(string kind, var value)
     signal hideRequested()
     spacing: 10 * Ui.s
 
-    readonly property var letters: [
-        ["q","w","e","r","t","y","u","i","o","p"],
-        ["a","s","d","f","g","h","j","k","l"],
-        ["z","x","c","v","b","n","m"]
-    ]
-    readonly property var symbols: [
+    readonly property var rows: ({
+        qwerty: [["q","w","e","r","t","y","u","i","o","p"], ["a","s","d","f","g","h","j","k","l"], ["z","x","c","v","b","n","m"]],
+        qwertz: [["q","w","e","r","t","z","u","i","o","p"], ["a","s","d","f","g","h","j","k","l"], ["y","x","c","v","b","n","m"]],
+        azerty: [["a","z","e","r","t","y","u","i","o","p"], ["q","s","d","f","g","h","j","k","l","m"], ["w","x","c","v","b","n"]]
+    })
+    readonly property var letterRows: rows[layout] || rows.qwerty
+    readonly property var numberRows: [
         ["1","2","3","4","5","6","7","8","9","0"],
         ["-","/",":",";","(",")","&","@","\""],
-        asciiOnly ? [".",",","?","!","'","#","%"] : [".",",","?","!","'","€","é"]
+        asciiOnly ? [".",",","?","!","'","#","%"] : [".",",","?","!","'","€","£"]
     ]
-    readonly property var symbols2: [
+    readonly property var symbolRows: [
         ["[","]","{","}","<",">","=","+","*","_"],
         ["\\","|","~","`","^","$"],
         []
     ]
-    readonly property bool anyMod: mods.ctrl === true || mods.alt === true || mods.super === true || mods.shift === true
+    readonly property bool anyLatch: Object.keys(latched).some(function (k) { return latched[k] === true })
 
-    function modList() {
-        var m = []
-        for (var k of ["ctrl", "alt", "super", "shift"]) if (mods[k]) m.push(k)
-        return m
+    // ------------------------------------------------------------ output --
+    function latchedList() {
+        return ["ctrl", "alt", "super", "shift"].filter(function (k) { return kb.latched[k] === true })
     }
-    function toggleMod(m) {
-        var n = Object.assign({}, mods)
+    function toggleLatch(m) {
+        var n = Object.assign({}, latched)
         n[m] = !n[m]
-        mods = n
+        latched = n
     }
-    // A key or character, with whatever modifiers are held.
-    function emit(kind, value) {
-        if (anyMod) {
-            typed("combo", modList().concat([kind === "text" ? value.toLowerCase() : value]))
-            mods = ({})
-            lastChar = ""
+    function finishWord() {
+        if (word.length >= 2)
+            Ui.send("/learn", { word: word })
+        word = ""
+    }
+    function out(kind, value) {
+        if (anyLatch) {
+            typed("combo", latchedList().concat([kind === "text" ? value.toLowerCase() : value]))
+            latched = ({})
+            prev = ""
+            word = ""
             return
         }
         typed(kind, value)
-        lastChar = kind === "text" && value.length ? value.charAt(value.length - 1) : ""
+        if (kind === "text" && value.length) {
+            var last = value.charAt(value.length - 1)
+            if (/[a-zA-Z]/.test(last))
+                word += last.toLowerCase()
+            else
+                finishWord()
+            prev = last
+        } else {
+            if (value !== "BackSpace") finishWord()
+            else word = word.slice(0, -1)
+            prev = ""
+        }
+        swiped = ""
     }
-    function letter(ch) {
-        var out = (shift || caps) ? ch.toUpperCase() : ch
-        emit("text", out)
-        lastGlide = ""
-        if (shift && !caps) shift = false
+    function tapLetter(ch) {
+        out("text", (shift || capsLock) ? ch.toUpperCase() : ch)
+        if (shift && !capsLock) shift = false
+    }
+    function backspace() {
+        if (swiped.length && !anyLatch) {
+            typed("replace", { back: swiped.length, text: "" })
+            swiped = ""
+            suggestions = []
+            prev = ""
+            return
+        }
+        out("key", "BackSpace")
     }
 
-    component Cap: Rectangle {
-        id: cap
+    // --------------------------------------------------------------- key --
+    component Key: Rectangle {
+        id: key
         property string label
-        property string sub: ""
-        property bool active: false
-        property real units: 1
-        signal hit()
+        property bool lit: false
+        property real span: 1
+        property string hint: ""          // shown small in the corner (hold)
+        signal pressed()
+        signal held()
         Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.preferredWidth: units * 100
+        Layout.preferredWidth: span * 100
         radius: 16 * Ui.s
-        color: active ? Qt.darker(Ui.accent, 1.9) : (tap.pressed ? Ui.cardHi : Ui.button)
-        border.color: active ? Ui.accent : "transparent"
+        color: lit ? Qt.darker(Ui.accent, 1.9) : (tap.pressed ? Ui.cardHi : Ui.button)
+        border.color: lit ? Ui.accent : "transparent"
         border.width: 2 * Ui.s
         Txt {
             anchors.centerIn: parent
-            text: cap.label
-            font.pixelSize: (cap.label.length > 1 ? 26 : 40) * Ui.s
+            text: key.label
+            font.pixelSize: (key.label.length > 1 ? 26 : 40) * Ui.s
         }
-        TapHandler { id: tap; onTapped: cap.hit() }
+        Txt {
+            visible: key.hint !== ""
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 8 * Ui.s
+            text: key.hint
+            color: Ui.dim
+            font.pixelSize: 18 * Ui.s
+        }
+        TapHandler {
+            id: tap
+            onTapped: key.pressed()
+            onLongPressed: key.held()
+        }
     }
 
-    // Suggestions (glide alternatives), shown only while there are some.
+    // Runners-up for the last swiped word.
     RowLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: 64 * Ui.s
@@ -116,21 +159,21 @@ ColumnLayout {
         Repeater {
             model: kb.suggestions
             Rectangle {
-                id: sug
+                id: chip
                 required property string modelData
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 14 * Ui.s
-                color: st.pressed ? Ui.cardHi : "transparent"
+                color: chipTap.pressed ? Ui.cardHi : "transparent"
                 border.color: Ui.line
                 border.width: 2 * Ui.s
-                Txt { anchors.centerIn: parent; text: sug.modelData.trim(); font.pixelSize: 28 * Ui.s }
+                Txt { anchors.centerIn: parent; text: chip.modelData.trim(); font.pixelSize: 28 * Ui.s }
                 TapHandler {
-                    id: st
+                    id: chipTap
                     onTapped: {
-                        // Swap the glided word for this one.
-                        kb.typed("replace", { back: kb.lastGlide.length, text: sug.modelData })
-                        kb.lastGlide = sug.modelData
+                        kb.typed("replace", { back: kb.swiped.length, text: chip.modelData })
+                        Ui.send("/learn", { word: chip.modelData.trim() })
+                        kb.swiped = chip.modelData
                         kb.suggestions = []
                     }
                 }
@@ -138,169 +181,165 @@ ColumnLayout {
         }
     }
 
-    // ------------------------------------------------------- letters --
+    // ------------------------------------------------------------ letters --
     Item {
-        id: letterArea
+        id: letterPage
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.preferredHeight: 300
-        visible: kb.page === "abc"
+        visible: kb.page === "letters"
         ColumnLayout {
-            id: letterRows
+            id: letterGrid
             anchors.fill: parent
             spacing: 10 * Ui.s
             Repeater {
                 model: 3
                 RowLayout {
-                    id: krow
+                    id: lrow
                     required property int index
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.leftMargin: index === 1 ? 50 * Ui.s : 0
-                    Layout.rightMargin: index === 1 ? 50 * Ui.s : 0
+                    readonly property var keys: kb.letterRows[index]
+                    Layout.leftMargin: index === 1 && keys.length < 10 ? 50 * Ui.s : 0
+                    Layout.rightMargin: index === 1 && keys.length < 10 ? 50 * Ui.s : 0
                     spacing: 10 * Ui.s
-                    Cap {
-                        visible: krow.index === 2
-                        label: kb.caps ? "⇪" : "⇧"
-                        units: 1.5
-                        active: kb.shift || kb.caps
-                        onHit: {
-                            // Tap: next letter upper case. Second tap: caps lock.
-                            if (kb.caps) { kb.caps = false; kb.shift = false }
-                            else if (kb.shift) { kb.caps = true }
+                    Key {
+                        visible: lrow.index === 2
+                        label: kb.capsLock ? "⇪" : "⇧"
+                        span: 1.5
+                        lit: kb.shift || kb.capsLock
+                        // Once: next letter upper case. Twice: caps lock.
+                        onPressed: {
+                            if (kb.capsLock) { kb.capsLock = false; kb.shift = false }
+                            else if (kb.shift) kb.capsLock = true
                             else kb.shift = true
                         }
                     }
                     Repeater {
-                        model: kb.letters[krow.index]
-                        Cap {
+                        model: lrow.keys
+                        Key {
                             required property string modelData
+                            required property int index
                             objectName: "letter_" + modelData
-                            label: kb.shift || kb.caps ? modelData.toUpperCase() : modelData
-                            onHit: kb.letter(modelData)
+                            label: kb.shift || kb.capsLock ? modelData.toUpperCase() : modelData
+                            hint: lrow.index === 0 ? String((index + 1) % 10) : ""
+                            onPressed: kb.tapLetter(modelData)
+                            onHeld: if (lrow.index === 0) kb.out("text", String((index + 1) % 10))
                         }
                     }
-                    Cap {
-                        visible: krow.index === 2
+                    Key {
+                        visible: lrow.index === 2
                         label: "⌫"
-                        units: 1.5
-                        onHit: {
-                            if (kb.lastGlide.length && !kb.anyMod) {
-                                // Right after a glide: take the whole word back.
-                                kb.typed("replace", { back: kb.lastGlide.length, text: "" })
-                                kb.lastGlide = ""
-                                kb.suggestions = []
-                            } else
-                                kb.emit("key", "BackSpace")
-                        }
+                        span: 1.5
+                        onPressed: kb.backspace()
                     }
                 }
             }
         }
-        // Glide: a finger that slides across the letters. Taps fall through
-        // to the keys (the handler only takes over once the finger travels).
+        // A finger that travels over the letters is a swipe; a tap still
+        // reaches the key under it (this only takes over past the threshold).
         DragHandler {
-            id: glider
-            enabled: kb.glide && !kb.anyMod
+            id: tracer
+            enabled: kb.swipe && !kb.anyLatch
             target: null
             dragThreshold: 26 * Ui.s
-            property var path: []
+            property var trace: []
             onActiveChanged: {
                 if (active) {
-                    path = [glider.centroid.pressPosition, glider.centroid.position]
-                } else if (path.length > 3) {
-                    kb.decode(path)
-                    path = []
+                    trace = [centroid.pressPosition, centroid.position]
+                } else {
+                    if (trace.length > 3)
+                        kb.matchTrace(trace)
+                    trace = []
                 }
             }
-            onCentroidChanged: if (active) path.push(centroid.position)
+            onCentroidChanged: if (active) trace.push(centroid.position)
         }
     }
-    // Key centres for the glide decoder, in this item's coordinates.
-    function keyCenters() {
-        var out = {}
+    property real keyWidth: 100
+    function letterCentres() {
+        var found = {}
         function walk(item) {
             for (var i = 0; i < item.children.length; i++) {
                 var c = item.children[i]
                 if (c.objectName && c.objectName.indexOf("letter_") === 0) {
-                    var p = c.mapToItem(letterArea, c.width / 2, c.height / 2)
-                    out[c.objectName.slice(7)] = [p.x, p.y]
-                    kb.keyW = c.width
+                    var p = c.mapToItem(letterPage, c.width / 2, c.height / 2)
+                    found[c.objectName.slice(7)] = [p.x, p.y]
+                    kb.keyWidth = c.width
                 }
                 walk(c)
             }
         }
-        walk(letterRows)
-        return out
+        walk(letterGrid)
+        return found
     }
-    property real keyW: 100
-    function decode(path) {
+    function matchTrace(trace) {
         var pts = []
-        var step = Math.max(1, Math.floor(path.length / 120))
-        for (var i = 0; i < path.length; i += step) pts.push([path[i].x, path[i].y])
-        Ui.request("POST", "/glide", { keys: keyCenters(), key_size: keyW, path: pts }, function (r) {
+        var step = Math.max(1, Math.floor(trace.length / 120))
+        for (var i = 0; i < trace.length; i += step) pts.push([trace[i].x, trace[i].y])
+        Ui.request("POST", "/swipe-words", { keys: letterCentres(), key_width: keyWidth, trace: pts }, function (r) {
             if (!r || !r.words || !r.words.length)
                 return
-            var w = r.words[0]
-            var upper = kb.shift || kb.caps
-            if (upper) w = w.charAt(0).toUpperCase() + w.slice(1)
-            if (kb.shift && !kb.caps) kb.shift = false
-            var sp = /[A-Za-z0-9.,!?;:)\]"']/.test(kb.lastChar) ? " " : ""
-            kb.typed("text", sp + w)
-            kb.lastGlide = sp + w
-            kb.lastChar = w.charAt(w.length - 1)
-            // The next best words, swapped in with the same leading space.
-            kb.suggestions = r.words.slice(1, 4).map(function (x) {
-                return sp + (upper ? x.charAt(0).toUpperCase() + x.slice(1) : x)
-            })
+            var upper = kb.shift || kb.capsLock
+            function cased(w) { return upper ? w.charAt(0).toUpperCase() + w.slice(1) : w }
+            if (kb.shift && !kb.capsLock) kb.shift = false
+            // A space first when it follows a word or punctuation.
+            var lead = /[A-Za-z0-9.,!?;:)\]"']/.test(kb.prev) ? " " : ""
+            kb.finishWord()
+            var first = lead + cased(r.words[0])
+            kb.typed("text", first)
+            Ui.send("/learn", { word: r.words[0] })
+            kb.swiped = first
+            kb.prev = first.charAt(first.length - 1)
+            kb.suggestions = r.words.slice(1, 4).map(function (w) { return lead + cased(w) })
         })
     }
 
-    // ------------------------------------------------------- symbols --
+    // ---------------------------------------------------- numbers/symbols --
     ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.preferredHeight: 300
-        visible: kb.page === "sym" || kb.page === "sym2"
+        visible: kb.page === "numbers" || kb.page === "symbols"
         spacing: 10 * Ui.s
         Repeater {
             model: 3
             RowLayout {
-                id: srow
+                id: nrow
                 required property int index
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 10 * Ui.s
-                Cap {
-                    visible: srow.index === 2
-                    label: kb.page === "sym" ? "#+=" : "123"
-                    units: 1.5
-                    onHit: kb.page = kb.page === "sym" ? "sym2" : "sym"
+                Key {
+                    visible: nrow.index === 2
+                    label: kb.page === "numbers" ? "#+=" : "123"
+                    span: 1.5
+                    onPressed: kb.page = kb.page === "numbers" ? "symbols" : "numbers"
                 }
                 Repeater {
-                    model: (kb.page === "sym" ? kb.symbols : kb.symbols2)[srow.index]
-                    Cap {
+                    model: (kb.page === "numbers" ? kb.numberRows : kb.symbolRows)[nrow.index]
+                    Key {
                         required property string modelData
                         label: modelData
-                        onHit: { kb.emit("text", modelData); kb.lastGlide = "" }
+                        onPressed: kb.out("text", modelData)
                     }
                 }
-                Cap {
-                    visible: srow.index === 2
+                Key {
+                    visible: nrow.index === 2
                     label: "⌫"
-                    units: 1.5
-                    onHit: kb.emit("key", "BackSpace")
+                    span: 1.5
+                    onPressed: kb.backspace()
                 }
             }
         }
     }
 
-    // ------------------------------------------------------------ fn --
+    // --------------------------------------------------------------- edit --
     GridLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.preferredHeight: 300
-        visible: kb.page === "fn"
+        visible: kb.page === "edit"
         columns: 7
         rowSpacing: 10 * Ui.s
         columnSpacing: 10 * Ui.s
@@ -308,41 +347,65 @@ ColumnLayout {
             model: [
                 ["Esc", "key", "Escape"], ["Tab", "key", "Tab"], ["Home", "key", "Home"], ["End", "key", "End"],
                 ["PgUp", "key", "Prior"], ["PgDn", "key", "Next"], ["Del", "key", "Delete"],
-                ["Copy", "combo", "c"], ["Paste", "combo", "v"], ["Cut", "combo", "x"], ["All", "combo", "a"],
+                ["Copy", "combo", "c"], ["Paste", "combo", "v"], ["Cut", "combo", "x"], ["Select all", "combo", "a"],
                 ["Undo", "combo", "z"], ["Redo", "combo", "y"], ["↑", "key", "Up"],
-                ["Ctrl", "mod", "ctrl"], ["Alt", "mod", "alt"], ["Super", "mod", "super"], ["Shift", "mod", "shift"],
+                ["Ctrl", "latch", "ctrl"], ["Alt", "latch", "alt"], ["Super", "latch", "super"], ["Shift", "latch", "shift"],
                 ["←", "key", "Left"], ["↓", "key", "Down"], ["→", "key", "Right"]
             ]
-            Cap {
+            Key {
                 required property var modelData
                 label: modelData[0]
-                active: modelData[1] === "mod" && kb.mods[modelData[2]] === true
-                onHit: {
-                    if (modelData[1] === "mod") kb.toggleMod(modelData[2])
-                    else if (modelData[1] === "combo") { kb.typed("combo", ["ctrl", modelData[2]]); kb.mods = ({}) }
-                    else kb.emit("key", modelData[2])
-                    kb.lastGlide = ""
+                lit: modelData[1] === "latch" && kb.latched[modelData[2]] === true
+                onPressed: {
+                    if (modelData[1] === "latch") kb.toggleLatch(modelData[2])
+                    else if (modelData[1] === "combo") { kb.typed("combo", ["ctrl", modelData[2]]); kb.latched = ({}) }
+                    else kb.out("key", modelData[2])
                 }
             }
         }
     }
 
-    // ---------------------------------------------------- bottom row --
+    // ---------------------------------------------------------- bottom row --
     RowLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.preferredHeight: 100
         spacing: 10 * Ui.s
-        Cap {
-            label: kb.page === "abc" ? "123" : "ABC"
-            units: 1.4
-            onHit: kb.page = kb.page === "abc" ? "sym" : "abc"
+        Key {
+            label: kb.page === "letters" ? "123" : "abc"
+            span: 1.4
+            onPressed: kb.page = kb.page === "letters" ? "numbers" : "letters"
         }
-        Cap { label: "Fn"; units: 1.2; active: kb.page === "fn" || kb.anyMod; onHit: kb.page = kb.page === "fn" ? "abc" : "fn" }
-        Cap { label: ","; onHit: { kb.emit("text", ","); kb.lastGlide = "" } }
-        Cap { label: "space"; units: 4.2; onHit: { kb.emit("text", " "); kb.lastGlide = ""; kb.suggestions = [] } }
-        Cap { label: "."; onHit: { kb.emit("text", "."); kb.lastGlide = "" } }
-        Cap { label: "Enter"; units: 1.8; onHit: { kb.emit("key", "Return"); kb.lastGlide = ""; kb.suggestions = [] } }
-        Cap { label: "▾"; visible: kb.showHide; onHit: kb.hideRequested() }
+        Key { label: "Edit"; span: 1.2; lit: kb.page === "edit" || kb.anyLatch; onPressed: kb.page = kb.page === "edit" ? "letters" : "edit" }
+        Key { label: ","; onPressed: kb.out("text", ",") }
+        // The spacebar: a tap types a space, a slide moves the cursor.
+        Key {
+            id: space
+            label: cursorDrag.active ? "◂  cursor  ▸" : "space"
+            span: 4.2
+            onPressed: { kb.out("text", " "); kb.suggestions = [] }
+            DragHandler {
+                id: cursorDrag
+                target: null
+                yAxis.enabled: false
+                dragThreshold: 18 * Ui.s
+                property real carry: 0
+                property real lastX: 0
+                onActiveChanged: { carry = 0; lastX = centroid.position.x; if (active) kb.suggestions = [] }
+                onCentroidChanged: {
+                    if (!active) return
+                    carry += centroid.position.x - lastX
+                    lastX = centroid.position.x
+                    var stepPx = 40 * Ui.s
+                    while (Math.abs(carry) >= stepPx) {
+                        kb.out("key", carry > 0 ? "Right" : "Left")
+                        carry -= carry > 0 ? stepPx : -stepPx
+                    }
+                }
+            }
+        }
+        Key { label: "."; onPressed: kb.out("text", ".") }
+        Key { label: "Enter"; span: 1.8; onPressed: { kb.out("key", "Return"); kb.suggestions = [] } }
+        Key { label: "▾"; visible: kb.showHide; onPressed: kb.hideRequested() }
     }
 }

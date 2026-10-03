@@ -73,6 +73,31 @@ Item {
                 onClicked: Ui.post("/dash-done")
             }
 
+            // A game in front: keep this dashboard's settings for it. They
+            // come back by themselves each time the game starts.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !!(dash.st.game && dash.st.game.name)
+                spacing: 16 * Ui.s
+                Txt {
+                    Layout.fillWidth: true
+                    text: !dash.st.game ? "" : dash.st.game.remembered
+                          ? dash.st.game.name + " starts with these settings"
+                          : "Start " + dash.st.game.name + " with these settings?"
+                    elide: Text.ElideRight
+                    color: Ui.dim
+                    font.pixelSize: 26 * Ui.s
+                }
+                Btn {
+                    Layout.preferredWidth: 300 * Ui.s
+                    Layout.preferredHeight: 76 * Ui.s
+                    active: !!(dash.st.game && dash.st.game.remembered)
+                    label: active ? "Saved for this game" : "Save for this game"
+                    fontSize: 24
+                    onClicked: Ui.post("/remember", { on: !active })
+                }
+            }
+
             // --------------------------------------------------- stats --
             RowLayout {
                 Layout.fillWidth: true
@@ -437,8 +462,14 @@ Item {
                     anchors.margins: 20 * Ui.s
                     anchors.leftMargin: 28 * Ui.s
                     spacing: 16 * Ui.s
-                    Txt { text: "Stick lights"; color: Ui.dim; font.pixelSize: 26 * Ui.s }
-                    HueSlider {
+                    Txt {
+                        text: dash.st.rgb && dash.st.rgb.mode === "battery" ? "Stick lights · following the battery (green full, red low)"
+                            : dash.st.rgb && dash.st.rgb.mode === "heat" ? "Stick lights · following the chip temperature (blue cool, red hot)"
+                            : "Stick lights"
+                        color: Ui.dim
+                        font.pixelSize: 26 * Ui.s
+                    }
+                    ColorPad {
                         Layout.fillWidth: true
                         color: dash.st.rgb ? dash.st.rgb.color : "ffffff"
                         onColorPicked: function (c) {
@@ -468,7 +499,8 @@ Item {
                     }
                     Seg {
                         Layout.fillWidth: true
-                        options: [["static", "Steady"], ["breath", "Breathing"], ["off", "Off"]]
+                        options: [["static", "Steady"], ["breath", "Breathing"], ["battery", "Battery"], ["heat", "Heat"], ["off", "Off"]]
+                        fontSize: 24
                         current: dash.st.rgb ? dash.st.rgb.mode : ""
                         onPicked: function (v) { Ui.post("/rgb", { mode: v }) }
                     }

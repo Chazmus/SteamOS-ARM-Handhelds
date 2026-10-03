@@ -31,6 +31,7 @@ Window {
     property var nav: ({})
     property var running: []
     property var pinned: []
+    property var web: []
     property bool bottomOn: true
     property string rowsKey: ""
     property string shotFile: ""
@@ -59,10 +60,11 @@ Window {
                     pollState()
             }
             // Only hand the tiles a new model when the apps changed.
-            var key = JSON.stringify([n.running || [], n.pinned || []])
+            var key = JSON.stringify([n.running || [], n.pinned || [], n.web || []])
             if (key !== rowsKey) {
                 rowsKey = key
                 running = n.running || []
+                web = n.web || []
                 pinned = (n.pinned || []).filter(function (p) {
                     return !(n.running || []).some(function (r) { return r.id === p.id })
                 })
@@ -79,9 +81,11 @@ Window {
     }
     Connections {
         target: Ui
-        function onChanged() { root.pollNav(); if (root.page === "dash" || root.page === "settings") root.pollState() }
+        function onChanged() { root.pollNav(); if (root.page === "dash" || root.page === "settings" || root.page === "home") root.pollState() }
     }
     Timer { interval: 400; running: root.shotFile === ""; repeat: true; onTriggered: root.pollNav() }
+    // Home shows the toggles and the game in front: refresh those gently.
+    Timer { interval: 3000; running: root.page === "home" && root.shotFile === ""; repeat: true; onTriggered: root.pollState() }
     Timer {
         interval: 1000
         running: root.page === "dash" && root.shotFile === ""
@@ -134,7 +138,7 @@ Window {
 
     readonly property var titles: ({
         home: "", dash: "Dashboard", pad: "Trackpad and keyboard", keys: "Trackpad and keyboard",
-        settings: "Settings", apps: "Apps"
+        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps"
     })
 
     // ------------------------------------------------------------- frame --
@@ -196,6 +200,7 @@ Window {
                 visible: root.page === "home"
                 running: root.running
                 pinned: root.pinned
+                web: root.web
                 onOpen: function (p) { root.go(p) }
             }
             DashPage {
@@ -203,7 +208,7 @@ Window {
                 anchors.fill: parent
                 visible: root.page === "dash"
             }
-            TopInput {
+            RemotePad {
                 anchors.fill: parent
                 visible: root.page === "pad" || root.page === "keys"
                 mode: root.page === "keys" ? "keys" : "pad"
@@ -211,6 +216,15 @@ Window {
             SettingsPage {
                 anchors.fill: parent
                 visible: root.page === "settings"
+            }
+            NotesPage {
+                anchors.fill: parent
+                visible: root.page === "notes"
+            }
+            NewWebPage {
+                anchors.fill: parent
+                visible: root.page === "newweb"
+                onDone: root.go("home")
             }
             PickerPage {
                 anchors.fill: parent

@@ -6,10 +6,12 @@ Level 1.0 Level.qml
 Meter 1.0 Meter.qml
 Seg 1.0 Seg.qml
 Tile 1.0 Tile.qml
-HueSlider 1.0 HueSlider.qml
+ColorPad 1.0 ColorPad.qml
 KeyPad 1.0 KeyPad.qml
 HomePage 1.0 HomePage.qml
 DashPage 1.0 DashPage.qml
-TopInput 1.0 TopInput.qml
+RemotePad 1.0 RemotePad.qml
 SettingsPage 1.0 SettingsPage.qml
 PickerPage 1.0 PickerPage.qml
+NotesPage 1.0 NotesPage.qml
+NewWebPage 1.0 NewWebPage.qml

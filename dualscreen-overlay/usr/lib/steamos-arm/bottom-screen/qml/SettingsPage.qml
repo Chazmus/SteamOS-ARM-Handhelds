@@ -89,9 +89,31 @@ Flickable {
             Seg {
                 Layout.fillWidth: true
                 options: [[true, "On"], [false, "Off"]]
-                current: sp.cfg.glide !== false
+                current: sp.cfg.swipe !== false
                 fontSize: 24
-                onPicked: function (v) { Ui.setting("glide", v) }
+                onPicked: function (v) { Ui.setting("swipe", v) }
+            }
+        }
+        Row {
+            title: "Keyboard layout"
+            help: "For the bottom screen's own keys. Swipe typing follows it."
+            Seg {
+                Layout.fillWidth: true
+                options: [["qwerty", "QWERTY"], ["qwertz", "QWERTZ"], ["azerty", "AZERTY"]]
+                current: sp.cfg.layout || "qwerty"
+                fontSize: 24
+                onPicked: function (v) { Ui.setting("layout", v) }
+            }
+        }
+        Row {
+            title: "Scroll coasting"
+            help: "A quick two-finger flick keeps the page moving for a moment after you let go."
+            Seg {
+                Layout.fillWidth: true
+                options: [[true, "On"], [false, "Off"]]
+                current: sp.cfg.momentum !== false
+                fontSize: 24
+                onPicked: function (v) { Ui.setting("momentum", v) }
             }
         }
         Row {

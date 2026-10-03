@@ -43,7 +43,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import glide  # noqa: E402  (glide typing decoder, next to this file)
+import swipetype  # noqa: E402  (swipe typing, next to this file)
 QML = HERE / "qml" / "Main.qml"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "steamos-arm"
 CONFIG = CONFIG_DIR / "bottom-screen.json"
@@ -70,8 +70,13 @@ DEFAULT_CONFIG = {
     "pad_speed": 1.6,           # trackpad: top-screen pixels per pad pixel
     "pad_natural": False,       # two-finger scroll direction
     "autocorrect": True,
-    "glide": True,
+    "swipe": True,              # swipe typing on both keyboards
+    "layout": "qwerty",         # qwerty, qwertz, azerty
+    "momentum": True,           # two-finger scrolls keep gliding after a flick
+    "webapps": [],              # your own: [{"id", "name", "url"}]
+    "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
+LAYOUTS = ("qwerty", "qwertz", "azerty")
 
 # Which backlight is which panel (else: listed by name).
 BACKLIGHT_NAMES = {
@@ -362,6 +367,200 @@ def set_refresh(hz: int) -> bool:
     return True
 
 
+# ---------------------------------------------------------- current game ----
+STEAM_HOME = Path.home() / ".local/share/Steam"
+NOT_GAMES = {0, 769}       # nothing, Steam's own UI
+
+
+def _library_dirs() -> list[Path]:
+    out = [STEAM_HOME / "steamapps"]
+    vdf = STEAM_HOME / "steamapps" / "libraryfolders.vdf"
+    for m in re.finditer(r'"path"\s+"([^"]+)"', rd(str(vdf))):
+        d = Path(m.group(1)) / "steamapps"
+        if d not in out:
+            out.append(d)
+    return out
+
+
+class Games:
+    """The game in front on the top screen (gamescope's GAMESCOPE_FOCUSED_APP
+    on Steam's display) and its name from Steam's app manifests. Also applies
+    per-game settings: when a game with remembered settings comes to the
+    front, its profile, fan and refresh rate are set, and what was there
+    before goes back when it leaves."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.appid = 0
+        self.names: dict[int, str] = {}
+        self.before: dict | None = None     # settings to restore after a game
+
+    def name(self, appid: int) -> str:
+        if appid in self.names:
+            return self.names[appid]
+        name = ""
+        for d in _library_dirs():
+            m = re.search(r'"name"\s+"([^"]+)"', rd(str(d / f"appmanifest_{appid}.acf")))
+            if m:
+                name = m.group(1)
+                break
+        self.names[appid] = name
+        return name
+
+    def poll(self) -> int:
+        m = re.search(r"= (\d+)", run("env", f"DISPLAY={steam_display()}", "xprop", "-root",
+                                      "GAMESCOPE_FOCUSED_APP"))
+        appid = int(m.group(1)) if m else 0
+        return 0 if appid in NOT_GAMES else appid
+
+    def state(self, cfg: dict) -> dict:
+        with self.lock:
+            appid = self.appid
+        return {"appid": appid, "name": self.name(appid) if appid else "",
+                "remembered": str(appid) in cfg.get("per_game", {})}
+
+    @staticmethod
+    def current_settings() -> dict:
+        k = konkrd_state()
+        r = refresh_state()
+        return {"profile": k["profile"], "fan_mode": k["fan_mode"], "fan_fixed": k["fan_fixed"],
+                "refresh": r["choice"] if r else 0}
+
+    @staticmethod
+    def apply(st: dict) -> None:
+        if st.get("profile") in ("silent", "balanced", "turbo"):
+            konkrd(f"profile-{st['profile']}")
+        mode = st.get("fan_mode")
+        if mode == "boost":
+            konkrd("fan-boost-on")
+        elif mode == "fixed":
+            konkrd(f"fan-fixed:{int(st.get('fan_fixed', 50))}")
+        elif mode == "auto":
+            konkrd("fan-auto")
+        if "refresh" in st:
+            set_refresh(int(st["refresh"] or 0))
+
+    def remember(self, on: bool) -> bool:
+        with self.lock:
+            appid = self.appid
+        if not appid:
+            return False
+        cfg = load_config()
+        per = dict(cfg.get("per_game", {}))
+        if on:
+            per[str(appid)] = self.current_settings()
+        else:
+            per.pop(str(appid), None)
+        cfg["per_game"] = per
+        save_config(cfg)
+        return True
+
+    def watch(self) -> None:
+        while True:
+            time.sleep(3)
+            try:
+                appid = self.poll()
+            except Exception:
+                continue
+            with self.lock:
+                if appid == self.appid:
+                    continue
+                left, self.appid = self.appid, appid
+            per = load_config().get("per_game", {})
+            if appid and str(appid) in per:
+                if self.before is None:
+                    self.before = self.current_settings()
+                log(f"game {appid}: its remembered settings")
+                self.apply(per[str(appid)])
+            elif left and self.before is not None and not (appid and str(appid) in per):
+                log("game left: settings from before it")
+                self.apply(self.before)
+                self.before = None
+
+
+GAMES = Games()
+
+
+# -------------------------------------------------------------- web apps ----
+# Ready-made tiles that open in WebApp.qml (QtWebEngine), each with its own
+# cookies. Game Guide's page depends on the game in front.
+BUILTIN_WEB = {
+    "guide": {"name": "Game Guide", "icon": "help-contents"},
+    "youtube": {"name": "YouTube", "icon": "video-television", "url": "https://www.youtube.com/tv"},
+    "music": {"name": "YouTube Music", "icon": "audio-headphones", "url": "https://music.youtube.com"},
+    "chat": {"name": "Steam Chat", "icon": "dialog-messages", "url": "https://steamcommunity.com/chat"},
+}
+
+
+def guide_url(name: str) -> str:
+    import urllib.parse
+    if not name:
+        return "https://www.pcgamingwiki.com"
+    return "https://duckduckgo.com/?q=" + urllib.parse.quote_plus(f"{name} guide walkthrough")
+
+
+def web_entries(cfg: dict) -> list[dict]:
+    out = [{"id": f"web:{k}", "name": v["name"], "icon": v["icon"], "web": True}
+           for k, v in BUILTIN_WEB.items()]
+    for w in cfg.get("webapps", []):
+        out.append({"id": f"web:u-{w['id']}", "name": w["name"], "icon": "applications-internet", "web": True})
+    return out
+
+
+def web_target(web_id: str, cfg: dict) -> tuple[str, str] | None:
+    """(name, url) for a web tile."""
+    key = web_id[4:]
+    if key == "guide":
+        st = GAMES.state(cfg)
+        return ("Guide · " + st["name"]) if st["name"] else "Game Guide", guide_url(st["name"])
+    if key in BUILTIN_WEB:
+        return BUILTIN_WEB[key]["name"], BUILTIN_WEB[key]["url"]
+    for w in cfg.get("webapps", []):
+        if f"u-{w['id']}" == key:
+            return w["name"], w["url"]
+    return None
+
+
+# ----------------------------------------------------------------- notes ----
+NOTES_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "steamos-arm" / "notes"
+
+
+def notes_get(appid: int) -> str:
+    try:
+        return (NOTES_DIR / f"{appid}.txt").read_text()
+    except OSError:
+        return ""
+
+
+def notes_put(appid: int, text: str) -> bool:
+    try:
+        NOTES_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = NOTES_DIR / f".{appid}.tmp"
+        tmp.write_text(text[:100000])
+        os.replace(tmp, NOTES_DIR / f"{appid}.txt")
+        return True
+    except OSError:
+        return False
+
+
+# --------------------------------------------------------------- toggles ----
+def toggles() -> dict:
+    wifi = run("nmcli", "radio", "wifi").strip()
+    bt = re.search(r"Powered:\s*(\w+)", run("bluetoothctl", "show", timeout=3))
+    return {"wifi": wifi == "enabled" if wifi else None,
+            "bluetooth": (bt.group(1) == "yes") if bt else None}
+
+
+def set_toggle(name: str, on: bool) -> bool:
+    if name == "wifi":
+        run("nmcli", "radio", "wifi", "on" if on else "off")
+        return True
+    if name == "bluetooth":
+        run("bluetoothctl", "power", "on" if on else "off", timeout=5)
+        return True
+    return False
+
+
 # --------------------------------------------------------------- display ----
 def backlights() -> list[dict]:
     names = BACKLIGHT_NAMES.get(MODEL, {})
@@ -457,7 +656,7 @@ def set_rgb(b: dict) -> bool:
         bri = max(0, min(255, int(b.get("brightness", cur["brightness"]))))
     except (TypeError, ValueError):
         return False
-    if mode not in ("static", "breath", "off") or not re.fullmatch(r"[0-9a-f]{6}", color):
+    if mode not in ("static", "breath", "off", "battery", "heat") or not re.fullmatch(r"[0-9a-f]{6}", color):
         return False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
@@ -601,11 +800,21 @@ class Apps:
             p = self.procs.get(app_id)
             if p and p.poll() is None:
                 return focus_app(app_id, self)
-            app = app_by_id(app_id)
-            if not app:
-                return False
-            argv = [a for a in shlex.split(app["exec"]) if not re.fullmatch(r"%[a-zA-Z]", a)]
+            if app_id.startswith("web:"):
+                target = web_target(app_id, load_config())
+                if not target:
+                    return False
+                argv = ["qml6", str(QML.parent / "WebApp.qml"), "--", target[0], target[1], app_id[4:]]
+            else:
+                app = app_by_id(app_id)
+                if not app:
+                    return False
+                argv = [a for a in shlex.split(app["exec"]) if not re.fullmatch(r"%[a-zA-Z]", a)]
             env = dict(os.environ)
+            if app_id.startswith("web:"):
+                # Same as the UI: EGL straight on the GPU, the KDE theme.
+                env.update(QT_XCB_GL_INTEGRATION="xcb_egl", DISABLE_GAMESCOPE_WSI="1",
+                           QT_QPA_PLATFORMTHEME="kde", XDG_CURRENT_DESKTOP="KDE")
             # Plain X11 on the bottom gamescope's Xwayland, never the Game Mode one.
             env.update(QT_QPA_PLATFORM="xcb", GDK_BACKEND="x11", SDL_VIDEODRIVER="x11",
                        MOZ_ENABLE_WAYLAND="0", ELECTRON_OZONE_PLATFORM_HINT="x11")
@@ -983,7 +1192,7 @@ class UInputDevice:
         os.write(self.fd, data + struct.pack("qqHHi", 0, 0, EV_SYN, 0, 0))
 
 
-class TopInput:
+class RemoteInput:
     """Made on first use, so nothing appears until the pages are used."""
     def __init__(self):
         self.lock = threading.Lock()
@@ -1343,7 +1552,7 @@ def watch_text_focus() -> None:
     GLib.MainLoop().run()
 
 
-TOP_INPUT = TopInput()
+TOP_INPUT = RemoteInput()
 TYPER = Typer()
 KEYBOARD = KeyboardOverlay()
 
@@ -1386,7 +1595,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/state":
             cfg = load_config()
-            apps = {a["id"]: a for a in list_apps()}
+            apps = {a["id"]: a for a in list_apps() + web_entries(cfg)}
             rows = {
                 "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
                 "running": [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
@@ -1422,12 +1631,15 @@ class Handler(BaseHTTPRequestHandler):
                 "net": NET.get(),
                 "refresh": refresh_state(),
                 "nav": rows["nav"],
-                "config": {k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items() if k != "pinned"},
+                "config": {k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
+                           if k not in ("pinned", "per_game")},
+                "game": GAMES.state(cfg),
+                "toggles": toggles(),
             })
         elif self.path == "/nav":
             # Cheap: the UI polls this a few times a second (the AYN button).
             cfg = load_config()
-            apps = {a["id"]: a for a in list_apps()}
+            apps = {a["id"]: a for a in list_apps() + web_entries(cfg)}
             running = [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
                        for i in APPS.running() if i in apps]
             if not running and NAV.state()["front"]:
@@ -1437,8 +1649,12 @@ class Handler(BaseHTTPRequestHandler):
                 "nav": NAV.state(),
                 "running": running,
                 "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
+                "web": web_entries(cfg),
                 "bottom_on": dual.get("bottom_on", True) if dual else True,
             })
+        elif self.path == "/notes":
+            st = GAMES.state(load_config())
+            self.reply({"appid": st["appid"], "name": st["name"], "text": notes_get(st["appid"])})
         elif self.path == "/keyboard":
             self.reply(KEYBOARD.state())
         elif self.path == "/apps":
@@ -1465,20 +1681,20 @@ class Handler(BaseHTTPRequestHandler):
                 ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
         elif path == ["rgb"]:
             ok = set_rgb(b)
-        elif path == ["pointer"]:
+        elif path == ["top", "move"]:
             ok = TOP_INPUT.move(int(b.get("dx", 0)), int(b.get("dy", 0)))
-        elif path == ["scroll"]:
+        elif path == ["top", "wheel"]:
             ok = TOP_INPUT.scroll(int(b.get("dx", 0)), int(b.get("dy", 0)))
-        elif path == ["button"]:
+        elif path == ["top", "click"]:
             ok = TOP_INPUT.button(str(b.get("button", "left")), str(b.get("state", "click")))
-        elif path == ["key"]:
+        elif path == ["top", "type"]:
             if "combo" in b:
                 ok = TOP_INPUT.combo(b["combo"])
             elif isinstance(b.get("replace"), dict):
                 ok = TOP_INPUT.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
             else:
                 ok = TOP_INPUT.key(b.get("text"), b.get("key"))
-        elif path == ["release"]:
+        elif path == ["top", "letgo"]:
             TOP_INPUT.release()
         elif path == ["type"]:
             if "combo" in b:
@@ -1487,14 +1703,16 @@ class Handler(BaseHTTPRequestHandler):
                 ok = TYPER.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
             else:
                 ok = TYPER.type(b.get("text"), b.get("key"))
-        elif path == ["glide"]:
+        elif path == ["swipe-words"]:
             try:
-                words = glide.decode(b.get("keys") or {}, float(b.get("key_size", 0)), b.get("path") or [])
+                words = swipetype.words(b.get("keys") or {}, float(b.get("key_width", 0)), b.get("trace") or [])
             except (TypeError, ValueError) as exc:
-                log(f"glide: {exc}")
+                log(f"swipe: {exc}")
                 words = []
             self.reply({"words": words})
             return
+        elif path == ["learn"]:
+            swipetype.learn(str(b.get("word", "")))
         elif path == ["keyboard"]:
             KEYBOARD.set(bool(b.get("visible")), b.get("top"))
         elif path == ["volume"]:
@@ -1515,6 +1733,32 @@ class Handler(BaseHTTPRequestHandler):
                 ok = False
         elif path == ["dash-done"]:
             NAV.back_from_dash()
+        elif path == ["notes"]:
+            try:
+                ok = notes_put(int(b.get("appid", 0)), str(b.get("text", "")))
+            except (TypeError, ValueError):
+                ok = False
+        elif path == ["remember"]:
+            ok = GAMES.remember(bool(b.get("on")))
+        elif path == ["toggle"]:
+            ok = set_toggle(str(b.get("name", "")), bool(b.get("on")))
+        elif path == ["webapp"]:
+            # Add ({"name", "url"}) or remove ({"remove": id}) your own web app.
+            cfg = load_config()
+            apps = [w for w in cfg.get("webapps", []) if isinstance(w, dict)]
+            if b.get("remove"):
+                apps = [w for w in apps if w.get("id") != b["remove"]]
+                APPS.close(f"web:u-{b['remove']}")
+            else:
+                name, url = str(b.get("name", "")).strip()[:40], str(b.get("url", "")).strip()
+                if url and "://" not in url:
+                    url = "https://" + url
+                if not name or not re.match(r"https?://[^\s]+$", url):
+                    self.reply({"ok": False, "error": "a name and a web address"})
+                    return
+                apps.append({"id": secrets.token_hex(4), "name": name, "url": url})
+            cfg["webapps"] = apps
+            save_config(cfg)
         elif path == ["refresh"]:
             try:
                 ok = set_refresh(int(b.get("hz", 0)))
@@ -1531,11 +1775,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == ["settings"]:
             cfg = load_config()
             for k, default in DEFAULT_CONFIG.items():
-                if k == "pinned" or k not in b:
+                if k in ("pinned", "webapps", "per_game") or k not in b:
                     continue
                 v = b[k]
                 if isinstance(default, bool):
                     cfg[k] = bool(v)
+                elif k == "layout":
+                    if v in LAYOUTS:
+                        cfg[k] = v
                 elif isinstance(default, (int, float)):
                     try:
                         cfg[k] = type(default)(v)
@@ -1556,6 +1803,7 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=watch_home_gesture, daemon=True).start()
     threading.Thread(target=watch_touch_activity, daemon=True).start()
+    threading.Thread(target=GAMES.watch, daemon=True).start()
     log(f"api on 127.0.0.1:{port}, model {MODEL!r}")
     # The UI reads the API address + token from a private file (argv and the
     # environment are readable by other users through /proc).

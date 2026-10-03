@@ -621,6 +621,33 @@ class Leds:
         else:
             wr(f"{self.power}/brightness", 0)
 
+    @staticmethod
+    def _blend(stops: list[tuple[float, tuple[int, int, int]]], x: float) -> tuple[int, int, int]:
+        """Colour at x along stops [(position, rgb), ...]."""
+        if x <= stops[0][0]:
+            return stops[0][1]
+        for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+            if x <= p1:
+                t = (x - p0) / (p1 - p0)
+                return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+        return stops[-1][1]
+
+    def live_color(self, mode: str) -> tuple[int, int, int] | None:
+        """Colours that follow the device: battery charge (red when low,
+        green when full) or chip temperature (blue cool, red hot)."""
+        if mode == "battery":
+            pct, _ = battery()
+            if pct < 0:
+                return None
+            return self._blend([(10, (255, 20, 0)), (40, (255, 150, 0)), (80, (40, 255, 60))], pct)
+        if mode == "heat":
+            try:
+                t = soc_temp_c()
+            except RuntimeError:
+                return None
+            return self._blend([(40, (0, 120, 255)), (60, (255, 170, 0)), (80, (255, 20, 0))], t)
+        return None
+
     def apply_sticks(self, st: dict) -> None:
         cfg = st["rgb"]
         mode = cfg.get("mode", "static")
@@ -628,6 +655,10 @@ class Leds:
         if not isinstance(color, str) or len(color) != 6 or any(c not in "0123456789abcdefABCDEF" for c in color):
             color = "ff3c00"
         rgb = tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
+        live = self.live_color(mode)
+        if live is not None:
+            rgb = live
+        self.shown_rgb = (mode, rgb)
         for d in self.sticks:
             if mode == "off":
                 wr(f"{d}/brightness", 0)
@@ -970,7 +1001,7 @@ class Daemon:
         """rgb-set:<static|breath|off>:<rrggbb>:<brightness 0-255> from the
         bottom-screen dashboard's colour picker."""
         parts = req.split(":")
-        if len(parts) != 4 or parts[1] not in ("static", "breath", "off"):
+        if len(parts) != 4 or parts[1] not in ("static", "breath", "off", "battery", "heat"):
             return
         color = parts[2].lower()
         if len(color) != 6 or any(c not in "0123456789abcdef" for c in color):
@@ -1052,6 +1083,7 @@ class Daemon:
         keymap = {KEY_F13: "F13", KEY_F14: "F14", KEY_F15: "F15", KEY_F24: "F24"}
         next_slow = 0.0
         next_ui_check = 0.0
+        next_live = 0.0
         power_down_at = None
         power_long_sent = False
         ayn_down_at = None
@@ -1140,6 +1172,13 @@ class Daemon:
                 p = self.st["profile"]
                 self.fan.tick(p, self.st.get("fan"), os.path.exists(STANDBY_FLAG))
                 self.leds.tick(self.st.get("power_led", True))
+                # Battery/heat light modes follow the device every 10 s.
+                if now >= next_live and not os.path.exists(STANDBY_FLAG):
+                    next_live = now + 10.0
+                    mode = self.st["rgb"].get("mode")
+                    live = self.leds.live_color(mode) if mode in ("battery", "heat") else None
+                    if live is not None and getattr(self.leds, "shown_rgb", None) != (mode, live):
+                        self.leds.apply_sticks(self.st)
                 self.games.tick(p)
 
 
