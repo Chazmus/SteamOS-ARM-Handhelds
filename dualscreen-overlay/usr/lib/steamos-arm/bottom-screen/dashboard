@@ -70,6 +70,7 @@ DEFAULT_CONFIG = {
     "pad_speed": 1.6,           # trackpad: top-screen pixels per pad pixel
     "pad_natural": False,       # two-finger scroll direction
     "autocorrect": True,
+    "capitals": True,           # two spaces = full stop, capital after a sentence
     "swipe": True,              # swipe typing on both keyboards
     "layout": "qwerty",         # qwerty, qwertz, azerty
     "momentum": True,           # two-finger scrolls keep gliding after a flick
@@ -1154,7 +1155,8 @@ BUTTONS = {"left": 0x110, "right": 0x111, "middle": 0x112}
 KEY_LEFTSHIFT = 42
 NAMED_KEYS = {"BackSpace": 14, "Return": 28, "Tab": 15, "Escape": 1,
               "Left": 105, "Right": 106, "Up": 103, "Down": 108,
-              "Delete": 111, "Home": 102, "End": 107, "Prior": 104, "Next": 109}
+              "Delete": 111, "Home": 102, "End": 107, "Prior": 104, "Next": 109,
+              "Menu": 127}
 MOD_KEYS = {"ctrl": 29, "alt": 56, "super": 125, "shift": 42}
 # US layout: character -> (key code, shift)
 US_KEYS: dict[str, tuple[int, bool]] = {" ": (57, False)}
@@ -1257,7 +1259,7 @@ class RemoteInput:
             self.mouse.emit([(EV_KEY, c, 0) for c in BUTTONS.values()])
             self.keys.emit([(EV_KEY, c, 0) for c in MOD_KEYS.values()])
 
-    def combo(self, parts) -> bool:
+    def chord(self, parts) -> bool:
         """["ctrl", "c"], ["ctrl", "alt", "Delete"]...: modifiers, then the
         last part as a character (US layout) or a key name."""
         parts = [str(p) for p in (parts or [])][:6]
@@ -1284,10 +1286,10 @@ class RemoteInput:
                 self.keys.emit([(EV_KEY, m, 0)])
         return True
 
-    def replace(self, back: int, text: str) -> bool:
-        for _ in range(max(0, min(64, int(back)))):
+    def retype(self, erase: int, chars: str) -> bool:
+        for _ in range(max(0, min(64, int(erase)))):
             self.key(None, "BackSpace")
-        return self.key(text, None) if text else True
+        return self.key(chars, None) if chars else True
 
     def key(self, text, name) -> bool:
         with self.lock:
@@ -1402,7 +1404,7 @@ class Typer:
 
     MOD_SYMS = {"ctrl": 0xFFE3, "alt": 0xFFE9, "super": 0xFFEB, "shift": 0xFFE1}
 
-    def combo(self, parts) -> bool:
+    def chord(self, parts) -> bool:
         parts = [str(p) for p in (parts or [])][:6]
         if not parts:
             return False
@@ -1425,10 +1427,10 @@ class Typer:
             x.XSync(d, 0)
             return True
 
-    def replace(self, back: int, text: str) -> bool:
-        for _ in range(max(0, min(64, int(back)))):
+    def retype(self, erase: int, chars: str) -> bool:
+        for _ in range(max(0, min(64, int(erase)))):
             self.type(None, "BackSpace")
-        return self.type(text, None) if text else True
+        return self.type(chars, None) if chars else True
 
     def type(self, text, name) -> bool:
         with self.lock:
@@ -1498,7 +1500,7 @@ class KeyboardOverlay:
                 "-set", "_NET_WM_WINDOW_OPACITY", str(0xFFFFFFFF if visible else 0))
 
     def state(self) -> dict:
-        return {"visible": self.visible, "top": self.top}
+        return {"shown": self.visible, "dock": "upper" if self.top else "lower"}
 
 
 def watch_text_focus() -> None:
@@ -1552,7 +1554,7 @@ def watch_text_focus() -> None:
     GLib.MainLoop().run()
 
 
-TOP_INPUT = RemoteInput()
+REMOTE = RemoteInput()
 TYPER = Typer()
 KEYBOARD = KeyboardOverlay()
 
@@ -1681,28 +1683,28 @@ class Handler(BaseHTTPRequestHandler):
                 ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
         elif path == ["rgb"]:
             ok = set_rgb(b)
-        elif path == ["top", "move"]:
-            ok = TOP_INPUT.move(int(b.get("dx", 0)), int(b.get("dy", 0)))
-        elif path == ["top", "wheel"]:
-            ok = TOP_INPUT.scroll(int(b.get("dx", 0)), int(b.get("dy", 0)))
-        elif path == ["top", "click"]:
-            ok = TOP_INPUT.button(str(b.get("button", "left")), str(b.get("state", "click")))
-        elif path == ["top", "type"]:
-            if "combo" in b:
-                ok = TOP_INPUT.combo(b["combo"])
-            elif isinstance(b.get("replace"), dict):
-                ok = TOP_INPUT.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
+        elif path == ["remote", "move"]:
+            ok = REMOTE.move(int(b.get("dx", 0)), int(b.get("dy", 0)))
+        elif path == ["remote", "wheel"]:
+            ok = REMOTE.scroll(int(b.get("dx", 0)), int(b.get("dy", 0)))
+        elif path == ["remote", "click"]:
+            ok = REMOTE.button(str(b.get("button", "left")), str(b.get("state", "click")))
+        elif path == ["remote", "type"]:
+            if "chord" in b:
+                ok = REMOTE.chord(b["chord"])
+            elif isinstance(b.get("retype"), dict):
+                ok = REMOTE.retype(int(b["retype"].get("erase", 0)), str(b["retype"].get("chars", "")))
             else:
-                ok = TOP_INPUT.key(b.get("text"), b.get("key"))
-        elif path == ["top", "letgo"]:
-            TOP_INPUT.release()
+                ok = REMOTE.key(b.get("chars"), b.get("press"))
+        elif path == ["remote", "letgo"]:
+            REMOTE.release()
         elif path == ["type"]:
-            if "combo" in b:
-                ok = TYPER.combo(b["combo"])
-            elif isinstance(b.get("replace"), dict):
-                ok = TYPER.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
+            if "chord" in b:
+                ok = TYPER.chord(b["chord"])
+            elif isinstance(b.get("retype"), dict):
+                ok = TYPER.retype(int(b["retype"].get("erase", 0)), str(b["retype"].get("chars", "")))
             else:
-                ok = TYPER.type(b.get("text"), b.get("key"))
+                ok = TYPER.type(b.get("chars"), b.get("press"))
         elif path == ["swipe-words"]:
             try:
                 words = swipetype.words(b.get("keys") or {}, float(b.get("key_width", 0)), b.get("trace") or [])
@@ -1712,9 +1714,18 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"words": words})
             return
         elif path == ["learn"]:
-            swipetype.learn(str(b.get("word", "")))
+            swipetype.learn(str(b.get("word", "")), bool(b.get("sure")))
+        elif path == ["word-fix"]:
+            word = str(b.get("word", ""))[:24]
+            mended = swipetype.fix(word, str(b.get("layout", "qwerty")), bool(b.get("start")))
+            self.reply({"word": word, "fix": mended})
+            return
+        elif path == ["word-ends"]:
+            prefix = str(b.get("prefix", ""))[:24]
+            self.reply({"prefix": prefix, "words": swipetype.complete(prefix)})
+            return
         elif path == ["keyboard"]:
-            KEYBOARD.set(bool(b.get("visible")), b.get("top"))
+            KEYBOARD.set(bool(b.get("shown")))
         elif path == ["volume"]:
             set_volume(b.get("percent"), b.get("mute"))
         elif path == ["launch"]:

@@ -73,12 +73,12 @@ Item {
             Layout.preferredHeight: 440 * Ui.s
             onTyped: function (kind, value) {
                 area.forceActiveFocus()
-                if (kind === "text") area.insert(area.cursorPosition, value)
-                else if (kind === "replace") {
-                    var at = Math.max(0, area.cursorPosition - value.back)
+                if (kind === "chars") area.insert(area.cursorPosition, value)
+                else if (kind === "retype") {
+                    var at = Math.max(0, area.cursorPosition - value.erase)
                     area.remove(at, area.cursorPosition)
-                    area.insert(at, value.text)
-                } else if (kind === "key") {
+                    area.insert(at, value.chars)
+                } else if (kind === "press") {
                     var p = area.cursorPosition
                     if (value === "BackSpace" && p > 0) area.remove(p - 1, p)
                     else if (value === "Delete") area.remove(p, Math.min(area.length, p + 1))
@@ -88,7 +88,7 @@ Item {
                     else if (value === "Right") area.cursorPosition = Math.min(area.length, p + 1)
                     else if (value === "Home") area.cursorPosition = 0
                     else if (value === "End") area.cursorPosition = area.length
-                } else if (kind === "combo") {
+                } else if (kind === "chord") {
                     var k = value[value.length - 1]
                     if (k === "a") area.selectAll()
                     else if (k === "c") area.copy()

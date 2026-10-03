@@ -84,7 +84,7 @@ Flickable {
             }
         }
         Row {
-            title: "Glide typing"
+            title: "Swipe typing"
             help: "Slide a finger across the letters to type a word."
             Seg {
                 Layout.fillWidth: true
@@ -92,6 +92,17 @@ Flickable {
                 current: sp.cfg.swipe !== false
                 fontSize: 24
                 onPicked: function (v) { Ui.setting("swipe", v) }
+            }
+        }
+        Row {
+            title: "Capitals and full stops"
+            help: "A new sentence starts with a capital, and two spaces end one with a full stop."
+            Seg {
+                Layout.fillWidth: true
+                options: [[true, "On"], [false, "Off"]]
+                current: sp.cfg.capitals !== false
+                fontSize: 24
+                onPicked: function (v) { Ui.setting("capitals", v) }
             }
         }
         Row {
@@ -118,7 +129,7 @@ Flickable {
         }
         Row {
             title: "Autocorrect"
-            help: "On the bottom screen's own keyboard: a clear typo becomes the word you meant. Backspace right after puts yours back."
+            help: "Fixes clear typos as each word ends, and suggests endings while you type. Tap ↶ or backspace to keep your word; it won't be changed again."
             Seg {
                 Layout.fillWidth: true
                 options: [[true, "On"], [false, "Off"]]

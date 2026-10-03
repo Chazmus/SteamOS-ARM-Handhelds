@@ -82,11 +82,13 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             swipe: false
+            autocorrect: false   // names and web addresses
+            capitals: false
             onTyped: function (kind, value) {
                 var box = nw.field === "name" ? nameBox : urlBox
-                if (kind === "text") box.text += value
-                else if (kind === "key" && value === "BackSpace") box.text = box.text.slice(0, -1)
-                else if (kind === "key" && (value === "Return" || value === "Tab")) nw.field = nw.field === "name" ? "url" : "name"
+                if (kind === "chars") box.text += value
+                else if (kind === "press" && value === "BackSpace") box.text = box.text.slice(0, -1)
+                else if (kind === "press" && (value === "Return" || value === "Tab")) nw.field = nw.field === "name" ? "url" : "name"
             }
         }
     }

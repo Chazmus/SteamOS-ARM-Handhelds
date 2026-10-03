@@ -2,10 +2,10 @@
 // (RemotePad.qml) and the one over bottom-screen apps (Keyboard.qml).
 //
 // What it sends out, through typed(kind, value):
-//   "text"     characters
-//   "key"      a key by X name: BackSpace, Return, Tab, Escape, Left, Delete...
-//   "combo"    a shortcut, e.g. ["ctrl", "c"]
-//   "replace"  {back: n, text: s}: n backspaces, then s (swapping a word)
+//   "chars"    characters
+//   "press"    a key by X name: BackSpace, Return, Tab, Escape, Left, Delete...
+//   "chord"    keys held together, e.g. ["ctrl", "c"]
+//   "retype"   {erase: n, chars: s}: rub out n characters, then type s
 //
 // Pages: letters (QWERTY, QWERTZ or AZERTY, from Settings), numbers and
 // symbols (two of them), and Edit: navigation, clipboard shortcuts and the
@@ -18,17 +18,23 @@
 //                            backspace right after removes the word)
 //   slide along the spacebar moves the cursor, a key per 40 px
 //   hold a top-row letter    its digit (q = 1 ... p = 0)
-// Finished words (a space or punctuation after letters, a swiped word, a
-// picked suggestion) are sent to /learn, so the ones this user types rank
-// higher next time.
+// Tapped words (Settings, both on by default):
+//   autocorrect   a finished word that is a clear typo is swapped for the
+//                 word meant; backspace straight after, or the ↶ chip, puts
+//                 yours back and remembers it. Endings for the word being
+//                 typed fill the strip meanwhile.
+//   capitals      two spaces make a full stop, and a new sentence starts
+//                 with shift on
+// Kept words (finished and not corrected, swiped, picked) go to /learn, so
+// the ones this user types rank higher next time.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 
 ColumnLayout {
     id: kb
-    property bool asciiOnly: false
-    property bool showHide: false
+    property bool plainKeys: false
+    property bool hideKey: false
     property bool swipe: Ui.cfg.swipe !== false
     property string layout: Ui.cfg.layout || "qwerty"
     property string page: "letters"       // letters, numbers, symbols, edit
@@ -36,6 +42,15 @@ ColumnLayout {
     property bool capsLock: false
     property var latched: ({})            // ctrl/alt/super/shift held for the next key
     property var suggestions: []
+    property string strip: ""             // what the strip offers: swipe, ends, undo
+    property bool autocorrect: Ui.cfg.autocorrect !== false
+    property bool capitals: Ui.cfg.capitals !== false
+    property var mended: null             // the last autocorrection, while it can be undone
+    property int serial: 0                // counts what was typed, so late answers are dropped
+    property string before: ""            // the character before prev
+    property bool atStart: false          // the next word starts a sentence
+    property bool wordAtStart: false
+    property bool autoShift: false        // shift was turned on by a sentence end
     property string swiped: ""            // the last swiped word, as typed
     property string word: ""              // letters typed since the last break
     property string prev: ""              // last character this keyboard typed
@@ -52,7 +67,7 @@ ColumnLayout {
     readonly property var numberRows: [
         ["1","2","3","4","5","6","7","8","9","0"],
         ["-","/",":",";","(",")","&","@","\""],
-        asciiOnly ? [".",",","?","!","'","#","%"] : [".",",","?","!","'","€","£"]
+        plainKeys ? [".",",","?","!","'","#","%"] : [".",",","?","!","'","€","£"]
     ]
     readonly property var symbolRows: [
         ["[","]","{","}","<",">","=","+","*","_"],
@@ -70,47 +85,143 @@ ColumnLayout {
         n[m] = !n[m]
         latched = n
     }
+    // Learning waits for autocorrect's verdict, so a typo is never learned.
     function finishWord() {
-        if (word.length >= 2)
+        if (word.length >= 2 && !autocorrect)
             Ui.send("/learn", { word: word })
         word = ""
     }
+    function showStrip(mode, list) {
+        strip = mode
+        suggestions = list
+    }
     function out(kind, value) {
+        serial++
         if (anyLatch) {
-            typed("combo", latchedList().concat([kind === "text" ? value.toLowerCase() : value]))
+            typed("chord", latchedList().concat([kind === "chars" ? value.toLowerCase() : value]))
             latched = ({})
             prev = ""
             word = ""
             return
         }
+        mended = null
+        // Two spaces after a word: a full stop and one space.
+        if (kind === "chars" && value === " " && prev === " " && /[A-Za-z0-9]/.test(before) && capitals) {
+            typed("retype", { erase: 1, chars: ". " })
+            prev = " "
+            before = "."
+            sentenceEnd()
+            return
+        }
         typed(kind, value)
-        if (kind === "text" && value.length) {
+        if (kind === "chars" && value.length) {
             var last = value.charAt(value.length - 1)
-            if (/[a-zA-Z]/.test(last))
-                word += last.toLowerCase()
-            else
+            if (/[a-zA-Z]/.test(last)) {
+                if (word === "") wordAtStart = atStart
+                word += last
+                atStart = false
+                if (autocorrect && word.length >= 2 && swiped === "") askEnds(word, serial)
+            } else {
+                var w = word
                 finishWord()
+                if (strip === "ends") showStrip("", [])
+                if (autocorrect && w !== "" && /[ .,!?;:]/.test(last))
+                    askFix(w, last, wordAtStart, serial)
+                else if (strip !== "swipe")
+                    showStrip("", [])
+                if (last === " " && /[.!?]/.test(prev))
+                    sentenceEnd()
+                else if (last !== " ")
+                    atStart = false
+            }
+            before = prev
             prev = last
         } else {
-            if (value !== "BackSpace") finishWord()
+            if (value !== "BackSpace") { finishWord(); atStart = value === "Return" && capitals }
             else word = word.slice(0, -1)
             prev = ""
+            before = ""
+            showStrip("", [])
         }
         swiped = ""
     }
+    // A sentence just ended: the next letter is a capital.
+    function sentenceEnd() {
+        atStart = true
+        if (capitals && !capsLock && !shift) { shift = true; autoShift = true }
+    }
+    function askEnds(prefix, at) {
+        Ui.request("POST", "/word-ends", { prefix: prefix }, function (r) {
+            if (r && kb.serial === at && kb.word === prefix)
+                kb.showStrip("ends", r.words || [])
+        })
+    }
+    function askFix(w, sep, start, at) {
+        Ui.request("POST", "/word-fix", { word: w, layout: kb.layout, start: start }, function (r) {
+            if (!r)
+                return
+            if (!r.fix || r.fix === w) {
+                Ui.send("/learn", { word: w })
+                return
+            }
+            if (kb.serial !== at)     // more was typed meanwhile: leave it be
+                return
+            kb.typed("retype", { erase: w.length + sep.length, chars: r.fix + sep })
+            Ui.send("/learn", { word: r.fix })
+            kb.mended = { from: w, to: r.fix, sep: sep, at: at }
+            kb.showStrip("undo", [w])
+        })
+    }
+    // Put back the word autocorrect replaced, and remember it as meant.
+    function unmend(keepSep) {
+        var m = mended
+        typed("retype", { erase: m.to.length + m.sep.length, chars: m.from + (keepSep ? m.sep : "") })
+        Ui.send("/learn", { word: m.from, sure: true })
+        mended = null
+        word = keepSep ? "" : m.from
+        prev = keepSep ? m.sep : m.from.charAt(m.from.length - 1)
+        showStrip("", [])
+        serial++
+    }
     function tapLetter(ch) {
-        out("text", (shift || capsLock) ? ch.toUpperCase() : ch)
-        if (shift && !capsLock) shift = false
+        var autoUp = autoShift
+        out("chars", (shift || capsLock) ? ch.toUpperCase() : ch)
+        if (shift && !capsLock) { shift = false; autoShift = false }
+        if (autoUp) autoShift = false
     }
     function backspace() {
+        if (mended && mended.at === serial && !anyLatch) {
+            unmend(false)
+            return
+        }
         if (swiped.length && !anyLatch) {
-            typed("replace", { back: swiped.length, text: "" })
+            typed("retype", { erase: swiped.length, chars: "" })
             swiped = ""
-            suggestions = []
+            showStrip("", [])
             prev = ""
             return
         }
-        out("key", "BackSpace")
+        if (autoShift) { shift = false; autoShift = false }
+        out("press", "BackSpace")
+    }
+    function pick(choice) {
+        if (strip === "undo") {
+            unmend(true)
+        } else if (strip === "ends") {
+            typed("retype", { erase: word.length, chars: choice + " " })
+            Ui.send("/learn", { word: choice })
+            word = ""
+            before = choice.charAt(choice.length - 1)
+            prev = " "
+            atStart = false
+            serial++
+            showStrip("", [])
+        } else {
+            typed("retype", { erase: swiped.length, chars: choice })
+            Ui.send("/learn", { word: choice.trim() })
+            swiped = choice
+            showStrip("", [])
+        }
     }
 
     // --------------------------------------------------------------- key --
@@ -150,7 +261,8 @@ ColumnLayout {
         }
     }
 
-    // Runners-up for the last swiped word.
+    // The strip: runners-up for a swiped word, endings for the word being
+    // typed, or the word autocorrect just replaced (tap to keep yours).
     RowLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: 64 * Ui.s
@@ -167,14 +279,16 @@ ColumnLayout {
                 color: chipTap.pressed ? Ui.cardHi : "transparent"
                 border.color: Ui.line
                 border.width: 2 * Ui.s
-                Txt { anchors.centerIn: parent; text: chip.modelData.trim(); font.pixelSize: 28 * Ui.s }
+                Txt {
+                    anchors.centerIn: parent
+                    text: kb.strip === "undo" ? "↶  " + chip.modelData : chip.modelData.trim()
+                    color: kb.strip === "undo" ? Ui.dim : Ui.text
+                    font.pixelSize: 28 * Ui.s
+                }
                 TapHandler {
                     id: chipTap
                     onTapped: {
-                        kb.typed("replace", { back: kb.swiped.length, text: chip.modelData })
-                        Ui.send("/learn", { word: chip.modelData.trim() })
-                        kb.swiped = chip.modelData
-                        kb.suggestions = []
+                        kb.pick(chip.modelData)
                     }
                 }
             }
@@ -224,7 +338,7 @@ ColumnLayout {
                             label: kb.shift || kb.capsLock ? modelData.toUpperCase() : modelData
                             hint: lrow.index === 0 ? String((index + 1) % 10) : ""
                             onPressed: kb.tapLetter(modelData)
-                            onHeld: if (lrow.index === 0) kb.out("text", String((index + 1) % 10))
+                            onHeld: if (lrow.index === 0) kb.out("chars", String((index + 1) % 10))
                         }
                     }
                     Key {
@@ -287,11 +401,12 @@ ColumnLayout {
             var lead = /[A-Za-z0-9.,!?;:)\]"']/.test(kb.prev) ? " " : ""
             kb.finishWord()
             var first = lead + cased(r.words[0])
-            kb.typed("text", first)
+            kb.typed("chars", first)
             Ui.send("/learn", { word: r.words[0] })
             kb.swiped = first
             kb.prev = first.charAt(first.length - 1)
-            kb.suggestions = r.words.slice(1, 4).map(function (w) { return lead + cased(w) })
+            kb.showStrip("swipe", r.words.slice(1, 4).map(function (w) { return lead + cased(w) }))
+            kb.serial++
         })
     }
 
@@ -321,7 +436,7 @@ ColumnLayout {
                     Key {
                         required property string modelData
                         label: modelData
-                        onPressed: kb.out("text", modelData)
+                        onPressed: kb.out("chars", modelData)
                     }
                 }
                 Key {
@@ -345,12 +460,16 @@ ColumnLayout {
         columnSpacing: 10 * Ui.s
         Repeater {
             model: [
-                ["Esc", "key", "Escape"], ["Tab", "key", "Tab"], ["Home", "key", "Home"], ["End", "key", "End"],
-                ["PgUp", "key", "Prior"], ["PgDn", "key", "Next"], ["Del", "key", "Delete"],
-                ["Copy", "combo", "c"], ["Paste", "combo", "v"], ["Cut", "combo", "x"], ["Select all", "combo", "a"],
-                ["Undo", "combo", "z"], ["Redo", "combo", "y"], ["↑", "key", "Up"],
+                ["Esc", "press", "Escape"], ["Tab", "press", "Tab"], ["Find", "chord", ["ctrl", "f"]],
+                ["Save", "chord", ["ctrl", "s"]], ["Close tab", "chord", ["ctrl", "w"]],
+                ["Undo", "chord", ["ctrl", "z"]], ["Redo", "chord", ["ctrl", "shift", "z"]],
+                ["Copy", "chord", ["ctrl", "c"]], ["Cut", "chord", ["ctrl", "x"]], ["Paste", "chord", ["ctrl", "v"]],
+                ["Select all", "chord", ["ctrl", "a"]], ["◂ Word", "chord", ["ctrl", "Left"]],
+                ["Word ▸", "chord", ["ctrl", "Right"]], ["⌦", "press", "Delete"],
                 ["Ctrl", "latch", "ctrl"], ["Alt", "latch", "alt"], ["Super", "latch", "super"], ["Shift", "latch", "shift"],
-                ["←", "key", "Left"], ["↓", "key", "Down"], ["→", "key", "Right"]
+                ["Line start", "press", "Home"], ["↑", "press", "Up"], ["Line end", "press", "End"],
+                ["Page ▲", "press", "Prior"], ["Page ▼", "press", "Next"], ["⌫ Word", "chord", ["ctrl", "BackSpace"]],
+                ["Menu", "press", "Menu"], ["←", "press", "Left"], ["↓", "press", "Down"], ["→", "press", "Right"]
             ]
             Key {
                 required property var modelData
@@ -358,8 +477,8 @@ ColumnLayout {
                 lit: modelData[1] === "latch" && kb.latched[modelData[2]] === true
                 onPressed: {
                     if (modelData[1] === "latch") kb.toggleLatch(modelData[2])
-                    else if (modelData[1] === "combo") { kb.typed("combo", ["ctrl", modelData[2]]); kb.latched = ({}) }
-                    else kb.out("key", modelData[2])
+                    else if (modelData[1] === "chord") { kb.typed("chord", modelData[2]); kb.latched = ({}) }
+                    else kb.out("press", modelData[2])
                 }
             }
         }
@@ -377,13 +496,13 @@ ColumnLayout {
             onPressed: kb.page = kb.page === "letters" ? "numbers" : "letters"
         }
         Key { label: "Edit"; span: 1.2; lit: kb.page === "edit" || kb.anyLatch; onPressed: kb.page = kb.page === "edit" ? "letters" : "edit" }
-        Key { label: ","; onPressed: kb.out("text", ",") }
+        Key { label: ","; onPressed: kb.out("chars", ",") }
         // The spacebar: a tap types a space, a slide moves the cursor.
         Key {
             id: space
             label: cursorDrag.active ? "◂  cursor  ▸" : "space"
             span: 4.2
-            onPressed: { kb.out("text", " "); kb.suggestions = [] }
+            onPressed: kb.out("chars", " ")
             DragHandler {
                 id: cursorDrag
                 target: null
@@ -391,21 +510,21 @@ ColumnLayout {
                 dragThreshold: 18 * Ui.s
                 property real carry: 0
                 property real lastX: 0
-                onActiveChanged: { carry = 0; lastX = centroid.position.x; if (active) kb.suggestions = [] }
+                onActiveChanged: { carry = 0; lastX = centroid.position.x; if (active) kb.showStrip("", []) }
                 onCentroidChanged: {
                     if (!active) return
                     carry += centroid.position.x - lastX
                     lastX = centroid.position.x
                     var stepPx = 40 * Ui.s
                     while (Math.abs(carry) >= stepPx) {
-                        kb.out("key", carry > 0 ? "Right" : "Left")
+                        kb.out("press", carry > 0 ? "Right" : "Left")
                         carry -= carry > 0 ? stepPx : -stepPx
                     }
                 }
             }
         }
-        Key { label: "."; onPressed: kb.out("text", ".") }
-        Key { label: "Enter"; span: 1.8; onPressed: { kb.out("key", "Return"); kb.suggestions = [] } }
-        Key { label: "▾"; visible: kb.showHide; onPressed: kb.hideRequested() }
+        Key { label: "."; onPressed: kb.out("chars", ".") }
+        Key { label: "Enter"; span: 1.8; onPressed: kb.out("press", "Return") }
+        Key { label: "▾"; visible: kb.hideKey; onPressed: kb.hideRequested() }
     }
 }

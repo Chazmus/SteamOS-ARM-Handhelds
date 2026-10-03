@@ -1,5 +1,5 @@
 // Remote control for the TOP screen: a touchpad and a keyboard on the bottom
-// panel. The backend turns /top/* calls into a virtual mouse and keyboard
+// panel. The backend turns /remote/* calls into a virtual mouse and keyboard
 // that only the top screen's session sees.
 //
 // Touchpad gestures (counted by fingers down at once):
@@ -70,12 +70,12 @@ Item {
             property real vy: 0
 
             function letGo() {
-                if (holding) Ui.send("/top/click", { button: "left", state: "up" })
+                if (holding) Ui.send("/remote/click", { button: "left", state: "up" })
                 holding = false
                 fromTap = false
                 mx = my = wx = wy = vx = vy = 0
                 clickDelay.stop()
-                Ui.send("/top/letgo")
+                Ui.send("/remote/letgo")
             }
 
             Txt {
@@ -104,7 +104,7 @@ Item {
             Timer {
                 id: clickDelay
                 interval: 220
-                onTriggered: Ui.send("/top/click", { button: "left", state: "click" })
+                onTriggered: Ui.send("/remote/click", { button: "left", state: "click" })
             }
             // Everything goes out at most once a frame.
             Timer {
@@ -122,7 +122,7 @@ Item {
                             surface.vx = surface.vy = 0
                     }
                     if (Math.abs(surface.wx) >= 1 || Math.abs(surface.wy) >= 1) {
-                        Ui.send("/top/wheel", { dx: Math.trunc(surface.wx), dy: Math.trunc(surface.wy) })
+                        Ui.send("/remote/wheel", { dx: Math.trunc(surface.wx), dy: Math.trunc(surface.wy) })
                         surface.wx -= Math.trunc(surface.wx)
                         surface.wy -= Math.trunc(surface.wy)
                     } else if (surface.most === 0 && surface.vx === 0 && surface.vy === 0) {
@@ -130,7 +130,7 @@ Item {
                     }
                     var dx = Math.round(surface.mx), dy = Math.round(surface.my)
                     if (dx !== 0 || dy !== 0) {
-                        Ui.send("/top/move", { dx: dx, dy: dy })
+                        Ui.send("/remote/move", { dx: dx, dy: dy })
                         surface.mx -= dx
                         surface.my -= dy
                     }
@@ -184,7 +184,7 @@ Item {
                         surface.travelled = true
                         if (surface.fromTap && surface.most === 1 && !surface.inStrip && !surface.holding) {
                             surface.holding = true
-                            Ui.send("/top/click", { button: "left", state: "down" })
+                            Ui.send("/remote/click", { button: "left", state: "down" })
                         }
                     }
                     if (!surface.travelled)
@@ -196,7 +196,7 @@ Item {
                         // Sideways three-finger swipe: Alt+Tab per 120 px.
                         surface.swipeCarry += dx
                         while (Math.abs(surface.swipeCarry) > 120 * Ui.s) {
-                            Ui.send("/top/type", { combo: surface.swipeCarry > 0 ? ["alt", "Tab"] : ["alt", "shift", "Tab"] })
+                            Ui.send("/remote/type", { chord: surface.swipeCarry > 0 ? ["alt", "Tab"] : ["alt", "shift", "Tab"] })
                             surface.swipeCarry -= surface.swipeCarry > 0 ? 120 * Ui.s : -120 * Ui.s
                         }
                     } else if (pts.length === 2) {
@@ -208,7 +208,7 @@ Item {
                             // zoom in or out a step per 50 px.
                             var steps = Math.trunc(pinch / (50 * Ui.s))
                             for (var i = 0; i < Math.abs(steps); i++)
-                                Ui.send("/top/type", { combo: ["ctrl", steps > 0 ? "=" : "-"] })
+                                Ui.send("/remote/type", { chord: ["ctrl", steps > 0 ? "=" : "-"] })
                             surface.spread0 += steps * 50 * Ui.s
                         } else {
                             surface.wx += k * dx / wheelStep()
@@ -228,16 +228,16 @@ Item {
                         return
                     var quick = Date.now() - surface.t0 < 300
                     if (surface.holding) {
-                        Ui.send("/top/click", { button: "left", state: "up" })
+                        Ui.send("/remote/click", { button: "left", state: "up" })
                         surface.holding = false
                     } else if (!surface.travelled && quick && !surface.inStrip) {
                         if (surface.most >= 3)
-                            Ui.send("/top/click", { button: "middle", state: "click" })
+                            Ui.send("/remote/click", { button: "middle", state: "click" })
                         else if (surface.most === 2)
-                            Ui.send("/top/click", { button: "right", state: "click" })
+                            Ui.send("/remote/click", { button: "right", state: "click" })
                         else if (surface.fromTap) {
-                            Ui.send("/top/click", { button: "left", state: "click" })
-                            Ui.send("/top/click", { button: "left", state: "click" })
+                            Ui.send("/remote/click", { button: "left", state: "click" })
+                            Ui.send("/remote/click", { button: "left", state: "click" })
                         } else
                             clickDelay.start()
                     }
@@ -272,7 +272,7 @@ Item {
                         id: hold
                         onActiveChanged: {
                             if (pb.isFine) surface.fine = active
-                            else Ui.send("/top/click", { button: pb.modelData[0], state: active ? "down" : "up" })
+                            else Ui.send("/remote/click", { button: pb.modelData[0], state: active ? "down" : "up" })
                         }
                     }
                 }
@@ -300,21 +300,21 @@ Item {
                     if (!active) return
                     var dx = centroid.position.x - miniPad.last.x, dy = centroid.position.y - miniPad.last.y
                     miniPad.last = centroid.position
-                    Ui.send("/top/move", { dx: Math.round(dx / Ui.s * rp.speed), dy: Math.round(dy / Ui.s * rp.speed) })
+                    Ui.send("/remote/move", { dx: Math.round(dx / Ui.s * rp.speed), dy: Math.round(dy / Ui.s * rp.speed) })
                 }
             }
-            TapHandler { onTapped: Ui.send("/top/click", { button: "left", state: "click" }) }
+            TapHandler { onTapped: Ui.send("/remote/click", { button: "left", state: "click" }) }
         }
         KeyPad {
             visible: rp.mode === "keys"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            asciiOnly: true
+            plainKeys: true
             onTyped: function (kind, value) {
-                if (kind === "combo") Ui.send("/top/type", { combo: value })
-                else if (kind === "replace") Ui.send("/top/type", { replace: value })
-                else if (kind === "key") Ui.send("/top/type", { key: value })
-                else Ui.send("/top/type", { text: value })
+                if (kind === "chord") Ui.send("/remote/type", { chord: value })
+                else if (kind === "retype") Ui.send("/remote/type", { retype: value })
+                else if (kind === "press") Ui.send("/remote/type", { press: value })
+                else Ui.send("/remote/type", { chars: value })
             }
         }
     }

@@ -59,14 +59,15 @@ def _known() -> dict[str, int]:
     return _learned
 
 
-def learn(word: str) -> None:
-    """The user kept this word (typed it, swiped it, picked a suggestion)."""
+def learn(word: str, sure: bool = False) -> None:
+    """The user kept this word (typed it, swiped it, picked a suggestion).
+    sure: they put it back after autocorrect, so it counts as known at once."""
     word = word.strip().lower()
     if not (2 <= len(word) <= 20 and word.isalpha()):
         return
     with _lock:
         known = _known()
-        known[word] = min(known.get(word, 0) + 1, 1000)
+        known[word] = min(known.get(word, 0) + (2 if sure else 1), 1000)
         # Keep the file small: the 3000 most used.
         if len(known) > 3000:
             for w, _ in sorted(known.items(), key=lambda kv: kv[1])[:len(known) - 3000]:
@@ -187,4 +188,153 @@ def words(keys: dict[str, list[float]], key_width: float, trace: list[list[float
             out.append(word)
         if len(out) >= count:
             break
+    return out
+
+
+# ------------------------------------------------------------ tap typing --
+#
+# The same dictionary also backs the tapped keys: fixing a word as it is
+# finished and offering endings while it is typed.
+#
+# A typo costs less the closer the wrong key sits to the right one on the
+# layout in use: hitting "r" for "e" is cheap, "p" for "e" is not. Swapped
+# neighbours ("teh") and a doubled or missing letter are cheap too. The
+# cheapest word wins once its commonness is weighed in, and only when the
+# typed word is unknown and the fix is clearly a typo.
+
+ROWS = {
+    "qwerty": ("qwertyuiop", "asdfghjkl", "zxcvbnm"),
+    "qwertz": ("qwertzuiop", "asdfghjkl", "yxcvbnm"),
+    "azerty": ("azertyuiop", "qsdfghjklm", "wxcvbn"),
+}
+_ROW_SHIFT = (0.0, 0.5, 1.0)
+
+_flat: list[tuple[str, int]] | None = None
+
+# Apostrophes nobody types on a touch keyboard, and a lone i.
+SHORTHAND = {
+    "i": "I", "im": "I'm", "ive": "I've", "ill": None, "id": None,
+    "dont": "don't", "cant": "can't", "wont": "won't", "didnt": "didn't",
+    "doesnt": "doesn't", "isnt": "isn't", "wasnt": "wasn't", "arent": "aren't",
+    "couldnt": "couldn't", "shouldnt": "shouldn't", "wouldnt": "wouldn't",
+    "youre": "you're", "theyre": "they're", "thats": "that's", "whats": "what's",
+    "hes": None, "shes": "she's", "theres": "there's", "lets": None,
+}
+
+
+def _all_words() -> list[tuple[str, int]]:
+    """Every word, the most common first."""
+    global _flat
+    if _flat is None:
+        _flat = sorted((wl for bucket in _dictionary().values() for wl in bucket), key=lambda wl: wl[1])
+    return _flat
+
+
+def _spots(layout: str) -> dict[str, tuple[float, float]]:
+    rows = ROWS.get(layout, ROWS["qwerty"])
+    return {c: (x + _ROW_SHIFT[y], float(y)) for y, row in enumerate(rows) for x, c in enumerate(row)}
+
+
+def _slip(a: str, b: str, spots) -> float:
+    """What typing a where b was meant costs."""
+    if a == b:
+        return 0.0
+    pa, pb = spots.get(a), spots.get(b)
+    if pa and pb and math.dist(pa, pb) <= 1.2:
+        return 0.45
+    return 1.0
+
+
+def _typo_cost(typed: str, word: str, spots, cap: float) -> float:
+    """Keyboard-aware edit distance; gives up past cap."""
+    n, m = len(typed), len(word)
+    far = cap + 1
+    rows = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        rows[i][0] = i * 0.8
+    for j in range(m + 1):
+        rows[0][j] = j * 0.8
+    for i in range(1, n + 1):
+        best = far
+        for j in range(1, m + 1):
+            c = min(rows[i - 1][j] + (0.5 if i > 1 and typed[i - 1] == typed[i - 2] else 0.8),  # extra letter
+                    rows[i][j - 1] + (0.4 if j > 1 and word[j - 1] == word[j - 2] else 0.8),  # missing letter
+                    rows[i - 1][j - 1] + _slip(typed[i - 1], word[j - 1], spots))
+            if i > 1 and j > 1 and typed[i - 1] == word[j - 2] and typed[i - 2] == word[j - 1]:
+                c = min(c, rows[i - 2][j - 2] + 0.35)                                         # swapped pair
+            rows[i][j] = c
+            best = min(best, c)
+        # A swap only pays off a row later, so allow for one in flight.
+        if best > cap + 0.8:
+            return far
+    return rows[n][m]
+
+
+def _rank(level: int, word: str) -> float:
+    """Lower for common words and ones this user types."""
+    return (level - 10) / 40 * 0.4 - min(0.45, 0.1 * math.log1p(_known().get(word, 0)))
+
+
+def known(word: str) -> bool:
+    w = word.lower()
+    # A word of the user's own counts once it was kept twice (or put back).
+    return _known().get(w, 0) >= 2 or any(x == w for x, _ in _dictionary().get((w[:1], w[-1:]), ()))
+
+
+def fix(word: str, layout: str = "qwerty", sentence_start: bool = False) -> str | None:
+    """The word meant, when `word` is a clear typo; None to leave it.
+    A capital mid-sentence is taken for a name and left alone."""
+    if not (1 <= len(word) <= 20) or not word.isalpha() or (word.isupper() and len(word) > 1):
+        return None
+    if word[0].isupper() and not sentence_start:
+        return None
+    low = word.lower()
+    if low in SHORTHAND:
+        mended = SHORTHAND[low]
+        if mended and word[0].isupper() and mended[0].islower():
+            mended = mended[0].upper() + mended[1:]
+        return mended
+    if len(low) < 3 or known(low):
+        return None
+    letters = set(low)
+    spots = _spots(layout)
+    # Short words only get swapped letters fixed: "lol" and "gg" stay.
+    cap = 0.35 if len(low) <= 3 else (0.5 if len(low) == 4 else (1.0 if len(low) <= 6 else 1.6))
+    # The first letter is usually right, or a neighbour, or swapped with the second.
+    reach = {c for c, p in spots.items() if low[0] in spots and math.dist(p, spots[low[0]]) <= 1.2} | {low[0], low[1]}
+    best, best_score = None, float("inf")
+    for cand, level in _all_words():
+        if cand[0] not in reach or abs(len(cand) - len(low)) > (1 if len(low) <= 6 else 2):
+            continue
+        if len(letters.symmetric_difference(cand)) > 3:
+            continue
+        cost = _typo_cost(low, cand, spots, cap)
+        if cost > cap:
+            continue
+        score = cost + _rank(level, cand)
+        if score < best_score:
+            best, best_score = cand, score
+    if best is None:
+        return None
+    if word[0].isupper():
+        best = best[0].upper() + best[1:]
+    return best
+
+
+def complete(prefix: str, count: int = 3) -> list[str]:
+    """Words that start with prefix, the likeliest first (the user's own lead)."""
+    low = prefix.lower()
+    if len(low) < 2 or not low.isalpha():
+        return []
+    # Shorter endings first among equals: fewer letters left to guess.
+    hits = [(_rank(level, w) + 0.04 * len(w), w) for w, level in _all_words() if len(w) > len(low) and w.startswith(low)]
+    hits += [(_rank(35, w) + 0.04 * len(w), w) for w in _known() if len(w) > len(low) and w.startswith(low)]
+    out: list[str] = []
+    for _, w in sorted(hits):
+        if w not in out:
+            out.append(w)
+        if len(out) >= count:
+            break
+    if prefix[0].isupper():
+        out = [w[0].upper() + w[1:] for w in out]
     return out

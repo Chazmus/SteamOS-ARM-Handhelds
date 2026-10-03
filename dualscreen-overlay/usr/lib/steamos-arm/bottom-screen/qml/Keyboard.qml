@@ -60,10 +60,10 @@ Window {
                 win.polling = false
                 if (!k)
                     return
-                win.atTop = k.top === true
-                if (k.visible === true && !win.shown)
-                    keys.suggestions = []
-                win.shown = k.visible === true
+                win.atTop = k.dock === "upper"
+                if (k.shown === true && !win.shown)
+                    keys.showStrip("", [])
+                win.shown = k.shown === true
             })
         }
     }
@@ -76,7 +76,7 @@ Window {
         anchors.right: parent.right
         y: win.atTop ? panel.height : 0
         height: parent.height - panel.height
-        onClicked: { win.shown = false; Ui.send("/keyboard", { visible: false }) }
+        onClicked: { win.shown = false; Ui.send("/keyboard", { shown: false }) }
     }
 
     Rectangle {
@@ -91,14 +91,14 @@ Window {
             id: keys
             anchors.fill: parent
             anchors.margins: 14 * Ui.s
-            showHide: true
+            hideKey: true
             onTyped: function (kind, value) {
-                if (kind === "combo") Ui.send("/type", { combo: value })
-                else if (kind === "replace") Ui.send("/type", { replace: value })
-                else if (kind === "key") Ui.send("/type", { key: value })
-                else Ui.send("/type", { text: value })
+                if (kind === "chord") Ui.send("/type", { chord: value })
+                else if (kind === "retype") Ui.send("/type", { retype: value })
+                else if (kind === "press") Ui.send("/type", { press: value })
+                else Ui.send("/type", { chars: value })
             }
-            onHideRequested: { win.shown = false; Ui.send("/keyboard", { visible: false }) }
+            onHideRequested: { win.shown = false; Ui.send("/keyboard", { shown: false }) }
         }
     }
 }
