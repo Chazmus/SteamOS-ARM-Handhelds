@@ -9,9 +9,18 @@ name: Build Odin 3 Image
 on:
   workflow_dispatch:
     inputs:
+      kernel_source:
+        description: >-
+          Kernel source: 'prebuilt' (official ROCKNIX 7.2.0, tested & verified) or 'source' (custom built artifact)
+        required: false
+        default: 'prebuilt'
+        type: choice
+        options:
+          - prebuilt
+          - source
       kernel_run_id:
         description: >-
-          Kernel build run ID (leave blank for latest successful)
+          Kernel build run ID (only used if kernel_source is 'source'; leave blank for latest)
         required: false
       mesa_run_id:
         description: >-
@@ -65,8 +74,9 @@ jobs:
               -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
               -e 's/"//g' -e "s/'//g" versions.env >> "$GITHUB_ENV"
 
-      # ── Download pre-built kernel ────────────────────────────────────
+      # ── Download custom kernel (only if source kernel requested) ─────
       - name: Download kernel artifact
+        if: ${{ inputs.kernel_source == 'source' || inputs.kernel_run_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -89,7 +99,8 @@ jobs:
             -n kernel-sm8750 \
             -D ./kernel-download/
 
-      - name: Stage kernel
+      - name: Stage custom kernel
+        if: ${{ inputs.kernel_source == 'source' || inputs.kernel_run_id != '' }}
         run: |
           # The kernel build (SM8750_KERNEL=source) produces output in a
           # release-named directory (e.g. 7.2.0-sm8750-steamos). Create the
@@ -181,8 +192,14 @@ jobs:
       # ── Build the image ──────────────────────────────────────────────
       - name: Build SteamOS Odin 3 image
         run: |
-          export SM8750_KERNEL=source
-          export SM8750_KERNEL_WORK="${STEAMOS_WORK}/kernel-sm8750-src"
+          if [ "${{ inputs.kernel_source }}" = "source" ] || [ -n "${{ inputs.kernel_run_id }}" ]; then
+            export SM8750_KERNEL=source
+            export SM8750_KERNEL_WORK="${STEAMOS_WORK}/kernel-sm8750-src"
+            echo "Using custom built kernel from source"
+          else
+            export SM8750_KERNEL=prebuilt
+            echo "Using official verified ROCKNIX prebuilt kernel"
+          fi
           export MESA_STACK="${STEAMOS_WORK}/mesa-stack"
           if [ -d "${STEAMOS_WORK}/steam-arm-seed" ]; then
             export STEAM_ARM_SEED="${STEAMOS_WORK}/steam-arm-seed"
