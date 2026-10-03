@@ -103,7 +103,7 @@ if [[ "$card_long" != AYN-Odin2 ]]; then
   exit 0
 fi
 
-# AYN-Odin2: MI2S routes the Odin 2 port was verified with (MaSi), applied
+# AYN-Odin2: MI2S routes the Odin 2 was verified with, applied
 # even when UCM succeeds.
 
 amixer -c "$card_id" cset name='PRIMARY_MI2S_RX Audio Mixer MultiMedia1' 1 >/dev/null 2>&1

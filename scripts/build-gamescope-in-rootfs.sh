@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build MaSi's MSM gamescope *inside* the Frame rootfs (glibc 2.39, Frame
+# Build our MSM gamescope *inside* the Frame rootfs (glibc 2.39, Frame
 # wlroots/libdrm/vulkan), like build-box64-in-rootfs.sh.
 #
 # The vendored MSM port targets upstream 6edb42b (3.16.30 + 2 commits).
