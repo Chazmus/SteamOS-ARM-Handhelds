@@ -1,0 +1,15 @@
+singleton Ui 1.0 Ui.qml
+Txt 1.0 Txt.qml
+Card 1.0 Card.qml
+Btn 1.0 Btn.qml
+Level 1.0 Level.qml
+Meter 1.0 Meter.qml
+Seg 1.0 Seg.qml
+Tile 1.0 Tile.qml
+HueSlider 1.0 HueSlider.qml
+KeyPad 1.0 KeyPad.qml
+HomePage 1.0 HomePage.qml
+DashPage 1.0 DashPage.qml
+TopInput 1.0 TopInput.qml
+SettingsPage 1.0 SettingsPage.qml
+PickerPage 1.0 PickerPage.qml

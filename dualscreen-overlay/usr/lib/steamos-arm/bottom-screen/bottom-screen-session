@@ -18,6 +18,7 @@ unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY GAMESCOPE_LEASE_CONNECTO
   MANGOHUD_CONFIGFILE NOTIFY_SOCKET SteamDeck ENABLE_GAMESCOPE_WSI
 
 export GAMESCOPE_DRM_LEASE_SOCKET="$BOTTOM_SOCKET"
+export BOTTOM_CONNECTOR   # the dashboard leaves this panel out of the refresh rates
 export LIBSEAT_BACKEND=noop
 # Only this panel's touchscreen ("none" = no input at all, e.g. an external
 # monitor used for testing).

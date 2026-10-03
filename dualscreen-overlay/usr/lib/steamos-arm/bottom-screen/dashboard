@@ -42,6 +42,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import glide  # noqa: E402  (glide typing decoder, next to this file)
 QML = HERE / "qml" / "Main.qml"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "steamos-arm"
 CONFIG = CONFIG_DIR / "bottom-screen.json"
@@ -57,8 +59,19 @@ STEAM_BUTTONS = {
     "keyboard": ["Gamepad:Button:Keyboard"],
     "screenshot": ["Gamepad:Button:Screenshot"],
 }
-KONKRD_ACTIONS = {"profile-silent", "profile-balanced", "profile-turbo", "fan-boost"}
-DEFAULT_CONFIG = {"pinned": [], "show_stats": True}
+KONKRD_ACTIONS = {"profile-silent", "profile-balanced", "profile-turbo", "fan-boost",
+                  "fan-auto", "fan-boost-on"}
+DEFAULT_CONFIG = {
+    "pinned": [],
+    "show_stats": True,
+    # Seconds without a touch before the dashboard steps back to the app it
+    # was opened over (AYN button); 0 keeps it up.
+    "dash_idle_s": 0,
+    "pad_speed": 1.6,           # trackpad: top-screen pixels per pad pixel
+    "pad_natural": False,       # two-finger scroll direction
+    "autocorrect": True,
+    "glide": True,
+}
 
 # Which backlight is which panel (else: listed by name).
 BACKLIGHT_NAMES = {
@@ -266,8 +279,87 @@ def konkrd_state() -> dict:
         st = json.loads(rd(KONKRD_STATE, "{}"))
     except ValueError:
         st = {}
+    fan = st.get("fan", {})
     return {"profile": st.get("profile", "balanced"),
-            "fan_boost": bool(st.get("fan", {}).get("boost"))}
+            "fan_boost": bool(fan.get("boost")),
+            "fan_mode": "boost" if fan.get("boost") else fan.get("mode", "auto"),
+            "fan_fixed": int(fan.get("fixed", 50))}
+
+
+class NetSpeed:
+    """Download/upload over Wi-Fi and Ethernet in bytes/s since the last call."""
+    def __init__(self):
+        self.prev = (0, 0, time.monotonic())
+        self.get()
+
+    def get(self) -> dict:
+        rx = tx = 0
+        for line in rd("/proc/net/dev").splitlines()[2:]:
+            name, _, data = line.partition(":")
+            if name.strip().startswith(("lo", "docker", "veth", "virbr")):
+                continue
+            f = data.split()
+            if len(f) >= 9:
+                rx, tx = rx + int(f[0]), tx + int(f[8])
+        now = time.monotonic()
+        prx, ptx, pt = self.prev
+        self.prev = (rx, tx, now)
+        dt = max(now - pt, 0.1)
+        return {"down": max(0, round((rx - prx) / dt)), "up": max(0, round((tx - ptx) / dt))}
+
+
+NET = NetSpeed()
+
+
+def _panel_rates() -> list[int]:
+    """Refresh rates of the Game Mode (top) panel, from panel-modes."""
+    try:
+        out = json.loads(run("/usr/lib/steamos/panel-modes", "--json", timeout=5) or "[]")
+    except ValueError:
+        return []
+    bottom = {os.environ.get("BOTTOM_CONNECTOR", "")}
+    best: list[int] = []
+    for c in out if isinstance(out, list) else []:
+        if c.get("name") in bottom:
+            continue
+        rates = sorted({int(r) for r in c.get("rates", []) if int(r) >= 30})
+        if len(rates) > len(best):
+            best = rates
+    return best
+
+
+PANEL_RATES: list[int] | None = None
+
+
+def refresh_state() -> dict | None:
+    """The refresh rate games get on the top screen: Steam's own refresh
+    slider sets GAMESCOPE_DYNAMIC_REFRESH on its display, so this reads and
+    sets the same thing (and Steam changes it again for a game with its own
+    setting). choice 0: none made, games get the panel's highest."""
+    global PANEL_RATES
+    if PANEL_RATES is None:
+        PANEL_RATES = _panel_rates()
+    if len(PANEL_RATES) < 2:
+        return None
+    m = re.search(r"= (\d+)", run("env", f"DISPLAY={steam_display()}", "xprop", "-root",
+                                  "GAMESCOPE_DYNAMIC_REFRESH"))
+    choice = int(m.group(1)) if m else 0
+    return {"rates": PANEL_RATES, "choice": choice if choice in PANEL_RATES else 0}
+
+
+def set_refresh(hz: int) -> bool:
+    st = refresh_state()
+    if not st:
+        return False
+    disp = f"DISPLAY={steam_display()}"
+    if hz in st["rates"]:
+        run("env", disp, "xprop", "-root", "-f", "GAMESCOPE_DYNAMIC_REFRESH", "32c",
+            "-set", "GAMESCOPE_DYNAMIC_REFRESH", str(hz))
+    elif hz == 0:
+        run("env", disp, "xprop", "-root", "-remove", "GAMESCOPE_DYNAMIC_REFRESH")
+    else:
+        return False
+    return True
 
 
 # --------------------------------------------------------------- display ----
@@ -412,7 +504,7 @@ def steam_button(action: str) -> bool:
 
 
 def konkrd(action: str) -> bool:
-    if action not in KONKRD_ACTIONS:
+    if action not in KONKRD_ACTIONS and not re.fullmatch(r"fan-fixed:\d{1,3}", action):
         return False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
@@ -501,6 +593,7 @@ class Apps:
 
     def __init__(self):
         self.procs: dict[str, subprocess.Popen] = {}
+        self.flatpak: dict[str, str] = {}     # app -> flatpak id, for close
         self.lock = threading.Lock()
 
     def launch(self, app_id: str) -> bool:
@@ -525,6 +618,9 @@ class Apps:
             if os.path.basename(argv[0]) == "flatpak" and "run" in argv:
                 i = argv.index("run") + 1
                 argv[i:i] = [f"--env={k}={v}" for k, v in a11y.items()]
+                ref = next((a for a in argv[i:] if not a.startswith("-")), "")
+                if ref:
+                    self.flatpak[app_id] = ref
             KEYBOARD.set(False)
             try:
                 self.procs[app_id] = subprocess.Popen(argv, env=env, start_new_session=True,
@@ -534,6 +630,7 @@ class Apps:
                 return False
             log(f"launched {app_id} ({argv[0]})")
             set_base_window(None)       # newest window gets the screen
+            NAV.app_in_front(app_id)
             return True
 
     def running(self) -> list[str]:
@@ -545,11 +642,16 @@ class Apps:
             p = self.procs.get(app_id)
             if not p or p.poll() is not None:
                 return False
+            # A flatpak app runs in flatpak's sandbox (bwrap), outside our
+            # process group, so a SIGTERM to the group can miss it.
+            ref = self.flatpak.get(app_id)
+            if ref:
+                run("flatpak", "kill", ref, timeout=10)
             try:
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
-                return False
-        show_dashboard()
+                pass
+        NAV.app_closed(app_id)
         return True
 
     def pids(self, app_id: str) -> set[int]:
@@ -625,21 +727,102 @@ def focus_app(app_id: str, apps: Apps) -> bool:
     for wid, title in toplevel_windows():
         if title and title != WINDOW_TITLE and window_pid(wid) in pids:
             set_base_window(wid)
+            NAV.app_in_front(app_id)
             return True
     return False
 
 
+class Nav:
+    """Which page our window shows and which app is in front.
+
+    The UI follows `page` whenever `serial` changes, so the backend can send
+    it somewhere (AYN button, swipe home). The AYN button's short press opens
+    the dashboard over the app in front and a second press (or the idle
+    timeout) hands the screen back to it."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.page = "home"
+        self.serial = 0
+        self.front: str | None = None     # app in front of our window
+        self.under: str | None = None     # app the dashboard was opened over
+
+    def state(self) -> dict:
+        with self.lock:
+            return {"page": self.page, "serial": self.serial,
+                    "front": self.front, "under": self.under}
+
+    def show(self, page: str) -> None:
+        with self.lock:
+            self.page, self.serial, self.front = page, self.serial + 1, None
+            if page != "dash":
+                self.under = None
+        show_dashboard()
+
+    def ui_page(self, page: str) -> None:
+        """The UI moved itself (a tile, a back button)."""
+        with self.lock:
+            self.page = page
+            if page != "dash":
+                self.under = None
+
+    def app_in_front(self, app_id: str) -> None:
+        with self.lock:
+            self.front, self.under = app_id, None
+
+    def app_closed(self, app_id: str) -> None:
+        with self.lock:
+            if self.under == app_id:
+                self.under = None
+            front = self.front
+        if front == app_id or front is None:
+            self.show("home")
+
+    def home(self) -> None:
+        self.show("home")
+
+    def toggle_dash(self) -> None:
+        with self.lock:
+            on_dash = self.front is None and self.page == "dash"
+            under = self.under
+            front = self.front
+        if on_dash:
+            self.back_from_dash(under)
+            return
+        self.show("dash")
+        with self.lock:
+            self.under = front
+
+    def back_from_dash(self, under: str | None = None) -> None:
+        if under is None:
+            under = self.state()["under"]
+        if under and under in APPS.running() and focus_app(under, APPS):
+            return
+        self.show("home")
+
+
+NAV = Nav()
+DASH_TOGGLE = RUNTIME / "bottom-screen.dash"
+
+
 def watch_home_gesture() -> None:
-    last = HOME_GESTURE.stat().st_mtime if HOME_GESTURE.exists() else 0.0
+    """GAMESCOPE_HOME_GESTURE (swipe up from the bottom edge) and konkrd's
+    AYN-key files: .home (held) and .dash (short press)."""
+    files = {HOME_GESTURE: NAV.home, DASH_TOGGLE: NAV.toggle_dash}
+    last = {f: (f.stat().st_mtime if f.exists() else 0.0) for f in files}
     while True:
-        time.sleep(0.15)
-        try:
-            m = HOME_GESTURE.stat().st_mtime
-        except OSError:
-            continue
-        if m != last:
-            last = m
-            show_dashboard()
+        time.sleep(0.12)
+        for f, act in files.items():
+            try:
+                m = f.stat().st_mtime
+            except OSError:
+                continue
+            if m != last[f]:
+                last[f] = m
+                try:
+                    act()
+                except Exception as exc:   # never stop watching
+                    log(f"{f.name}: {exc}")
 
 
 # ----------------------------------------------------------- idle nudge ----
@@ -761,7 +944,9 @@ REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0, 1, 6, 8
 BUTTONS = {"left": 0x110, "right": 0x111, "middle": 0x112}
 KEY_LEFTSHIFT = 42
 NAMED_KEYS = {"BackSpace": 14, "Return": 28, "Tab": 15, "Escape": 1,
-              "Left": 105, "Right": 106, "Up": 103, "Down": 108}
+              "Left": 105, "Right": 106, "Up": 103, "Down": 108,
+              "Delete": 111, "Home": 102, "End": 107, "Prior": 104, "Next": 109}
+MOD_KEYS = {"ctrl": 29, "alt": 56, "super": 125, "shift": 42}
 # US layout: character -> (key code, shift)
 US_KEYS: dict[str, tuple[int, bool]] = {" ": (57, False)}
 for _row, _base in (("1234567890", 2), ("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)):
@@ -814,7 +999,7 @@ class TopInput:
                                       [REL_X, REL_Y, REL_WHEEL, REL_HWHEEL], 0x5301)
             self.keys = UInputDevice("SteamOS Bottom Screen Keys",
                                      sorted({k for k, _ in US_KEYS.values()} | set(NAMED_KEYS.values())
-                                            | {KEY_LEFTSHIFT}), [], 0x5302)
+                                            | set(MOD_KEYS.values())), [], 0x5302)
             return True
         except OSError as exc:
             log(f"top-screen input: {exc}")
@@ -854,6 +1039,46 @@ class TopInput:
             if state in ("up", "click"):
                 self.mouse.emit([(EV_KEY, code, 0)])
             return True
+
+    def release(self) -> None:
+        """Let go of every button and modifier (the page went away)."""
+        with self.lock:
+            if not (self.mouse and self.keys):
+                return
+            self.mouse.emit([(EV_KEY, c, 0) for c in BUTTONS.values()])
+            self.keys.emit([(EV_KEY, c, 0) for c in MOD_KEYS.values()])
+
+    def combo(self, parts) -> bool:
+        """["ctrl", "c"], ["ctrl", "alt", "Delete"]...: modifiers, then the
+        last part as a character (US layout) or a key name."""
+        parts = [str(p) for p in (parts or [])][:6]
+        if not parts:
+            return False
+        mods = [MOD_KEYS[m] for m in parts[:-1] if m in MOD_KEYS]
+        last = parts[-1]
+        if last in NAMED_KEYS:
+            k, shift = NAMED_KEYS[last], False
+        elif last in US_KEYS:
+            k, shift = US_KEYS[last]
+        else:
+            return False
+        if shift and KEY_LEFTSHIFT not in mods:
+            mods.append(KEY_LEFTSHIFT)
+        with self.lock:
+            if not self._devices():
+                return False
+            for m in mods:
+                self.keys.emit([(EV_KEY, m, 1)])
+            self.keys.emit([(EV_KEY, k, 1)])
+            self.keys.emit([(EV_KEY, k, 0)])
+            for m in reversed(mods):
+                self.keys.emit([(EV_KEY, m, 0)])
+        return True
+
+    def replace(self, back: int, text: str) -> bool:
+        for _ in range(max(0, min(64, int(back)))):
+            self.key(None, "BackSpace")
+        return self.key(text, None) if text else True
 
     def key(self, text, name) -> bool:
         with self.lock:
@@ -965,6 +1190,36 @@ class Typer:
         if sk:
             t.XTestFakeKeyEvent(d, sk, 0, 0)
         x.XSync(d, 0)
+
+    MOD_SYMS = {"ctrl": 0xFFE3, "alt": 0xFFE9, "super": 0xFFEB, "shift": 0xFFE1}
+
+    def combo(self, parts) -> bool:
+        parts = [str(p) for p in (parts or [])][:6]
+        if not parts:
+            return False
+        with self.lock:
+            if not self._open():
+                return False
+            x, t, d = self.x11, self.xtst, self.dpy
+            last = parts[-1]
+            ks = self.x11.XStringToKeysym(last.encode()) if len(last) > 1 else ord(last)
+            kc = x.XKeysymToKeycode(d, ks) if ks else 0
+            if not kc:
+                return False
+            mods = [x.XKeysymToKeycode(d, self.MOD_SYMS[m]) for m in parts[:-1] if m in self.MOD_SYMS]
+            for m in mods:
+                t.XTestFakeKeyEvent(d, m, 1, 0)
+            t.XTestFakeKeyEvent(d, kc, 1, 0)
+            t.XTestFakeKeyEvent(d, kc, 0, 0)
+            for m in reversed(mods):
+                t.XTestFakeKeyEvent(d, m, 0, 0)
+            x.XSync(d, 0)
+            return True
+
+    def replace(self, back: int, text: str) -> bool:
+        for _ in range(max(0, min(64, int(back)))):
+            self.type(None, "BackSpace")
+        return self.type(text, None) if text else True
 
     def type(self, text, name) -> bool:
         with self.lock:
@@ -1139,6 +1394,9 @@ class Handler(BaseHTTPRequestHandler):
             }
             if not rows["running"]:
                 DASHBOARD_SHOWN.set()       # last app gone: gamescope shows us again
+                if NAV.state()["front"]:
+                    NAV.show("home")
+            rows["nav"] = NAV.state()
             if not DASHBOARD_SHOWN.is_set():
                 self.reply({"hidden": True, **rows})
                 return
@@ -1161,7 +1419,25 @@ class Handler(BaseHTTPRequestHandler):
                 "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
                 "running": [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
                             for i in APPS.running() if i in apps],
-                "show_stats": cfg.get("show_stats", True),
+                "net": NET.get(),
+                "refresh": refresh_state(),
+                "nav": rows["nav"],
+                "config": {k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items() if k != "pinned"},
+            })
+        elif self.path == "/nav":
+            # Cheap: the UI polls this a few times a second (the AYN button).
+            cfg = load_config()
+            apps = {a["id"]: a for a in list_apps()}
+            running = [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
+                       for i in APPS.running() if i in apps]
+            if not running and NAV.state()["front"]:
+                NAV.show("home")
+            dual = dual_backlight() if os.path.exists(THOR_BACKLIGHT_SOCK) else None
+            self.reply({
+                "nav": NAV.state(),
+                "running": running,
+                "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
+                "bottom_on": dual.get("bottom_on", True) if dual else True,
             })
         elif self.path == "/keyboard":
             self.reply(KEYBOARD.state())
@@ -1196,9 +1472,29 @@ class Handler(BaseHTTPRequestHandler):
         elif path == ["button"]:
             ok = TOP_INPUT.button(str(b.get("button", "left")), str(b.get("state", "click")))
         elif path == ["key"]:
-            ok = TOP_INPUT.key(b.get("text"), b.get("key"))
+            if "combo" in b:
+                ok = TOP_INPUT.combo(b["combo"])
+            elif isinstance(b.get("replace"), dict):
+                ok = TOP_INPUT.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
+            else:
+                ok = TOP_INPUT.key(b.get("text"), b.get("key"))
+        elif path == ["release"]:
+            TOP_INPUT.release()
         elif path == ["type"]:
-            ok = TYPER.type(b.get("text"), b.get("key"))
+            if "combo" in b:
+                ok = TYPER.combo(b["combo"])
+            elif isinstance(b.get("replace"), dict):
+                ok = TYPER.replace(b["replace"].get("back", 0), str(b["replace"].get("text", "")))
+            else:
+                ok = TYPER.type(b.get("text"), b.get("key"))
+        elif path == ["glide"]:
+            try:
+                words = glide.decode(b.get("keys") or {}, float(b.get("key_size", 0)), b.get("path") or [])
+            except (TypeError, ValueError) as exc:
+                log(f"glide: {exc}")
+                words = []
+            self.reply({"words": words})
+            return
         elif path == ["keyboard"]:
             KEYBOARD.set(bool(b.get("visible")), b.get("top"))
         elif path == ["volume"]:
@@ -1210,7 +1506,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == ["close"]:
             ok = APPS.close(str(b.get("id", "")))
         elif path == ["home"]:
-            show_dashboard()
+            NAV.home()
+        elif path == ["nav"]:
+            page = str(b.get("page", ""))
+            if page in ("home", "dash", "pad", "keys", "settings", "apps"):
+                NAV.ui_page(page)
+            else:
+                ok = False
+        elif path == ["dash-done"]:
+            NAV.back_from_dash()
+        elif path == ["refresh"]:
+            try:
+                ok = set_refresh(int(b.get("hz", 0)))
+            except (TypeError, ValueError):
+                ok = False
         elif path == ["pin"]:
             cfg = load_config()
             app_id = str(b.get("id", ""))
@@ -1221,8 +1530,19 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
         elif path == ["settings"]:
             cfg = load_config()
-            if "show_stats" in b:
-                cfg["show_stats"] = bool(b["show_stats"])
+            for k, default in DEFAULT_CONFIG.items():
+                if k == "pinned" or k not in b:
+                    continue
+                v = b[k]
+                if isinstance(default, bool):
+                    cfg[k] = bool(v)
+                elif isinstance(default, (int, float)):
+                    try:
+                        cfg[k] = type(default)(v)
+                    except (TypeError, ValueError):
+                        continue
+            cfg["dash_idle_s"] = max(0, min(600, int(cfg["dash_idle_s"])))
+            cfg["pad_speed"] = max(0.4, min(5.0, float(cfg["pad_speed"])))
             save_config(cfg)
         else:
             self.reply({"error": "not found"}, 404)

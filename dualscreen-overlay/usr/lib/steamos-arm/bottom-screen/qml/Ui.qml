@@ -1,0 +1,92 @@
+// Shared by every page of the bottom screen UI: theme, the canvas scale and
+// the backend (../dashboard, HTTP on 127.0.0.1 with a per-run token).
+//
+// Everything is laid out on a 1240x1080 canvas (the AYN Thor's bottom panel)
+// and multiplied by s, so text and touch targets keep their size relative to
+// the screen on the Pocket DS's 1024x768 too.
+pragma Singleton
+import QtQuick
+
+QtObject {
+    id: ui
+    property real s: 1
+
+    readonly property color bg: "#0b0f14"
+    readonly property color card: "#161d26"
+    readonly property color cardHi: "#2a3a4e"
+    // Buttons sit on cards too, so they get their own shade.
+    readonly property color button: "#1f2a37"
+    readonly property color line: "#2a3644"
+    readonly property color accent: "#1a9fff"
+    readonly property color text: "#e8eef5"
+    readonly property color dim: "#8e9bab"
+    readonly property color warn: "#ff6b6b"
+    readonly property color good: "#40d080"
+    readonly property string font: "Noto Sans"
+
+    property string api: ""
+    property string token: ""
+    // Last /state reply (stats are kept while an app covers the dashboard).
+    property var st: ({})
+    readonly property var cfg: st.config || ({})
+
+    function request(method, path, body, done) {
+        if (!api)
+            return
+        var x = new XMLHttpRequest()
+        x.onreadystatechange = function () {
+            if (x.readyState !== XMLHttpRequest.DONE || !done)
+                return
+            var obj = null
+            if (x.status === 200) {
+                try { obj = JSON.parse(x.responseText) } catch (e) {}
+            }
+            done(obj)
+        }
+        x.open(method, api + path)
+        x.setRequestHeader("X-Token", token)
+        if (body !== undefined) {
+            x.setRequestHeader("Content-Type", "application/json")
+            x.send(JSON.stringify(body))
+        } else {
+            x.send()
+        }
+    }
+    signal changed()            // a POST went through: refresh soon
+    function post(path, body) {
+        request("POST", path, body === undefined ? {} : body, function () { ui.changed() })
+    }
+    // Fire and forget (trackpad moves, keys): no refresh per event.
+    function send(path, body) { request("POST", path, body === undefined ? {} : body) }
+    function setting(key, value) {
+        var b = {}
+        b[key] = value
+        post("/settings", b)
+    }
+
+    // Reads the API address + token from the private file the backend wrote.
+    function loadApi(file, done) {
+        var x = new XMLHttpRequest()
+        x.onreadystatechange = function () {
+            if (x.readyState !== XMLHttpRequest.DONE)
+                return
+            try {
+                var c = JSON.parse(x.responseText)
+                api = c.url
+                token = c.token
+            } catch (e) {}
+            if (done)
+                done()
+        }
+        x.open("GET", "file://" + file)
+        x.send()
+    }
+
+    function num(v, digits) { return v === undefined || v === null ? "–" : Number(v).toFixed(digits || 0) }
+    function rate(bytes) {
+        if (bytes === undefined || bytes === null) return "–"
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB/s"
+        if (bytes >= 1024) return Math.round(bytes / 1024) + " KB/s"
+        return bytes + " B/s"
+    }
+}

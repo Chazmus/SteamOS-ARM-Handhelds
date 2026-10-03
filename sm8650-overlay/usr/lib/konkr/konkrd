@@ -29,6 +29,7 @@ import errno
 import glob
 import json
 import os
+import re
 import select
 import signal
 import struct
@@ -660,6 +661,9 @@ def hotkey_devices() -> list[str]:
 
 KEY_POWER = 116
 LONG_PRESS_S = 1.0
+# AYN Thor's AYN key: a short press shows or hides the bottom screen's
+# dashboard over whatever is there, holding it this long goes to its home.
+AYN_HOLD_S = 0.5
 # Presses right after a wake are ignored, like powerbuttond on the Deck
 # ("still actively resuming"): the wake press was followed by a second one
 # that put the device straight back to sleep (journal, 2026-09-26). Applies
@@ -902,7 +906,9 @@ class Hotkeys:
 # extra buttons trigger. Only these names are accepted; nothing else.
 REQUEST_SOCK = "/run/konkrd/request"
 REQUEST_ACTIONS = {"profile-next", "profile-silent", "profile-balanced",
-                   "profile-turbo", "fan-boost", "rgb-next", "sticks-toggle"}
+                   "profile-turbo", "fan-boost", "rgb-next", "sticks-toggle",
+                   "fan-auto", "fan-boost-on"}
+# Also fan-fixed:<0-100> (a fixed fan speed, the hot-override still applies).
 
 
 def open_request_socket():
@@ -989,25 +995,38 @@ class Daemon:
             save_state(self.st)
             self.apply_profile()
             notify_desktop(PROFILE_LABEL[self.st["profile"]], "Performance profile")
-        elif name == "bottom-home":
-            # Bottom-screen dashboard to the front (it watches this file's mtime).
+        elif name in ("bottom-home", "bottom-dash"):
+            # The bottom screen watches these files' mtimes: .home = its home
+            # screen, .dash = show/hide the dashboard over the current app.
             try:
                 import pwd
                 uid = pwd.getpwnam("steamos").pw_uid
-                path = f"/run/user/{uid}/bottom-screen.home"
+                path = f"/run/user/{uid}/bottom-screen.{name.split('-')[1]}"
                 if os.path.isdir(os.path.dirname(path)):
                     with open(path, "a"):
                         pass
                     os.utime(path, None)
                     os.chown(path, uid, uid)
             except (KeyError, OSError) as e:
-                log(f"bottom-home: {e}")
+                log(f"{name}: {e}")
         elif name == "fan-boost":
             self.st["fan"]["boost"] = not self.st["fan"].get("boost")
             save_state(self.st)
             self.leds.flash((255, 255, 255) if self.st["fan"]["boost"] else (60, 60, 60))
             log(f"fan boost {'on' if self.st['fan']['boost'] else 'off'}")
             notify_desktop("Fan boost " + ("on" if self.st["fan"]["boost"] else "off"), "")
+        elif name in ("fan-auto", "fan-boost-on"):
+            self.st["fan"].update(mode="auto", boost=name == "fan-boost-on")
+            save_state(self.st)
+            log(f"fan {name[4:]}")
+        elif name.startswith("fan-fixed:"):
+            try:
+                pct = max(0, min(100, int(name.split(":", 1)[1])))
+            except ValueError:
+                return
+            self.st["fan"].update(mode="fixed", fixed=pct, boost=False)
+            save_state(self.st)
+            log(f"fan fixed {pct}%")
         elif name == "sticks-toggle":
             rgb = self.st["rgb"]
             if rgb.get("mode") == "off":
@@ -1035,13 +1054,15 @@ class Daemon:
         next_ui_check = 0.0
         power_down_at = None
         power_long_sent = False
+        ayn_down_at = None
+        ayn_long_sent = False
         last_standby = 0.0
         # CLOCK_BOOTTIME runs through a kernel suspend, CLOCK_MONOTONIC does
         # not: a jump in their difference means we just came back from s2idle,
         # and the power key press that woke the device is still queued.
         sleep_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
         while True:
-            timeout = 0.1 if power_down_at is not None else 0.25 if self.touch.active else 0.5
+            timeout = 0.1 if power_down_at is not None or ayn_down_at is not None else 0.25 if self.touch.active else 0.5
             if os.path.exists(STANDBY_FLAG):
                 last_standby = time.monotonic()
             keys = self.keys.poll(timeout, self.touch)
@@ -1066,10 +1087,19 @@ class Daemon:
                         power_down_at = None
                     continue
                 name = keymap.get(code)
+                if name == "F24" and not (self.st.get("buttons", {}).get(name)
+                                          or self.conf.get("buttons", name, fallback="")):
+                    # Short press: dashboard; held: home (sent once, below).
+                    if value == 1:
+                        ayn_down_at, ayn_long_sent = time.monotonic(), False
+                    elif ayn_down_at is not None:
+                        if not ayn_long_sent:
+                            self.action("bottom-dash")
+                        ayn_down_at = None
+                    continue
                 if name and value == 1:
                     act = self.st.get("buttons", {}).get(name) or \
-                        self.conf.get("buttons", name,
-                                      fallback="bottom-home" if name == "F24" else "none")
+                        self.conf.get("buttons", name, fallback="none")
                     self.action(act)
             while self.requests is not None:
                 try:
@@ -1078,7 +1108,8 @@ class Daemon:
                     break
                 except OSError:
                     break
-                if req in REQUEST_ACTIONS and not os.path.exists(STANDBY_FLAG):
+                if (req in REQUEST_ACTIONS or re.fullmatch(r"fan-fixed:\d{1,3}", req)) \
+                        and not os.path.exists(STANDBY_FLAG):
                     self.action(req)
                 elif req.startswith("rgb-set:") and not os.path.exists(STANDBY_FLAG):
                     self.set_rgb(req)
@@ -1086,6 +1117,10 @@ class Daemon:
                     and time.monotonic() - power_down_at >= LONG_PRESS_S):
                 power_press(long=True)
                 power_long_sent = True
+            if (ayn_down_at is not None and not ayn_long_sent
+                    and time.monotonic() - ayn_down_at >= AYN_HOLD_S):
+                self.action("bottom-home")
+                ayn_long_sent = True
             if self.reload:
                 self.reload = False
                 self.conf = load_conf()

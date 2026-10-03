@@ -1,13 +1,13 @@
 // Keyboard for apps on the bottom screen. Backend: ../dashboard.
 //
-// Its own full-screen, see-through window. The backend makes it a gamescope
-// overlay (STEAM_OVERLAY) and, while shown, sets STEAM_INPUT_FOCUS=2 on it,
-// as Steam's own keyboard does: it takes the touches, and X keyboard focus
-// stays on the app underneath, which the backend types into (XTest). It
-// opens when a text field in a bottom-screen app gets focus (AT-SPI) and sits
-// at the top when the field is in the lower half. Tapping outside the keys
-// closes it. Only this screen's apps are affected; the top screen never sees
-// these keys.
+// Its own full-screen, see-through window (and process). The backend makes
+// it a gamescope overlay (STEAM_OVERLAY) and, while shown, sets
+// STEAM_INPUT_FOCUS=2 on it, as Steam's own keyboard does: it takes the
+// touches, and X keyboard focus stays on the app underneath, which the
+// backend types into (XTest). It opens when a text field in a bottom-screen
+// app gets focus (AT-SPI) and sits at the top when the field is in the lower
+// half. Tapping outside the keys closes it. Only this screen's apps are
+// affected; the top screen never sees these keys.
 import QtQuick
 import QtQuick.Window
 
@@ -20,37 +20,10 @@ Window {
     height: Screen.height > 0 ? Screen.height : 1080
     color: "transparent"
 
-    readonly property real s: Math.min(width / 1240, height / 1080)
-    property string api: ""
-    property string token: ""
     property bool shown: false
     property bool atTop: false
     property bool polling: false
-
-    function request(method, path, body, done) {
-        if (!api)
-            return
-        var x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState !== XMLHttpRequest.DONE)
-                return
-            if (done) {
-                var obj = null
-                if (x.status === 200) {
-                    try { obj = JSON.parse(x.responseText) } catch (e) {}
-                }
-                done(obj)
-            }
-        }
-        x.open(method, api + path)
-        x.setRequestHeader("X-Token", token)
-        if (body !== undefined) {
-            x.setRequestHeader("Content-Type", "application/json")
-            x.send(JSON.stringify(body))
-        } else {
-            x.send()
-        }
-    }
+    Binding { target: Ui; property: "s"; value: Math.min(win.width / 1240, win.height / 1080) }
 
     Component.onCompleted: {
         var args = Qt.application.arguments
@@ -65,18 +38,7 @@ Window {
             shotTimer.file = args[si + 1]
             shotTimer.start()
         }
-        var x = new XMLHttpRequest()
-        x.onreadystatechange = function () {
-            if (x.readyState === XMLHttpRequest.DONE) {
-                try {
-                    var cfg = JSON.parse(x.responseText)
-                    api = cfg.url
-                    token = cfg.token
-                } catch (e) {}
-            }
-        }
-        x.open("GET", "file://" + args[args.length - 1])
-        x.send()
+        Ui.loadApi(args[args.length - 1])
     }
     Timer {
         id: shotTimer
@@ -94,11 +56,13 @@ Window {
             if (win.polling)
                 return
             win.polling = true
-            win.request("GET", "/keyboard", undefined, function (k) {
+            Ui.request("GET", "/keyboard", undefined, function (k) {
                 win.polling = false
                 if (!k)
                     return
                 win.atTop = k.top === true
+                if (k.visible === true && !win.shown)
+                    keys.suggestions = []
                 win.shown = k.visible === true
             })
         }
@@ -112,7 +76,7 @@ Window {
         anchors.right: parent.right
         y: win.atTop ? panel.height : 0
         height: parent.height - panel.height
-        onClicked: { win.shown = false; win.request("POST", "/keyboard", { visible: false }) }
+        onClicked: { win.shown = false; Ui.send("/keyboard", { visible: false }) }
     }
 
     Rectangle {
@@ -120,18 +84,21 @@ Window {
         visible: win.shown
         anchors.left: parent.left
         anchors.right: parent.right
-        height: parent.height * 0.46
+        height: parent.height * 0.5
         y: win.atTop ? 0 : parent.height - height
-        color: "#0b0f14"
+        color: Ui.bg
         KeyPad {
+            id: keys
             anchors.fill: parent
-            anchors.margins: 14 * win.s
-            s: win.s
+            anchors.margins: 14 * Ui.s
             showHide: true
             onTyped: function (kind, value) {
-                win.request("POST", "/type", kind === "key" ? { key: value } : { text: value })
+                if (kind === "combo") Ui.send("/type", { combo: value })
+                else if (kind === "replace") Ui.send("/type", { replace: value })
+                else if (kind === "key") Ui.send("/type", { key: value })
+                else Ui.send("/type", { text: value })
             }
-            onHideRequested: { win.shown = false; win.request("POST", "/keyboard", { visible: false }) }
+            onHideRequested: { win.shown = false; Ui.send("/keyboard", { visible: false }) }
         }
     }
 }
