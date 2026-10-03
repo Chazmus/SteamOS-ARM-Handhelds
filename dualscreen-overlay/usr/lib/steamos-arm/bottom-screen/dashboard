@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     "layout": "qwerty",         # qwerty, qwertz, azerty
     "momentum": True,           # two-finger scrolls keep gliding after a flick
     "webapps": [],              # your own: [{"id", "name", "url"}]
+    "pin_after": [],            # hub apps to pin on the home screen once installed
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
 LAYOUTS = ("qwerty", "qwertz", "azerty")
@@ -113,10 +114,11 @@ def load_config() -> dict:
     try:
         cfg = json.loads(CONFIG.read_text())
         if isinstance(cfg, dict):
-            return {**DEFAULT_CONFIG, **cfg}
+            # Deep copies: the lists in DEFAULT_CONFIG must never be edited in place.
+            return json.loads(json.dumps({**DEFAULT_CONFIG, **cfg}))
     except (OSError, ValueError):
         pass
-    return dict(DEFAULT_CONFIG)
+    return json.loads(json.dumps(DEFAULT_CONFIG))
 
 
 def save_config(cfg: dict) -> None:
@@ -782,6 +784,63 @@ def _list_apps() -> list[dict]:
                 app["path"] = str(f)
                 seen[f.stem] = app
     return sorted(seen.values(), key=lambda a: a["name"].lower())
+
+
+# ------------------------------------------------------- emulator hub ----
+# The Emulator Hub (steamos-arm-hub) does the installing for every front end;
+# this screen shows its catalog and can put a freshly installed app straight
+# on the home screen.
+HUB = "/usr/lib/steamos-arm/hub/hub.py"
+_hub_cache: tuple[float, dict] = (0.0, {})
+
+
+def hub(*args: str, timeout: int = 60) -> dict:
+    try:
+        r = subprocess.run(["/usr/bin/python3", HUB, *args], capture_output=True, text=True, timeout=timeout)
+        return json.loads(r.stdout or "{}")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return {"error": str(exc)}
+
+
+def hub_status() -> dict:
+    global _hub_cache
+    if time.monotonic() - _hub_cache[0] > 1.0:
+        _hub_cache = (time.monotonic(), hub("status"))
+    return _hub_cache[1]
+
+
+def hub_desktop_id(app: dict, st: dict) -> str | None:
+    """The launcher id an installed hub app shows up under on this screen."""
+    for e in hub("catalog").get("apps", []):
+        if e["id"] == app["id"]:
+            for src in e["sources"]:
+                if src.get("kind") == "flathub" and app_by_id(src["ref"]):
+                    return src["ref"]
+    return f"steamos-arm-hub-{app['id']}" if app_by_id(f"steamos-arm-hub-{app['id']}") else None
+
+
+def hub_pin_watch() -> None:
+    """Apps asked for from a home screen tile get pinned once installed."""
+    while True:
+        time.sleep(4)
+        cfg = load_config()
+        want = cfg.get("pin_after", [])
+        if not want:
+            continue
+        st = hub("status")
+        done = []
+        for a in st.get("apps", []):
+            if a["id"] in want and a["installed"]:
+                did = hub_desktop_id(a, st)
+                if did:
+                    if did not in cfg["pinned"]:
+                        cfg["pinned"].append(did)
+                    done.append(a["id"])
+            elif a["id"] in want and not a.get("job") and not a["installed"]:
+                done.append(a["id"])            # the install failed or was cancelled
+        if done:
+            cfg["pin_after"] = [w for w in want if w not in done]
+            save_config(cfg)
 
 
 def app_by_id(app_id: str) -> dict | None:
@@ -1644,7 +1703,7 @@ class Handler(BaseHTTPRequestHandler):
                 "refresh": refresh_state(),
                 "nav": rows["nav"],
                 "config": {k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
-                           if k not in ("pinned", "per_game")},
+                           if k not in ("pinned", "per_game", "pin_after")},
                 "game": GAMES.state(cfg),
                 "toggles": toggles(),
             })
@@ -1669,6 +1728,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"appid": st["appid"], "name": st["name"], "text": notes_get(st["appid"])})
         elif self.path == "/keyboard":
             self.reply(KEYBOARD.state())
+        elif self.path == "/hub":
+            self.reply(hub_status())
+            return
         elif self.path == "/apps":
             pinned = set(load_config()["pinned"])
             self.reply([{"id": a["id"], "name": a["name"], "icon": a["icon"], "pinned": a["id"] in pinned}
@@ -1738,6 +1800,32 @@ class Handler(BaseHTTPRequestHandler):
             KEYBOARD.set(bool(b.get("shown")))
         elif path == ["volume"]:
             set_volume(b.get("percent"), b.get("mute"))
+        elif path[0] == "hub" and len(path) == 2:
+            global _hub_cache
+            act, app = path[1], str(b.get("app", ""))
+            if act in ("install", "update") and app:
+                if b.get("pin"):
+                    cfg = load_config()
+                    cfg.setdefault("pin_after", [])
+                    if app not in cfg["pin_after"]:
+                        cfg["pin_after"].append(app)
+                    save_config(cfg)
+                out = hub(act, app)
+            elif act == "remove" and app:
+                out = hub("remove", app, *(["--wipe"] if b.get("wipe") else []))
+            elif act == "cancel":
+                out = hub("cancel", str(b.get("job", "")))
+            elif act in ("starter", "update-all"):
+                out = hub(act)
+            elif act == "check-updates":
+                out = hub(act, timeout=180)
+            elif act == "library" and b.get("where") in ("internal", "sd"):
+                out = hub("library", b["where"], timeout=900)
+            else:
+                out = {"error": "unknown"}
+            _hub_cache = (0.0, {})
+            self.reply(out)
+            return
         elif path == ["launch"]:
             ok = APPS.launch(str(b.get("id", "")))
         elif path == ["focus"]:
@@ -1796,7 +1884,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == ["settings"]:
             cfg = load_config()
             for k, default in DEFAULT_CONFIG.items():
-                if k in ("pinned", "webapps", "per_game") or k not in b:
+                if k in ("pinned", "webapps", "per_game", "pin_after") or k not in b:
                     continue
                 v = b[k]
                 if isinstance(default, bool):
@@ -1824,6 +1912,7 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=watch_home_gesture, daemon=True).start()
     threading.Thread(target=watch_touch_activity, daemon=True).start()
+    threading.Thread(target=hub_pin_watch, daemon=True).start()
     threading.Thread(target=GAMES.watch, daemon=True).start()
     log(f"api on 127.0.0.1:{port}, model {MODEL!r}")
     # The UI reads the API address + token from a private file (argv and the

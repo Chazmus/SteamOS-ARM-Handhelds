@@ -32,6 +32,8 @@ Window {
     property var running: []
     property var pinned: []
     property var web: []
+    property var hub: []
+    function pollHub() { Ui.request("GET", "/hub", undefined, function (r) { if (r && r.apps) root.hub = r.apps }) }
     property bool bottomOn: true
     property string rowsKey: ""
     property string shotFile: ""
@@ -84,6 +86,8 @@ Window {
         function onChanged() { root.pollNav(); if (root.page === "dash" || root.page === "settings" || root.page === "home") root.pollState() }
     }
     Timer { interval: 400; running: root.shotFile === ""; repeat: true; onTriggered: root.pollNav() }
+    // One-tap app tiles on home: their install state, every few seconds.
+    Timer { interval: 4000; running: root.page === "home"; repeat: true; triggeredOnStart: true; onTriggered: root.pollHub() }
     // Home shows the toggles and the game in front: refresh those gently.
     Timer { interval: 3000; running: root.page === "home" && root.shotFile === ""; repeat: true; onTriggered: root.pollState() }
     Timer {
@@ -133,12 +137,13 @@ Window {
         Ui.loadApi(args[args.length - 1], function () {
             root.pollNav()
             root.pollState()
+            root.pollHub()
         })
     }
 
     readonly property var titles: ({
         home: "", dash: "Dashboard", pad: "Trackpad and keyboard", keys: "Trackpad and keyboard",
-        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps"
+        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub"
     })
 
     // ------------------------------------------------------------- frame --
@@ -201,6 +206,7 @@ Window {
                 running: root.running
                 pinned: root.pinned
                 web: root.web
+                hub: root.hub
                 onOpen: function (p) { root.go(p) }
             }
             DashPage {
@@ -216,6 +222,10 @@ Window {
             SettingsPage {
                 anchors.fill: parent
                 visible: root.page === "settings"
+            }
+            HubPage {
+                anchors.fill: parent
+                visible: root.page === "hub"
             }
             NotesPage {
                 anchors.fill: parent

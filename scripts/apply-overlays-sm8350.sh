@@ -167,4 +167,7 @@ fi
 install -m0755 "$OVL/usr/lib/steamos/sm8550-bluetooth-setup" \
   "$R/usr/lib/steamos/sm8550-bluetooth-setup"
 
+# Emulator Hub (also in the shared rootfs; older release rootfs lack it).
+"${SCRIPT_DIR}/install-hub.sh" "$R" "$R/home/steamos" | tee -a "$LOG"
+
 log "== done (kernel ${KREL})"

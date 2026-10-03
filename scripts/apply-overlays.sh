@@ -908,6 +908,8 @@ install -m0755 "$DECKY_LOADER" "$HOME_DST/homebrew/services/PluginLoader"
 printf '%s' "$DECKY_VERSION" >"$HOME_DST/homebrew/services/.loader.version"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service"
+# Emulator Hub: one-tap emulators and apps (engine + Decky panel).
+"${SCRIPT_DIR}/install-hub.sh" "$R" "$HOME_DST"
 # Fix lsfg-vk home paths
 if [[ -f "$HOME_DST/.config/lsfg-vk/conf.toml" ]]; then
   sed -i 's|/home/steam/|/home/steamos/|g' "$HOME_DST/.config/lsfg-vk/conf.toml"

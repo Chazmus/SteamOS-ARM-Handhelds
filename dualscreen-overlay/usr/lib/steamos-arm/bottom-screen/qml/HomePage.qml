@@ -5,7 +5,8 @@
 //   tools           dashboard, touchpad, keyboard, notes for the game
 //   web             Game Guide (follows the game on the top screen), YouTube,
 //                   YouTube Music, Steam Chat and your own web apps
-//   apps            the desktop apps you added, then Add, New web app, Settings
+//   apps            the desktop apps you added, apps you can get in one tap
+//                   (download badge), then New web app, Add apps, Settings
 //
 // Holding the AYN button or swiping up from the bottom edge always lands here.
 pragma ComponentBehavior: Bound
@@ -18,6 +19,12 @@ Item {
     property var running: []
     property var pinned: []
     property var web: []
+    property var hub: []               // Emulator Hub apps (from /hub)
+    // Apps worth having here that aren't installed yet: one tap gets them,
+    // and they pin themselves when done.
+    readonly property var suggested: hub.filter(function (a) {
+        return a.kind === "app" && !a.installed && a.available && ["vesktop", "signal", "moonlight", "chiaki"].indexOf(a.id) >= 0
+    }).slice(0, 3)
     signal open(string page)
 
     readonly property var st: Ui.st
@@ -27,7 +34,8 @@ Item {
         { page: "dash", name: "Dashboard", icon: "speedometer" },
         { page: "pad", name: "Touchpad", icon: "input-touchpad-symbolic" },
         { page: "keys", name: "Keyboard", icon: "input-keyboard-symbolic" },
-        { page: "notes", name: "Game Notes", icon: "document-edit" }
+        { page: "notes", name: "Game Notes", icon: "document-edit" },
+        { page: "hub", name: "Get emulators", icon: "download-symbolic" }
     ]
     readonly property var runningIds: running.map(function (a) { return a.id })
 
@@ -178,6 +186,21 @@ Item {
                         closable: false
                         onTapped: Ui.post("/launch", { id: modelData.id })
                         onHeld: home.open("apps")
+                    }
+                }
+                Repeater {
+                    model: home.suggested
+                    Tile {
+                        required property var modelData
+                        readonly property var job: modelData.job && modelData.job.state === "running" ? modelData.job : null
+                        name: job ? Math.round(job.pct) + "%" : modelData.title
+                        icon: "applications-internet"
+                        image: modelData.icon || ""
+                        download: true
+                        progress: job ? job.pct : -1
+                        closable: false
+                        onTapped: if (!job) Ui.post("/hub/install", { app: modelData.id, pin: true })
+                        onHeld: home.open("hub")
                     }
                 }
                 Tile { name: "Web app"; icon: "list-add-symbolic"; mask: true; closable: false; onTapped: home.open("newweb") }
