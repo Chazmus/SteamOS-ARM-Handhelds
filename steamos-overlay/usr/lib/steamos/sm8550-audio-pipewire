@@ -101,6 +101,22 @@ set_profile() {
   pactl_ok set-card-profile "$card" "$profile"
 }
 
+# The card's own profile with a DisplayPort/HDMI output in it. The names come
+# from each device's UCM config: the Odin 2 has "HiFi (DisplayPort, Speaker)",
+# other devices order or name them differently, and with only the fixed names
+# the Thor never switched (monitor audio needed pavucontrol).
+dp_profile() {
+  local card="$1"
+  pactl_ok list cards | awk -v card="$card" '
+    /^Card #/ {incard=0}
+    $1 == "Name:" && $2 == card {incard=1}
+    incard && /^\tProfiles:/ {inprof=1; next}
+    incard && inprof && /^\t[A-Z]/ {inprof=0}
+    incard && inprof && /(DisplayPort|HDMI)/ && !/available: no/ {
+      sub(/^[ \t]+/, ""); sub(/: .*/, ""); print; exit
+    }'
+}
+
 persist() {
   local sink="$1" profile="$2"
   local state="${XDG_STATE_HOME:-$HOME/.local/state}/wireplumber"
@@ -117,13 +133,17 @@ apply_policy() {
 
   if drm_dp; then
     log "DRM DP/HDMI connected → HiFi DisplayPort"
-    set_profile "$card" 'HiFi (DisplayPort, Speaker)' \
+    local prof
+    prof="$(dp_profile "$card")"
+    log "DisplayPort profile: ${prof:-none found}"
+    { [[ -n "$prof" ]] && set_profile "$card" "$prof"; } \
+      || set_profile "$card" 'HiFi (DisplayPort, Speaker)' \
       || set_profile "$card" 'HiFi (Speaker, DisplayPort)' \
       || set_profile "$card" HiFi
     enable_dp_mixers
     wait_sink 'DisplayPort|HDMI' >/dev/null
     sink="$(find_sink 'DisplayPort|HDMI')"
-    persist "${sink:-alsa_output.platform-sound.HiFi__DisplayPort__sink}" 'HiFi (DisplayPort, Speaker)'
+    persist "${sink:-alsa_output.platform-sound.HiFi__DisplayPort__sink}" "${prof:-HiFi (DisplayPort, Speaker)}"
     set_default "$sink"
   else
     log "no HDMI → pro-audio speakers (vendor/audio path)"
