@@ -236,6 +236,8 @@ def set_library(where: str) -> dict:
         try:
             e = entry(app_id)
             make_library(e.get("systems", []))
+            if installed[app_id].get("ref"):
+                flatpak_allow(installed[app_id]["ref"])    # it may only see the old place
             SETUPS.get(e.get("setup", ""), lambda *_: None)(e, installed[app_id], True)
         except Exception as exc:  # one emulator's config never blocks the move
             log(f"library move: {app_id}: {exc}")
@@ -464,6 +466,13 @@ def cancel(job_id: str) -> dict:
 def download(url: str, dest: Path, job: Job, size: int = 0, sha256: str = "") -> None:
     """Resumable: a .part left by an earlier try is continued with a Range."""
     part = dest.with_name(dest.name + ".part")
+    # A part file is only resumed for the same file: after an update of the
+    # app it would belong to the old build, and appending to it would make a
+    # broken AppImage where no checksum is published to catch it.
+    origin = dest.with_name(dest.name + ".part.url")
+    if part.exists() and (not origin.exists() or origin.read_text().strip() != url):
+        part.unlink()
+    origin.write_text(url)
     have = part.stat().st_size if part.exists() else 0
     req = urllib.request.Request(url, headers={"User-Agent": UA, **({"Range": f"bytes={have}-"} if have else {})})
     with urllib.request.urlopen(req, timeout=60) as r:
@@ -494,8 +503,10 @@ def download(url: str, dest: Path, job: Job, size: int = 0, sha256: str = "") ->
                 h.update(block)
         if h.hexdigest() != sha256:
             part.unlink(missing_ok=True)
+            origin.unlink(missing_ok=True)
             raise RuntimeError("The download was damaged (checksum mismatch); try again")
     os.replace(part, dest)
+    origin.unlink(missing_ok=True)
 
 
 # ------------------------------------------------------------ flatpak ----
@@ -642,7 +653,10 @@ def do_install(job: Job, update: bool = False) -> None:
         if old.get("how") == "flatpak" and old.get("ref"):
             flatpak_remove(old["ref"])     # moved off Flathub to a better build
     elif pick["how"] == "flatpak":
-        flatpak_install(pick["ref"], job, update and old.get("ref") == pick["ref"])
+        # Already there from Discover (either scope): take it over, unless
+        # this is an update, rather than installing a second copy.
+        if update or pick["ref"] not in flatpak_installed():
+            flatpak_install(pick["ref"], job, update and old.get("ref") == pick["ref"])
         flatpak_allow(pick["ref"])
         record["ref"] = pick["ref"]
         if old.get("file"):
@@ -906,6 +920,16 @@ def setup_retroarch(e, rec, moved):
         "video_fullscreen": "true",
     }
     text = cfg.read_text(errors="replace") if cfg.exists() else ""
+    if not text:
+        # RetroArch copies its Flatpak's skeleton config on first start; a
+        # config of ours without it would lack the paths to its assets and
+        # cores. Start from the same skeleton, or leave first start to it.
+        loc = subprocess.run(["flatpak", "info", "--show-location", "org.libretro.RetroArch"],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        skeleton = Path(loc) / "files" / "etc" / "retroarch.cfg" if loc else None
+        if not skeleton or not skeleton.is_file():
+            return
+        text = skeleton.read_text(errors="replace")
     keep = {} if moved else {k: v for k, v in values.items()
                              if not re.search(rf'^{k}\s*=\s*"[^"]+"', text, re.M)}
     if moved:
@@ -970,7 +994,9 @@ def setup_melonds(e, rec, moved):
     for k, v in head.items():
         line = f'{k} = "{v}"'
         text = re.sub(rf"^{k}\s*=.*$", line, text, flags=re.M) if re.search(rf"^{k}\s*=", text, re.M) else line + "\n" + text
-    if "[Instance0.Joystick]" not in text:
+    # Only into a config of ours: a table that's already there can't be
+    # opened a second time (melonDS would reject the whole file).
+    if "[Instance0]" not in text and "[Instance0.Joystick]" not in text:
         text += "\n[Instance0]\nJoystickID = 0\n\n[Instance0.Joystick]\n" + "".join(f"{k} = {v}\n" for k, v in MELONDS_PAD.items())
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(text)
@@ -1234,6 +1260,13 @@ def status() -> dict:
         rec = db.get(e["id"])
         if rec and rec.get("how") == "flatpak" and rec.get("ref") not in flat:
             rec = None              # removed behind our back
+        if not rec:
+            # Installed some other way (Discover): it shows as installed, and
+            # Install just takes it over (launcher, Steam shortcut, library).
+            ref = next((s_["ref"] for s_ in e["sources"] if s_["kind"] == "flathub" and s_["ref"] in flat), None)
+            adopt = bool(ref)
+        else:
+            adopt = False
         if rec and rec.get("how") == "file" and not (APPS / rec.get("file", "")).exists():
             rec = None
         builtin = e["sources"][0]["kind"] == "builtin" and Path(e["sources"][0]["exec"]).exists()
@@ -1243,7 +1276,7 @@ def status() -> dict:
             "id": e["id"], "title": e["title"], "plays": e.get("plays", ""), "kind": e.get("kind", "app"),
             "note": e.get("note", ""), "heavy": heavy,
             "starter": "starter" in e and chip_rank(dev["chip"]) >= chip_rank(e["starter"]),
-            "installed": bool(rec) or builtin, "builtin": builtin,
+            "installed": bool(rec) or builtin, "builtin": builtin, "elsewhere": adopt,
             "version": (rec or {}).get("version", ""), "label": (rec or {}).get("label") or (best or {}).get("label", ""),
             "update": (rec or {}).get("update", ""),
             "job": running.get(e["id"]),
@@ -1256,22 +1289,31 @@ def status() -> dict:
 
 def check_updates() -> dict:
     """Ask every source of an installed file app whether there's newer.
-    Flatpaks update through Flathub and are left to the update-all job."""
+    Flatpaks update through Flathub and are left to the update-all job.
+    The feeds are asked first, without holding the record's lock: that can
+    take a while, and an install finishing meanwhile must not wait on it."""
     dev = device()
+    latest = {}
+    for app_id, rec in installed_db().items():
+        if rec.get("how") != "file":
+            continue
+        try:
+            idx, pick = resolve(entry(app_id), dev)
+        except Exception:
+            continue
+        if pick.get("how") == "file":
+            latest[app_id] = (idx, pick.get("version", ""))
     found = {}
 
     def change(d):
-        for app_id, rec in d.items():
-            if rec.get("how") != "file":
+        for app_id, (idx, version) in latest.items():
+            rec = d.get(app_id)
+            if not rec or rec.get("how") != "file":
                 continue
-            try:
-                idx, pick = resolve(entry(app_id), dev)
-            except Exception:
-                continue
-            newer = pick.get("how") == "file" and (pick.get("version") != rec.get("version") or idx != rec.get("source"))
-            rec["update"] = pick.get("version", "") if newer else ""
+            newer = version != rec.get("version") or idx != rec.get("source")
+            rec["update"] = version if newer else ""
             if newer:
-                found[app_id] = rec["update"]
+                found[app_id] = version
     update_json(STATE / "installed.json", change)
     return {"updates": found}
 

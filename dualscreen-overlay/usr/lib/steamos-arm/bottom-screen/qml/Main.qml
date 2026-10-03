@@ -95,7 +95,7 @@ Window {
     Timer { interval: 3000; running: root.page === "home" && root.shotFile === ""; repeat: true; onTriggered: root.pollState() }
     Timer {
         interval: 1000
-        running: root.page === "dash" && root.shotFile === ""
+        running: (root.page === "dash" || root.page === "skins") && root.shotFile === ""
         repeat: true
         onTriggered: root.pollState()
     }

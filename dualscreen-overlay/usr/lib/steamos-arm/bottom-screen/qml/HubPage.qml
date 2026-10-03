@@ -161,6 +161,7 @@ Item {
                                 text: cell.a.builtin ? "Built in"
                                       : cell.a.update ? "Update ready · " + cell.a.update
                                       : cell.a.installed ? "Installed" + (cell.a.version ? " · " + cell.a.version : "")
+                                      : cell.a.elsewhere ? "Installed from Discover · Set up adds it to Steam and the library"
                                       : cell.a.heavy ? "Heavy for this chip" : (cell.a.note || "")
                                 color: cell.a.update || (cell.a.heavy && !cell.a.installed) ? "#ffc857" : (cell.a.installed ? Ui.good : Ui.dim)
                                 font.pixelSize: 21 * Ui.s
@@ -201,6 +202,7 @@ Item {
                             label: cell.job ? "Stop"
                                    : cell.a.update ? "Update"
                                    : cell.a.installed ? "Remove"
+                                   : cell.a.elsewhere ? "Set up"
                                    : cell.a.available ? "Install" : "Not here"
                             active: !cell.a.installed && cell.a.available && !cell.job
                             onClicked: {

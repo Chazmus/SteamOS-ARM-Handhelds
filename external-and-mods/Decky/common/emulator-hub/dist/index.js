@@ -141,7 +141,7 @@ function AppRow({ app, refresh }) {
     ].filter(Boolean).join(" ");
     const state = app.installed
         ? (app.builtin ? "Built in" : app.update ? `Update: ${app.update}` : (app.version ? `Installed · ${app.version}` : "Installed"))
-        : "";
+        : app.elsewhere ? "Installed from Discover" : "";
     return jsxs(SP_JSX.Fragment, { children: [
         row(jsx(DFL.Field, {
             label: jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
@@ -159,7 +159,7 @@ function AppRow({ app, refresh }) {
                         app.update ? jsx(DFL.DialogButton, { onClick: act(hub.update), children: "Update" }) : null,
                         jsx(DFL.DialogButton, { onClick: ask, children: "Remove" }),
                     ] })
-                    : jsx(DFL.DialogButton, { disabled: !app.available, onClick: act(hub.install), children: app.available ? "Install" : "Not for this device" }),
+                    : jsx(DFL.DialogButton, { disabled: !app.available, onClick: act(hub.install), children: app.elsewhere ? "Set up" : app.available ? "Install" : "Not for this device" }),
         })),
     ] });
 }
