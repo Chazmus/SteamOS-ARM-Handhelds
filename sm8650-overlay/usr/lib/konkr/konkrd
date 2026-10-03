@@ -555,6 +555,13 @@ def led(pattern: str) -> str | None:
 def led_rgb(d: str | None, rgb, brightness: int = 255) -> None:
     if not d:
         return
+    # multi_intensity follows the LED's own channel order (multi_index). The
+    # KONKR LEDs list red green blue, the AYN stick zones blue green red, so
+    # writing r g b as is turned red blue and yellow cyan on the Thor and RP6.
+    order = rd(f"{d}/multi_index").split()
+    names = {"red": 0, "green": 1, "blue": 2}
+    if sorted(order) == ["blue", "green", "red"]:
+        rgb = [rgb[names[c]] for c in order]
     wr(f"{d}/multi_intensity", " ".join(str(c) for c in rgb))
     wr(f"{d}/brightness", brightness)
 
