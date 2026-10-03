@@ -27,6 +27,15 @@ STATE_PATH = "/var/lib/odin3/state.json"
 PROFILES = ("silent", "balanced", "turbo")
 
 
+
+def device_name() -> str:
+    """The machine's own name (Odin 3, Pocket FIT Elite...), not the daemon's."""
+    try:
+        with open("/sys/firmware/devicetree/base/model", encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip("\0\n ") or "8 Elite handheld"
+    except OSError:
+        return "8 Elite handheld"
+
 def rd(path: str, default: str = "") -> str:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -60,7 +69,7 @@ def send_req(action: str, **kwargs) -> dict:
 
 def format_status(data: dict) -> str:
     lines = []
-    lines.append("=== AYN Odin 3 Platform Status ===")
+    lines.append(f"=== {device_name()} status ===")
     lines.append(f"Profile      : {data.get('profile', 'unknown').upper()}")
     
     fan_mode = data.get("fan_mode", "auto")
@@ -147,7 +156,7 @@ def cmd_status() -> None:
 
 
 def cmd_monitor() -> None:
-    print("Monitoring AYN Odin 3 thermals and fan (Ctrl+C to exit)...")
+    print(f"Monitoring {device_name()} thermals and fan (Ctrl+C to exit)...")
     try:
         while True:
             res = send_req("status")
