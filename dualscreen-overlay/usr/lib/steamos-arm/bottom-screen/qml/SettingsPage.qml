@@ -10,6 +10,7 @@ Flickable {
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     readonly property var cfg: Ui.cfg
+    signal open(string page)
 
     component Row: Card {
         id: row
@@ -51,6 +52,17 @@ Flickable {
         spacing: 16 * Ui.s
         Txt { text: "Settings"; font.pixelSize: 40 * Ui.s; font.weight: Font.Bold }
 
+        Row {
+            title: "Dashboard look"
+            help: "Classic, Gauges, Pure Black or a skin of your own, previewed live."
+            Btn {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 84 * Ui.s
+                label: "Choose…"
+                fontSize: 24
+                onClicked: sp.open("skins")
+            }
+        }
         Row {
             title: "Dashboard steps back"
             help: "After this long without a touch, a dashboard opened with the AYN button goes back to the app it was opened over."

@@ -143,7 +143,7 @@ Window {
 
     readonly property var titles: ({
         home: "", dash: "Dashboard", pad: "Trackpad and keyboard", keys: "Trackpad and keyboard",
-        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub"
+        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub", skins: "Dashboard look"
     })
 
     // ------------------------------------------------------------- frame --
@@ -219,9 +219,15 @@ Window {
                 visible: root.page === "pad" || root.page === "keys"
                 mode: root.page === "keys" ? "keys" : "pad"
             }
+            SkinsPage {
+                anchors.fill: parent
+                visible: root.page === "skins"
+                dash: dashPage
+            }
             SettingsPage {
                 anchors.fill: parent
                 visible: root.page === "settings"
+                onOpen: function (p) { root.go(p) }
             }
             HubPage {
                 anchors.fill: parent

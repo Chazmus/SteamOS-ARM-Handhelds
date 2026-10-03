@@ -76,6 +76,7 @@ DEFAULT_CONFIG = {
     "momentum": True,           # two-finger scrolls keep gliding after a flick
     "webapps": [],              # your own: [{"id", "name", "url"}]
     "pin_after": [],            # hub apps to pin on the home screen once installed
+    "skin": "classic",          # the dashboard's stats look (skins/, or the user's own)
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
 LAYOUTS = ("qwerty", "qwertz", "azerty")
@@ -792,6 +793,32 @@ def _list_apps() -> list[dict]:
 # on the home screen.
 HUB = "/usr/lib/steamos-arm/hub/hub.py"
 _hub_cache: tuple[float, dict] = (0.0, {})
+
+
+# ------------------------------------------------------------- skins ----
+SKIN_DIRS = [(Path(__file__).resolve().parent / "qml" / "skins", True),
+             (Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "steamos-arm" / "skins", False)]
+
+
+def skins() -> list[dict]:
+    """Built-in skins first, then the user's (theirs win on a name clash)."""
+    found: dict[str, dict] = {}
+    for base, builtin in SKIN_DIRS:
+        for d in sorted(base.glob("*")) if base.is_dir() else []:
+            if not (d / "Skin.qml").is_file():
+                continue
+            try:
+                meta = json.loads((d / "skin.json").read_text())
+            except (OSError, ValueError):
+                meta = {}
+            found[d.name] = {"id": d.name, "title": str(meta.get("title") or d.name),
+                             "about": str(meta.get("about") or ""), "builtin": builtin,
+                             "url": (d / "Skin.qml").as_uri(), "folder": str(d)}
+    return list(found.values())
+
+
+def skin_url(name: str) -> str:
+    return next((k["url"] for k in skins() if k["id"] == name), "")
 
 
 def hub(*args: str, timeout: int = 60) -> dict:
@@ -1702,8 +1729,9 @@ class Handler(BaseHTTPRequestHandler):
                 "net": NET.get(),
                 "refresh": refresh_state(),
                 "nav": rows["nav"],
-                "config": {k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
-                           if k not in ("pinned", "per_game", "pin_after")},
+                "config": {**{k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
+                              if k not in ("pinned", "per_game", "pin_after")},
+                           "skin_url": skin_url(cfg.get("skin", "classic"))},
                 "game": GAMES.state(cfg),
                 "toggles": toggles(),
             })
@@ -1728,6 +1756,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"appid": st["appid"], "name": st["name"], "text": notes_get(st["appid"])})
         elif self.path == "/keyboard":
             self.reply(KEYBOARD.state())
+        elif self.path == "/skins":
+            self.reply({"skins": skins(), "user_folder": str(SKIN_DIRS[1][0])})
+            return
         elif self.path == "/hub":
             self.reply(hub_status())
             return

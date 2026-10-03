@@ -654,6 +654,7 @@ DS_OVL="${ROOT}/dualscreen-overlay"
 cp -r --no-preserve=mode,ownership "$DS_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
   "$R/usr/lib/steamos-arm/bottom-screen/qml" \
+  "$R/usr/lib/steamos-arm/bottom-screen/qml/skins" "$R/usr/lib/steamos-arm/bottom-screen/qml/skins/"*/ \
   "$R/usr/lib/steamos-arm/bottom-screen/bottom-screen-session" \
   "$R/usr/lib/steamos-arm/bottom-screen/dashboard" \
   "$R/usr/lib/steamos-arm/bottom-screen/thor-backlightd"
@@ -663,6 +664,8 @@ chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/qmldir" \
   "$R/usr/lib/steamos-arm/bottom-screen/swipetype.py" \
   "$R/usr/share/steamos-arm/bottom-screen/"* \
   "$R/usr/lib/steamos-arm/bottom-screen/qml/"*.qml \
+  "$R/usr/lib/steamos-arm/bottom-screen/qml/skins/README.md" \
+  "$R/usr/lib/steamos-arm/bottom-screen/qml/skins/"*/* \
   "$R/usr/lib/systemd/user/bottom-screen.service" \
   "$R/usr/lib/systemd/system/bottom-screen-bootflag.service" \
   "$R/usr/lib/systemd/system/thor-backlightd.service" \
