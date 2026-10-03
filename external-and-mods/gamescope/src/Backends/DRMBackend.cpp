@@ -11,8 +11,10 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/eventfd.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cassert>
 #include <cinttypes>
 #include <climits>
@@ -772,8 +774,28 @@ static bool have_overlay_planes(struct drm_t *drm)
 }
 
 extern void mangoapp_output_update( uint64_t vblanktime );
+// SteamOS-ARM second screen, the compositor holding the lease: another
+// program can be lent the same lease (an emulator drawing its touch screen on
+// the bottom panel). Meanwhile this gamescope is paused like a VT switch, its
+// flip reader is parked (the lease's event queue is shared, and the events
+// are the other program's), and anything still queued when it comes back is
+// dropped. See drm_lease_holder_yield().
+std::atomic<bool> g_bLeaseYielded{ false };
+static int s_nFlipParkFd = -1;
+static std::mutex s_FlipParkMutex;
+static std::condition_variable s_FlipParkCV;
+static bool s_bFlipParkWanted = false;
+static bool s_bFlipParked = false;
+static std::atomic<const void *> s_pPresentCtxFirst{ nullptr };
+static std::atomic<const void *> s_pPresentCtxLast{ nullptr };
+
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
+	// A flip queued by whoever borrowed the lease: its user data is a pointer
+	// in another process, never ours to touch.
+	if ( data < s_pPresentCtxFirst.load() || data > s_pPresentCtxLast.load() || data == nullptr )
+		return;
+
 	DRMPresentCtx *pCtx = reinterpret_cast<DRMPresentCtx *>( data );
 
 	// Make this const when we move into CDRMBackend.
@@ -819,9 +841,10 @@ void flip_handler_thread_run(void)
 {
 	pthread_setname_np( pthread_self(), "gamescope-kms" );
 
-	// Prepare pollfds: one for DRM fd and one for the pipe read end to
-	// detect when the write end is closed (POLLHUP) to exit.
-	struct pollfd fds[2];
+	// Prepare pollfds: one for DRM fd, one for the pipe read end to detect
+	// when the write end is closed (POLLHUP) to exit, and the park request
+	// (second screen lent out).
+	struct pollfd fds[3];
 	int nfds = 0;
 
 	fds[nfds].fd = g_DRM.fd;
@@ -829,6 +852,10 @@ void flip_handler_thread_run(void)
 	nfds++;
 
 	fds[nfds].fd = g_page_flip_pipe_fds[0];
+	fds[nfds].events = POLLIN;
+	nfds++;
+
+	fds[nfds].fd = s_nFlipParkFd;
 	fds[nfds].events = POLLIN;
 	nfds++;
 
@@ -847,6 +874,21 @@ void flip_handler_thread_run(void)
 			break;
 		}
 
+		if ( fds[2].revents & POLLIN ) {
+			eventfd_t ulDiscard;
+			eventfd_read( s_nFlipParkFd, &ulDiscard );
+			std::unique_lock lock( s_FlipParkMutex );
+			if ( s_bFlipParkWanted )
+			{
+				s_bFlipParked = true;
+				s_FlipParkCV.notify_all();
+				s_FlipParkCV.wait( lock, [] { return !s_bFlipParkWanted; } );
+				s_bFlipParked = false;
+				s_FlipParkCV.notify_all();
+			}
+			continue;
+		}
+
 		if ( (fds[0].revents & POLLIN) ) {
 			drmEventContext evctx = {
 				.version = 3,
@@ -863,6 +905,14 @@ void flip_handler_thread_run(void)
 static const char *s_pszLeaseConnector = getenv( "GAMESCOPE_LEASE_CONNECTOR" );
 static int s_nLeaseFd = -1;
 static uint32_t s_uLeasedConnectorId = 0;
+static uint32_t s_uLeasedCRTCId = 0;
+static uint32_t s_uLeasedPlaneId = 0;
+// Compositors holding the lease (the bottom-screen gamescope), by the socket
+// they got it on, which stays open to ask them to step aside. One program at
+// a time may borrow the lease through drm-lease-v1 (wlserver.cpp).
+static std::mutex s_LeaseMutex;
+static std::vector< int > s_LeaseHolders;
+static bool s_bLeaseLent = false;
 
 static bool is_lease_connector( const drmModeConnector *pConnector )
 {
@@ -1623,10 +1673,18 @@ static void lease_socket_thread( std::string sPath, std::string sConnector )
 		cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
 		memcpy( CMSG_DATA( cmsg ), &s_nLeaseFd, sizeof( int ) );
 		if ( sendmsg( nClient, &msg, MSG_NOSIGNAL ) < 0 )
+		{
 			drm_log.errorf_errno( "lease: sendmsg" );
-		else
-			drm_log.infof( "lease: handed %s to a client", sConnector.c_str() );
-		close( nClient );
+			close( nClient );
+			continue;
+		}
+		drm_log.infof( "lease: handed %s to a client", sConnector.c_str() );
+		// Kept open: the line we ask it to step aside on. A holder that came
+		// up while the panel is lent out steps aside straight away.
+		std::scoped_lock lock( s_LeaseMutex );
+		if ( s_bLeaseLent )
+			send( nClient, "Y", 1, MSG_NOSIGNAL );
+		s_LeaseHolders.push_back( nClient );
 	}
 	close( nListen );
 }
@@ -1787,6 +1845,8 @@ static void create_connector_lease( struct drm_t *drm )
 		s_pszLeaseConnector, uConnectorId, uCRTCId, bExclusive ? "exclusive" : "shared", uPlaneId, uLesseeId );
 
 	s_uLeasedConnectorId = uConnectorId;
+	s_uLeasedCRTCId = uCRTCId;
+	s_uLeasedPlaneId = uPlaneId;
 	drm->planes.erase( planeIter );
 	drm->crtcs.erase( crtcIter );
 	drm->connectors.erase( uConnectorId );
@@ -1796,6 +1856,214 @@ static void create_connector_lease( struct drm_t *drm )
 		std::thread( lease_socket_thread, std::string( pszSocket ), std::string( s_pszLeaseConnector ) ).detach();
 	else
 		drm_log.errorf( "lease: GAMESCOPE_LEASE_SOCKET not set, nobody can pick up %s", s_pszLeaseConnector );
+}
+
+// ---------------------------------------------------------------------------
+// Lending the leased panel to a drm-lease-v1 client (wlserver.cpp serves the
+// protocol). The client gets a dup of the lease the holders already have:
+// leasing the same objects twice is impossible, and revoking the holder's
+// lease would leave it unable to come back. So the holders step aside first
+// ('Y', and they answer 'y' once nothing of theirs can reach the panel), and
+// are told to come back ('R') when the client is done.
+// ---------------------------------------------------------------------------
+static bool lease_wait_reply( int nSock, char cWant, int nTimeoutMs )
+{
+	const uint64_t ulDeadline = get_time_in_nanos() + uint64_t( nTimeoutMs ) * 1'000'000ul;
+	for ( ;; )
+	{
+		const int64_t nLeftMs = ( int64_t( ulDeadline ) - int64_t( get_time_in_nanos() ) ) / 1'000'000;
+		if ( nLeftMs <= 0 )
+			return false;
+		struct pollfd pfd = { .fd = nSock, .events = POLLIN, .revents = 0 };
+		if ( poll( &pfd, 1, int( nLeftMs ) ) <= 0 )
+			continue;
+		char c = 0;
+		ssize_t n = recv( nSock, &c, 1, 0 );
+		if ( n <= 0 )
+			return true;    // the holder is gone: nothing of it can draw any more
+		if ( c == cWant )
+			return true;
+	}
+}
+
+bool drm_lease_offer( std::string *pName, uint32_t *pConnectorId )
+{
+	if ( s_nLeaseFd < 0 || !s_pszLeaseConnector )
+		return false;
+	*pName = s_pszLeaseConnector;
+	*pConnectorId = s_uLeasedConnectorId;
+	return true;
+}
+
+// The protocol hands every client a DRM fd to look at the device with; it
+// must not be a master.
+int drm_lease_enumeration_fd()
+{
+	char *pszNode = drmGetDeviceNameFromFd2( g_DRM.fd );
+	if ( !pszNode )
+		return -1;
+	int fd = open( pszNode, O_RDWR | O_CLOEXEC );
+	free( pszNode );
+	if ( fd >= 0 && drmIsMaster( fd ) )
+		drmDropMaster( fd );
+	return fd;
+}
+
+int drm_lease_lend()
+{
+	std::scoped_lock lock( s_LeaseMutex );
+	if ( s_nLeaseFd < 0 || s_bLeaseLent )
+		return -1;
+
+	std::vector< int > yielded;
+	bool bOk = true;
+	for ( auto it = s_LeaseHolders.begin(); it != s_LeaseHolders.end(); )
+	{
+		if ( send( *it, "Y", 1, MSG_NOSIGNAL ) != 1 )
+		{
+			close( *it );
+			it = s_LeaseHolders.erase( it );
+			continue;
+		}
+		if ( !lease_wait_reply( *it, 'y', 1500 ) )
+		{
+			drm_log.errorf( "lease: a holder did not step aside in time, not lending %s", s_pszLeaseConnector );
+			bOk = false;
+			yielded.push_back( *it );
+			break;
+		}
+		yielded.push_back( *it );
+		++it;
+	}
+	if ( !bOk )
+	{
+		for ( int nSock : yielded )
+			send( nSock, "R", 1, MSG_NOSIGNAL );
+		return -1;
+	}
+
+	int fd = fcntl( s_nLeaseFd, F_DUPFD_CLOEXEC, 0 );
+	if ( fd < 0 )
+	{
+		for ( int nSock : yielded )
+			send( nSock, "R", 1, MSG_NOSIGNAL );
+		return -1;
+	}
+	s_bLeaseLent = true;
+	drm_log.infof( "lease: lent %s to a drm-lease-v1 client (%zu holder(s) stepped aside)", s_pszLeaseConnector, yielded.size() );
+	return fd;
+}
+
+// Switch the panel off from here, the lessor: for when nobody is left to
+// draw on it after a client let go (it would keep the client's last frame).
+static void lease_blank_panel()
+{
+	auto PropId = [&]( uint32_t uObject, uint32_t uType, const char *pszName ) -> uint32_t
+	{
+		drmModeObjectProperties *pProps = drmModeObjectGetProperties( g_DRM.fd, uObject, uType );
+		if ( !pProps )
+			return 0;
+		defer( drmModeFreeObjectProperties( pProps ) );
+		for ( uint32_t i = 0; i < pProps->count_props; i++ )
+		{
+			drmModePropertyRes *pProp = drmModeGetProperty( g_DRM.fd, pProps->props[i] );
+			if ( !pProp )
+				continue;
+			const bool bMatch = strcmp( pProp->name, pszName ) == 0;
+			const uint32_t uId = pProp->prop_id;
+			drmModeFreeProperty( pProp );
+			if ( bMatch )
+				return uId;
+		}
+		return 0;
+	};
+	drmModeAtomicReq *pReq = drmModeAtomicAlloc();
+	if ( !pReq )
+		return;
+	defer( drmModeAtomicFree( pReq ) );
+	struct { uint32_t uObject, uType; const char *pszName; } zeroes[] = {
+		{ s_uLeasedPlaneId, DRM_MODE_OBJECT_PLANE, "FB_ID" },
+		{ s_uLeasedPlaneId, DRM_MODE_OBJECT_PLANE, "CRTC_ID" },
+		{ s_uLeasedConnectorId, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID" },
+		{ s_uLeasedCRTCId, DRM_MODE_OBJECT_CRTC, "ACTIVE" },
+		{ s_uLeasedCRTCId, DRM_MODE_OBJECT_CRTC, "MODE_ID" },
+	};
+	for ( auto &z : zeroes )
+	{
+		if ( uint32_t uProp = PropId( z.uObject, z.uType, z.pszName ) )
+			drmModeAtomicAddProperty( pReq, z.uObject, uProp, 0 );
+	}
+	if ( drmModeAtomicCommit( g_DRM.fd, pReq, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
+		drm_log.errorf_errno( "lease: could not switch %s off", s_pszLeaseConnector );
+}
+
+void drm_lease_take_back()
+{
+	std::scoped_lock lock( s_LeaseMutex );
+	if ( !s_bLeaseLent )
+		return;
+	s_bLeaseLent = false;
+	size_t nBack = 0;
+	for ( auto it = s_LeaseHolders.begin(); it != s_LeaseHolders.end(); )
+	{
+		if ( send( *it, "R", 1, MSG_NOSIGNAL ) != 1 )
+		{
+			close( *it );
+			it = s_LeaseHolders.erase( it );
+			continue;
+		}
+		nBack++;
+		++it;
+	}
+	if ( nBack == 0 )
+		lease_blank_panel();
+	drm_log.infof( "lease: %s is back (%zu holder(s) resuming)", s_pszLeaseConnector, nBack );
+}
+
+// The holder's half, run from wlserver.cpp's lease line thread.
+bool drm_lease_holder_yield()
+{
+	g_bLeaseYielded = true;
+	GetBackend()->DirtyState( false, false );
+
+	// Let flips already queued land, so none of ours is in the air.
+	for ( int i = 0; i < 250 && g_DRM.uPendingFlipCount > 0; i++ )
+		usleep( 2000 );
+
+	if ( s_nFlipParkFd >= 0 )
+	{
+		std::unique_lock lock( s_FlipParkMutex );
+		s_bFlipParkWanted = true;
+		eventfd_write( s_nFlipParkFd, 1 );
+		if ( !s_FlipParkCV.wait_for( lock, std::chrono::milliseconds( 500 ), [] { return s_bFlipParked; } ) )
+			drm_log.errorf( "lease: flip reader did not park" );
+	}
+	drm_log.infof( "lease: stepped aside for another program" );
+	return true;
+}
+
+void drm_lease_holder_resume()
+{
+	// Whatever the borrower left in the shared event queue is not ours.
+	drmEventContext evctx = { .version = 3, .page_flip_handler2 = []( int, unsigned, unsigned, unsigned, unsigned, void * ) {} };
+	for ( ;; )
+	{
+		struct pollfd pfd = { .fd = g_DRM.fd, .events = POLLIN, .revents = 0 };
+		if ( poll( &pfd, 1, 0 ) <= 0 )
+			break;
+		drmHandleEvent( g_DRM.fd, &evctx );
+	}
+	{
+		std::unique_lock lock( s_FlipParkMutex );
+		s_bFlipParkWanted = false;
+		s_FlipParkCV.notify_all();
+		s_FlipParkCV.wait_for( lock, std::chrono::milliseconds( 200 ), [] { return !s_bFlipParked; } );
+	}
+	g_bLeaseYielded = false;
+	// The borrower left its own mode and planes on the panel.
+	GetBackend()->DirtyState( true, true );
+	nudge_steamcompmgr();
+	drm_log.infof( "lease: back on the panel" );
 }
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
@@ -2011,6 +2279,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		drm_log.errorf_errno( "page-flip pipe creation failed" );
 		return false;
 	}
+	s_nFlipParkFd = eventfd( 0, EFD_CLOEXEC | EFD_NONBLOCK );
 
 	g_page_flip_handler_thread = std::thread( flip_handler_thread_run );
 
@@ -4789,6 +5058,14 @@ namespace gamescope
 
 			defer( if ( drm->req != nullptr ) { drmModeAtomicFree( drm->req ); drm->req = nullptr; } );
 
+			// The panel is lent out (second screen): like a VT switch.
+			if ( g_bLeaseYielded )
+			{
+				drm_rollback( drm );
+				drm->m_FbIdsInRequest.clear();
+				return -EACCES;
+			}
+
 			bool isPageFlip = drm->flags & DRM_MODE_PAGE_FLIP_EVENT;
 			uint32_t uNewPendingFlipCount = 0;
 
@@ -4808,6 +5085,8 @@ namespace gamescope
 
 			uint32_t uCurrentPresentCtx = m_uNextPresentCtx;
 			m_uNextPresentCtx = ( m_uNextPresentCtx + 1 ) % 3;
+			s_pPresentCtxFirst = &m_PresentCtxs[0];
+			s_pPresentCtxLast = &m_PresentCtxs[2];
 			m_PresentCtxs[uCurrentPresentCtx].ulPendingFlipCount = g_DRM.pConnector->PresentationFeedback().m_uQueuedPresents;
 
 			drm_log.debugf("flip commit %" PRIu64, (uint64_t)g_DRM.pConnector->PresentationFeedback().m_uQueuedPresents);

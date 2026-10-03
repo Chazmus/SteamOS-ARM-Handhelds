@@ -657,7 +657,8 @@ chmod 0755 "$R/usr/lib/steamos-arm" "$R/usr/lib/steamos-arm/bottom-screen" \
   "$R/usr/lib/steamos-arm/bottom-screen/bottom-screen-session" \
   "$R/usr/lib/steamos-arm/bottom-screen/dashboard" \
   "$R/usr/lib/steamos-arm/bottom-screen/thor-backlightd"
-chmod 0755 "$R/usr/share/steamos-arm" "$R/usr/share/steamos-arm/bottom-screen"
+chmod 0755 "$R/usr/share/steamos-arm" "$R/usr/share/steamos-arm/bottom-screen" "$R/usr/share/steamos-arm/features"
+chmod 0644 "$R/usr/share/steamos-arm/features/"*
 chmod 0644 "$R/usr/lib/steamos-arm/bottom-screen/qml/qmldir" \
   "$R/usr/lib/steamos-arm/bottom-screen/swipetype.py" \
   "$R/usr/share/steamos-arm/bottom-screen/"* \

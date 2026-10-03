@@ -64,6 +64,10 @@
 #include "gamescope-swapchain-protocol.h"
 #include "presentation-time-protocol.h"
 #include "wlr-gamma-control-unstable-v1-protocol.h"
+#include "drm-lease-v1-protocol.h"
+
+#include <atomic>
+#include <thread>
 
 #include "wlserver.hpp"
 #include "hdmi.h"
@@ -1794,9 +1798,12 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
 ///////////////////////
 
 #if HAVE_SESSION
+extern std::atomic<bool> g_bLeaseYielded;
+
 bool wlsession_active()
 {
-	return wlserver.wlr.session->active;
+	// Lent the second screen to another program: off, like another VT.
+	return wlserver.wlr.session->active && !g_bLeaseYielded;
 }
 
 static void handle_session_active( struct wl_listener *listener, void *data )
@@ -1933,6 +1940,158 @@ static bool create_night_gamma_control()
 	return true;
 }
 
+// ---------------------------------------------------------------------------
+// SteamOS-ARM second screen: drm-lease-v1 for the panel this gamescope leases
+// out (GAMESCOPE_LEASE_CONNECTOR). A program that wants to draw on it (the
+// DS and 3DS emulators' touch screen on the Thor's bottom panel) asks here;
+// the bottom-screen gamescope steps aside while it has it and comes back
+// when it lets go or quits. DRMBackend.cpp does the lending.
+// ---------------------------------------------------------------------------
+bool drm_lease_offer( std::string *pName, uint32_t *pConnectorId );
+int drm_lease_enumeration_fd();
+int drm_lease_lend();
+void drm_lease_take_back();
+
+struct LeaseRequest
+{
+	bool bWantsOurPanel = false;
+	bool bBad = false;
+};
+static wl_resource *s_pLentTo = nullptr;    // the wp_drm_lease_v1 holding the panel
+
+static void drm_lease_connector_destroy( wl_client *, wl_resource *pResource ) { wl_resource_destroy( pResource ); }
+static const struct wp_drm_lease_connector_v1_interface drm_lease_connector_impl = {
+	.destroy = drm_lease_connector_destroy,
+};
+
+static void drm_lease_end( wl_resource *pResource )
+{
+	if ( pResource && pResource == s_pLentTo )
+	{
+		s_pLentTo = nullptr;
+		drm_lease_take_back();
+	}
+}
+static void drm_lease_destroy( wl_client *, wl_resource *pResource ) { wl_resource_destroy( pResource ); }
+static const struct wp_drm_lease_v1_interface drm_lease_impl = {
+	.destroy = drm_lease_destroy,
+};
+
+static void drm_lease_request_connector( wl_client *, wl_resource *pResource, wl_resource *pConnector )
+{
+	LeaseRequest *pReq = (LeaseRequest *) wl_resource_get_user_data( pResource );
+	if ( pReq->bWantsOurPanel )
+	{
+		wl_resource_post_error( pResource, WP_DRM_LEASE_REQUEST_V1_ERROR_DUPLICATE_CONNECTOR, "connector requested twice" );
+		pReq->bBad = true;
+		return;
+	}
+	pReq->bWantsOurPanel = pConnector != nullptr;
+}
+static void drm_lease_request_submit( wl_client *pClient, wl_resource *pResource, uint32_t uId )
+{
+	LeaseRequest *pReq = (LeaseRequest *) wl_resource_get_user_data( pResource );
+	wl_resource *pLease = wl_resource_create( pClient, &wp_drm_lease_v1_interface, wl_resource_get_version( pResource ), uId );
+	if ( !pLease )
+	{
+		wl_client_post_no_memory( pClient );
+		wl_resource_destroy( pResource );
+		return;
+	}
+	wl_resource_set_implementation( pLease, &drm_lease_impl, nullptr, drm_lease_end );
+
+	if ( !pReq->bWantsOurPanel && !pReq->bBad )
+		wl_resource_post_error( pResource, WP_DRM_LEASE_REQUEST_V1_ERROR_EMPTY_LEASE, "no connector requested" );
+	else if ( pReq->bBad || s_pLentTo )
+		wp_drm_lease_v1_send_finished( pLease );           // already lent out
+	else
+	{
+		int fd = drm_lease_lend();
+		if ( fd < 0 )
+			wp_drm_lease_v1_send_finished( pLease );
+		else
+		{
+			s_pLentTo = pLease;
+			wp_drm_lease_v1_send_lease_fd( pLease, fd );
+			close( fd );
+			wl_log.infof( "drm-lease: second screen lent to pid %d", [&] { pid_t p; wl_client_get_credentials( pClient, &p, nullptr, nullptr ); return p; }() );
+		}
+	}
+	wl_resource_destroy( pResource );    // submit consumes the request
+}
+static const struct wp_drm_lease_request_v1_interface drm_lease_request_impl = {
+	.request_connector = drm_lease_request_connector,
+	.submit = drm_lease_request_submit,
+};
+static void drm_lease_request_free( wl_resource *pResource )
+{
+	delete (LeaseRequest *) wl_resource_get_user_data( pResource );
+}
+
+static void drm_lease_device_create_request( wl_client *pClient, wl_resource *pResource, uint32_t uId )
+{
+	wl_resource *pReq = wl_resource_create( pClient, &wp_drm_lease_request_v1_interface, wl_resource_get_version( pResource ), uId );
+	if ( !pReq )
+	{
+		wl_client_post_no_memory( pClient );
+		return;
+	}
+	wl_resource_set_implementation( pReq, &drm_lease_request_impl, new LeaseRequest, drm_lease_request_free );
+}
+static void drm_lease_device_release( wl_client *, wl_resource *pResource )
+{
+	wp_drm_lease_device_v1_send_released( pResource );
+	wl_resource_destroy( pResource );
+}
+static const struct wp_drm_lease_device_v1_interface drm_lease_device_impl = {
+	.create_lease_request = drm_lease_device_create_request,
+	.release = drm_lease_device_release,
+};
+
+static void drm_lease_device_bind( wl_client *pClient, void *, uint32_t uVersion, uint32_t uId )
+{
+	wl_resource *pDevice = wl_resource_create( pClient, &wp_drm_lease_device_v1_interface, uVersion, uId );
+	if ( !pDevice )
+	{
+		wl_client_post_no_memory( pClient );
+		return;
+	}
+	wl_resource_set_implementation( pDevice, &drm_lease_device_impl, nullptr, nullptr );
+
+	int fd = drm_lease_enumeration_fd();
+	if ( fd >= 0 )
+	{
+		wp_drm_lease_device_v1_send_drm_fd( pDevice, fd );
+		close( fd );
+	}
+	std::string sName;
+	uint32_t uConnectorId = 0;
+	if ( drm_lease_offer( &sName, &uConnectorId ) )
+	{
+		wl_resource *pConnector = wl_resource_create( pClient, &wp_drm_lease_connector_v1_interface, uVersion, 0 );
+		if ( pConnector )
+		{
+			wl_resource_set_implementation( pConnector, &drm_lease_connector_impl, nullptr, nullptr );
+			wp_drm_lease_device_v1_send_connector( pDevice, pConnector );
+			wp_drm_lease_connector_v1_send_name( pConnector, sName.c_str() );
+			wp_drm_lease_connector_v1_send_description( pConnector, "Second screen" );
+			wp_drm_lease_connector_v1_send_connector_id( pConnector, uConnectorId );
+			wp_drm_lease_connector_v1_send_done( pConnector );
+		}
+	}
+	wp_drm_lease_device_v1_send_done( pDevice );
+}
+
+static void create_drm_lease_device()
+{
+	std::string sName;
+	uint32_t uConnectorId = 0;
+	if ( !drm_lease_offer( &sName, &uConnectorId ) )
+		return;
+	if ( wl_global_create( wlserver.display, &wp_drm_lease_device_v1_interface, 1, nullptr, drm_lease_device_bind ) )
+		wl_log.infof( "drm-lease: offering %s to programs that ask for it", sName.c_str() );
+}
+
 void wlserver_set_output_info( const wlserver_output_info *info )
 {
 	free(wlserver.output_info.description);
@@ -2042,6 +2201,34 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 // DRM master for that panel; no session device to open.
 static int s_nLeaseKmsFd = -1;
 
+bool drm_lease_holder_yield();
+void drm_lease_holder_resume();
+
+static void lease_line_thread( int nSock )
+{
+	pthread_setname_np( pthread_self(), "gamescope-lease" );
+	for ( ;; )
+	{
+		char c = 0;
+		ssize_t n = recv( nSock, &c, 1, 0 );
+		if ( n < 0 && errno == EINTR )
+			continue;
+		if ( n <= 0 )
+			break;          // the main gamescope is gone; the session is ending
+		if ( c == 'Y' )
+		{
+			drm_lease_holder_yield();
+			send( nSock, "y", 1, MSG_NOSIGNAL );
+		}
+		else if ( c == 'R' )
+		{
+			drm_lease_holder_resume();
+			send( nSock, "r", 1, MSG_NOSIGNAL );
+		}
+	}
+	close( nSock );
+}
+
 static int wlsession_receive_lease( const char *pszSocket )
 {
 	for ( int nTry = 0; nTry < 150; nTry++ )  // up to ~30 s: the main gamescope may still be starting
@@ -2063,15 +2250,18 @@ static int wlsession_receive_lease( const char *pszSocket )
 			msg.msg_control = control;
 			msg.msg_controllen = sizeof( control );
 			ssize_t n = recvmsg( nSock, &msg, MSG_CMSG_CLOEXEC );
-			close( nSock );
 			struct cmsghdr *cmsg = n > 0 ? CMSG_FIRSTHDR( &msg ) : nullptr;
 			if ( cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS )
 			{
 				int fd = -1;
 				memcpy( &fd, CMSG_DATA( cmsg ), sizeof( int ) );
 				wl_log.infof( "Got a DRM lease for %s from %s", szConnector, pszSocket );
+				// The socket stays open: the main gamescope asks us on it to
+				// step aside while another program borrows the panel.
+				std::thread( lease_line_thread, nSock ).detach();
 				return fd;
 			}
+			close( nSock );
 			wl_log.errorf( "Lease socket %s sent no fd", pszSocket );
 			return -1;
 		}
@@ -2530,6 +2720,8 @@ bool wlserver_init( void ) {
 	create_gamescope_private();
 
 	create_presentation_time();
+
+	create_drm_lease_device();
 
 	if ( !create_night_gamma_control() )
 		wl_log.errorf( "Failed to create wlr-gamma-control-v1" );

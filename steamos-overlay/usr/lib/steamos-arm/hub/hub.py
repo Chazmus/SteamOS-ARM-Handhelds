@@ -129,7 +129,8 @@ def device() -> dict:
     chip = next((c for c in CHIPS if f"qcom,{c}" in compat or c in compat), "")
     if not chip and "qcs8550" in compat:
         chip = "sm8550"
-    dual = "ayn,thor" in compat
+    # A second panel this session: Game Mode wrote bottom-screen.env for it.
+    dual = bool(bottom_env()) or "ayn,thor" in compat
     lease = dual and Path("/usr/share/steamos-arm/features/drm-lease").exists()
     return {
         "chip": chip or "unknown",
@@ -711,16 +712,29 @@ def write_launcher(e: dict, rec: dict) -> None:
     os.chmod(p, 0o755)
 
 
+def bottom_env() -> dict:
+    """What Game Mode wrote about the second panel (gamescope-session)."""
+    path = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "bottom-screen.env"
+    out = {}
+    try:
+        for line in path.read_text().splitlines():
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip("'\"").replace("\\,", ",")
+    except OSError:
+        pass
+    return out
+
+
 def bottom_touch_name() -> str:
-    """The bottom panel's touchscreen, from the bottom screen session's list."""
-    for env in ("/run/steamos-arm/bottom-touch", "/etc/steamos-arm/bottom-touch"):
-        name = rd(env)
-        if name:
-            return name
-    for ev in glob.glob("/sys/class/input/event*/device/name"):
-        n = rd(ev)
-        if "bottom" in n.lower() and "touch" in n.lower():
-            return n
+    """The evdev name of the bottom panel's touchscreen. The session lists it
+    as names or path:<part of the sysfs path>; the emulators want the name."""
+    want = [w for w in bottom_env().get("BOTTOM_TOUCH", "").split(",") if w and w != "none"]
+    for ev in sorted(glob.glob("/sys/class/input/event*")):
+        name = rd(f"{ev}/device/name")
+        syspath = os.path.realpath(f"{ev}/device")
+        for w in want:
+            if (w.startswith("path:") and w[5:] in syspath) or w == name:
+                return name
     return ""
 
 
@@ -737,7 +751,6 @@ def run(app_id: str, args: list[str]) -> None:
         touch = bottom_touch_name()
         if touch:
             env.setdefault("MELONDS_DRM_LEASE_TOUCH", touch)
-            env.setdefault("AZAHAR_DRM_LEASE_TOUCH", touch)
     if rec["how"] == "file":
         cmd = [str(APPS / rec["file"])]
         # Without FUSE an AppImage can still unpack itself and run.
