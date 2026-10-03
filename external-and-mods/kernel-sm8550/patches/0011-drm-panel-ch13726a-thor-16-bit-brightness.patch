@@ -4,7 +4,7 @@ Subject: drm/panel: ch13726a: 16-bit brightness on the AYN Thor's bottom panel
 The Thor's bottom AMOLED reads its brightness as a 16-bit value, high byte
 first. The driver sent one byte over 0-255, so level n arrived as n * 256 and
 the screen barely dimmed. On ch13726a,thor use the 16-bit DCS command over
-0-4095 (no visible change above that). Other ch13726a panels are unchanged.
+the panel's full 0-65535 range. Other ch13726a panels are unchanged.
 
 ---
 --- a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
@@ -26,15 +26,16 @@ the screen barely dimmed. On ch13726a,thor use the 16-bit DCS command over
  	if (ret < 0)
  		return ret;
  
-@@ -220,10 +228,15 @@
+@@ -220,10 +228,16 @@
  ch13726a_create_backlight(struct mipi_dsi_device *dsi)
  {
  	struct device *dev = &dsi->dev;
 +	/*
-+	 * Thor: 0-4095 over the 16-bit command. The panel shows no difference
-+	 * above ~4095, so a wider range would leave most of a slider unused.
++	 * Thor: the full 16-bit range. Capping it at 4095 left the bottom
++	 * screen far dimmer than the top at maximum; the low end stays usable
++	 * through thor-backlightd's curve.
 +	 */
-+	int max = of_device_is_compatible(dev->of_node, "ch13726a,thor") ? 4095 : 255;
++	int max = of_device_is_compatible(dev->of_node, "ch13726a,thor") ? 65535 : 255;
  	const struct backlight_properties props = {
  		.type = BACKLIGHT_RAW,
 -		.brightness = 255,
