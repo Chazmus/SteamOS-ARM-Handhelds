@@ -118,8 +118,10 @@ Item {
             }
 
             // --------------------------------------------- Steam buttons --
+            // (Game Mode only: in Desktop Mode Steam isn't running.)
             GridLayout {
                 Layout.fillWidth: true
+                visible: !dash.st.desktop
                 columns: 4
                 columnSpacing: 16 * Ui.s
                 Repeater {

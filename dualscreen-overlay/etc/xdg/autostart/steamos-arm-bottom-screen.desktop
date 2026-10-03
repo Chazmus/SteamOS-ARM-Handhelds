@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bottom screen
+Comment=Home screen, dashboard and touchpad on the second panel
+Exec=/usr/lib/steamos-arm/bottom-screen/bottom-screen-desktop
+Icon=video-display
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true

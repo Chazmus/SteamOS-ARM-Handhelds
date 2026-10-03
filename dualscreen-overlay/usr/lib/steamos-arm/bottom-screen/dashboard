@@ -874,8 +874,121 @@ def app_by_id(app_id: str) -> dict | None:
     return next((a for a in list_apps() if a["id"] == app_id), None)
 
 
+# ------------------------------------------------------- Desktop Mode ----
+# In Desktop Mode there is no second gamescope: KWin drives both panels. The
+# same UI runs as a window that a KWin script keeps full screen on the lower
+# panel, apps opened from it are placed there too, and Plasma's own keyboard
+# does the typing (text-input), so our keyboard overlay stays off.
+DESKTOP = os.environ.get("BOTTOM_DESKTOP") == "1"
+BOTTOM_OUTPUT = os.environ.get("BOTTOM_OUTPUT", "")
+_kwin_serial = 0
+
+
+def kwin_script(js: str, keep_s: float = 0) -> bool:
+    """Run JavaScript in KWin (its scripting D-Bus API). keep_s > 0 unloads
+    it after that long; 0 leaves it loaded for the session."""
+    global _kwin_serial
+    _kwin_serial += 1
+    name = f"steamos-arm-bottom-{os.getpid()}-{_kwin_serial}"
+    path = RUNTIME / f"{name}.js"
+    path.write_text(js)
+    out = run("gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/Scripting",
+              "--method", "org.kde.kwin.Scripting.loadScript", str(path), name, timeout=10)
+    m = re.search(r"\((-?\d+),\)", out)
+    if not m or int(m.group(1)) < 0:
+        log(f"kwin: could not load a script ({out.strip()})")
+        return False
+    run("gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", f"/Scripting/Script{m.group(1)}",
+        "--method", "org.kde.kwin.Script.run", timeout=10)
+    if keep_s > 0:
+        def unload():
+            time.sleep(keep_s)
+            run("gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/Scripting",
+                "--method", "org.kde.kwin.Scripting.unloadScript", name, timeout=10)
+            path.unlink(missing_ok=True)
+        threading.Thread(target=unload, daemon=True).start()
+    return True
+
+
+KWIN_COMMON = """
+const OUT = %(out)s, TITLE = %(title)s;
+function lowerPanel() {
+    for (const o of workspace.screens) if (o.name === OUT) return o;
+    return null;
+}
+"""
+
+
+def kwin_pin_panel() -> None:
+    """Keep this UI's window full screen on the lower panel, out of the task
+    bar and the window switcher, for the whole session."""
+    kwin_script(KWIN_COMMON % {"out": json.dumps(BOTTOM_OUTPUT), "title": json.dumps(WINDOW_TITLE)} + """
+function pin(w) {
+    if (!w || w.caption !== TITLE) return;
+    const o = lowerPanel();
+    if (o && w.output !== o) workspace.sendClientToScreen(w, o);
+    w.noBorder = true;
+    w.skipTaskbar = true;
+    w.skipPager = true;
+    w.skipSwitcher = true;
+    w.fullScreen = true;
+}
+function watch(w) {
+    pin(w);
+    w.captionChanged.connect(function () { pin(w); });
+}
+workspace.windowList().forEach(watch);
+workspace.windowAdded.connect(watch);
+""")
+
+
+def kwin_window_js(want: dict, action: str) -> str:
+    """A script finding an app's window (desktop file name, pid or caption)."""
+    return KWIN_COMMON % {"out": json.dumps(BOTTOM_OUTPUT), "title": json.dumps(WINDOW_TITLE)} + """
+const WANT = %s;
+function mine(w) {
+    return w && w.normalWindow && w.caption !== TITLE &&
+        ((WANT.app && w.desktopFileName === WANT.app) || (WANT.pids && WANT.pids.indexOf(w.pid) >= 0) ||
+         (WANT.caption && w.caption === WANT.caption));
+}
+function bring(w) {
+    const o = lowerPanel();
+    if (o && w.output !== o) workspace.sendClientToScreen(w, o);
+    if (w.minimized) w.minimized = false;
+    workspace.activeWindow = w;
+}
+%s
+""" % (json.dumps(want), action)
+
+
+def kwin_place_next(want: dict) -> None:
+    """The app's first window goes to the lower panel, maximised."""
+    kwin_script(kwin_window_js(want, """
+let placed = false;
+function place(w) {
+    if (placed || !mine(w)) return;
+    placed = true;
+    bring(w);
+    w.setMaximize(true, true);
+}
+workspace.windowAdded.connect(place);
+"""), keep_s=60)
+
+
+def kwin_raise(want: dict) -> None:
+    kwin_script(kwin_window_js(want, """
+for (const w of workspace.windowList()) if (mine(w)) { bring(w); break; }
+"""), keep_s=5)
+
+
+def kwin_show_panel() -> None:
+    kwin_script(KWIN_COMMON % {"out": json.dumps(BOTTOM_OUTPUT), "title": json.dumps(WINDOW_TITLE)} + """
+for (const w of workspace.windowList()) if (w.caption === TITLE) { w.minimized = false; workspace.activeWindow = w; }
+""", keep_s=5)
+
+
 class Apps:
-    """Apps started on the bottom panel and their X11 windows."""
+    """Apps started on the bottom panel and their windows."""
 
     def __init__(self):
         self.procs: dict[str, subprocess.Popen] = {}
@@ -902,10 +1015,14 @@ class Apps:
                 # Same as the UI: EGL straight on the GPU, the KDE theme.
                 env.update(QT_XCB_GL_INTEGRATION="xcb_egl", DISABLE_GAMESCOPE_WSI="1",
                            QT_QPA_PLATFORMTHEME="kde", XDG_CURRENT_DESKTOP="KDE")
-            # Plain X11 on the bottom gamescope's Xwayland, never the Game Mode one.
-            env.update(QT_QPA_PLATFORM="xcb", GDK_BACKEND="x11", SDL_VIDEODRIVER="x11",
-                       MOZ_ENABLE_WAYLAND="0", ELECTRON_OZONE_PLATFORM_HINT="x11")
-            env.pop("WAYLAND_DISPLAY", None)
+            if DESKTOP:
+                # KWin's own Wayland, like any desktop app; KWin places it.
+                env.pop("QT_QPA_PLATFORM", None)
+            else:
+                # Plain X11 on the bottom gamescope's Xwayland, never the Game Mode one.
+                env.update(QT_QPA_PLATFORM="xcb", GDK_BACKEND="x11", SDL_VIDEODRIVER="x11",
+                           MOZ_ENABLE_WAYLAND="0", ELECTRON_OZONE_PLATFORM_HINT="x11")
+                env.pop("WAYLAND_DISPLAY", None)
             # Accessibility on for this app only, so the keyboard sees its text
             # fields (GTK/Firefox, Qt). Flatpak apps take it through --env.
             a11y = {"GNOME_ACCESSIBILITY": "1", "QT_ACCESSIBILITY": "1",
@@ -925,6 +1042,9 @@ class Apps:
                 log(f"launch {app_id}: {exc}")
                 return False
             log(f"launched {app_id} ({argv[0]})")
+            if DESKTOP:
+                kwin_place_next({"app": self.flatpak.get(app_id) or app_id, "pids": [self.procs[app_id].pid],
+                                 "caption": target[0] if app_id.startswith("web:") else ""})
             set_base_window(None)       # newest window gets the screen
             NAV.app_in_front(app_id)
             return True
@@ -1003,6 +1123,8 @@ def set_base_window(wid: str | None, dashboard: bool = False) -> None:
         DASHBOARD_SHOWN.set()
     else:
         DASHBOARD_SHOWN.clear()
+    if DESKTOP:
+        return                      # KWin stacks the windows there
     if wid:
         run("xprop", "-root", "-f", "GAMESCOPECTRL_BASELAYER_WINDOW", "32c",
             "-set", "GAMESCOPECTRL_BASELAYER_WINDOW", str(int(wid, 16)))
@@ -1011,6 +1133,10 @@ def set_base_window(wid: str | None, dashboard: bool = False) -> None:
 
 
 def show_dashboard() -> None:
+    if DESKTOP:
+        DASHBOARD_SHOWN.set()
+        kwin_show_panel()
+        return
     KEYBOARD.set(False)
     for wid, title in toplevel_windows():
         if title == WINDOW_TITLE:
@@ -1020,6 +1146,13 @@ def show_dashboard() -> None:
 
 def focus_app(app_id: str, apps: Apps) -> bool:
     pids = apps.pids(app_id)
+    if DESKTOP:
+        if not pids:
+            return False
+        kwin_raise({"app": apps.flatpak.get(app_id) or app_id, "pids": sorted(pids)})
+        set_base_window(None)
+        NAV.app_in_front(app_id)
+        return True
     for wid, title in toplevel_windows():
         if title and title != WINDOW_TITLE and window_pid(wid) in pids:
             set_base_window(wid)
@@ -1098,6 +1231,7 @@ class Nav:
 
 
 NAV = Nav()
+PAGES = ("home", "dash", "pad", "keys", "settings", "apps", "notes", "newweb", "hub", "skins")
 DASH_TOGGLE = RUNTIME / "bottom-screen.dash"
 
 
@@ -1734,6 +1868,7 @@ class Handler(BaseHTTPRequestHandler):
                            "skin_url": skin_url(cfg.get("skin", "classic"))},
                 "game": GAMES.state(cfg),
                 "toggles": toggles(),
+                "desktop": DESKTOP,
             })
         elif self.path == "/nav":
             # Cheap: the UI polls this a few times a second (the AYN button).
@@ -1867,10 +2002,15 @@ class Handler(BaseHTTPRequestHandler):
             NAV.home()
         elif path == ["nav"]:
             page = str(b.get("page", ""))
-            if page in ("home", "dash", "pad", "keys", "settings", "apps"):
+            if page in PAGES:
                 NAV.ui_page(page)
             else:
                 ok = False
+        elif path == ["show"]:
+            # From outside (the Desktop Mode launcher run again): bring the
+            # window forward on that page.
+            page = str(b.get("page", "home"))
+            NAV.show(page if page in PAGES else "home")
         elif path == ["dash-done"]:
             NAV.back_from_dash()
         elif path == ["notes"]:
@@ -1960,6 +2100,11 @@ def main() -> int:
                QML_XHR_ALLOW_FILE_READ="1", QT_QPA_PLATFORMTHEME="kde",
                XDG_CURRENT_DESKTOP="KDE")
     env.pop("WAYLAND_DISPLAY", None)
+    if DESKTOP:
+        env = dict(os.environ, QT_QUICK_CONTROLS_MOBILE="1", QML_XHR_ALLOW_FILE_READ="1",
+                   QT_QPA_PLATFORMTHEME="kde", XDG_CURRENT_DESKTOP="KDE")
+        env.pop("QT_QPA_PLATFORM", None)
+        threading.Thread(target=kwin_pin_panel, daemon=True).start()
 
     def keep_running(qml: Path, name: str, after_start=None) -> None:
         while True:
@@ -1972,6 +2117,10 @@ def main() -> int:
                 log(f"{name} exited right away ({rc}), retrying in 5 s")
                 time.sleep(5)
 
+    if DESKTOP:
+        log(f"Desktop Mode: the UI goes on {BOTTOM_OUTPUT or 'the second panel'}, Plasma types")
+        keep_running(QML, "UI")
+        return 0
     # The keyboard first, so it is an overlay before the dashboard maps.
     threading.Thread(target=keep_running, args=(QML.parent / "Keyboard.qml", "keyboard", KEYBOARD.adopt),
                      daemon=True).start()

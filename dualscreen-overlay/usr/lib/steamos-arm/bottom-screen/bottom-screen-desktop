@@ -1,0 +1,43 @@
+#!/bin/bash
+# The bottom screen in Desktop Mode (Plasma on Wayland): the same home screen,
+# dashboard, touchpad, notes and Emulator Hub as in Game Mode, as a window
+# KWin keeps on the lower panel (the dashboard sets that up with a KWin
+# script). Started with Plasma by its autostart entry; run again, it brings
+# the window forward.
+set -u
+CONFIG="$HOME/.config/steamos-arm/bottom-screen.json"
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/bottom-screen-desktop.lock"
+
+# Off in its settings, or for this boot ("nobottomscreen" on BOOT).
+if [[ -e /run/steamos-arm/bottom-screen-off ]] ||
+   python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled") is False else 1)' "$CONFIG" 2>/dev/null; then
+  echo "bottom-screen-desktop: switched off"
+  exit 0
+fi
+
+# The second panel: the smaller of two connected DSI panels (the larger one
+# is the main screen, as in gamescope-session).
+mapfile -t panels < <(for c in /sys/class/drm/card*-DSI-*; do
+  [[ "$(cat "$c/status" 2>/dev/null)" == connected ]] || continue
+  m="$(head -1 "$c/modes" 2>/dev/null)"
+  [[ "$m" =~ ^([0-9]+)x([0-9]+) ]] || continue
+  echo "$(( BASH_REMATCH[1] * BASH_REMATCH[2] )) ${c##*-DSI-}"
+done | sort -n)
+if (( ${#panels[@]} < 2 )); then
+  echo "bottom-screen-desktop: one panel, nothing to do"
+  exit 0
+fi
+export BOTTOM_OUTPUT="DSI-${panels[0]#* }"
+export BOTTOM_DESKTOP=1
+
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  # Already running: just bring it forward.
+  api="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "${XDG_RUNTIME_DIR}/bottom-screen.api" 2>/dev/null)"
+  token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "${XDG_RUNTIME_DIR}/bottom-screen.api" 2>/dev/null)"
+  [[ -n "$api" ]] && curl -fs -X POST -H "X-Token: $token" -H "Content-Type: application/json" \
+    -d '{"page":"home"}' "$api/show" >/dev/null
+  exit 0
+fi
+echo "bottom-screen-desktop: on $BOTTOM_OUTPUT"
+exec /usr/lib/steamos-arm/bottom-screen/dashboard
