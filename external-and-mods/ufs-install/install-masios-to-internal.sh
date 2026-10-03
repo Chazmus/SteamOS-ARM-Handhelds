@@ -173,8 +173,12 @@ if (( ! RESUME )); then
     || die "Android size must be ${P_ANDROID_MIN_GIB}..${P_ANDROID_MAX_GIB} GiB"
   PLAN="$("${PART[@]}" apply --disk "$DISK" --storage-gib "$STORAGE_GB" \
           --android-gib "$ANDROID_GB" --expect "$P_TABLE_FINGERPRINT" \
-          --backup-dir "$BACKUP_DIR" --dry-run | sed -n '1,4p')"
+          --backup-dir "$BACKUP_DIR" --dry-run | sed '/^--- new table/,$d')"
+  # The plan is every line before the table dump. Counting them (1,4p) lost
+  # HOME once the metadata line was added, and every fresh install then
+  # stopped with "doesn't fit HOME (0 GiB)".
   home_size=$(awk '/^HOME/ {print $5}' <<<"$PLAN")
+  [[ "$home_size" =~ ^[0-9]+$ ]] || die "could not read the HOME size from the plan"
   home_size=$(( home_size * P_SECTOR_SIZE ))
 else
   home_size=$(blockdev --getsize64 "$(part_of HOME)")
