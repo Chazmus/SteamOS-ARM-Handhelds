@@ -284,4 +284,23 @@ mapping:
     gamepad:
       trigger:
         name: RightTrigger
+# The volume wheel/keys come in on the extra-keys device's keyboard interface
+# (1c4f:0002 input1). InputPlumber grabs it, so pass them on to its keyboard,
+# which sm8550-volume-keys reads (the DMG's volume wheel did nothing).
+- name: Volume Up
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_VOLUMEUP
+      value_type: button
+  target_event:
+    keyboard: KeyVolumeUp
+- name: Volume Down
+  source_events:
+  - evdev:
+      event_type: KEY
+      event_code: KEY_VOLUMEDOWN
+      value_type: button
+  target_event:
+    keyboard: KeyVolumeDown
 filtered_events: []
