@@ -70,7 +70,9 @@ set_default() {
   # device.routes.default-sink-volume never reaches them. Once per output;
   # after that the user's own volume stays as it is.
   local mark="${XDG_STATE_HOME:-$HOME/.local/state}/steamos-arm/first-volume-${sink//[^A-Za-z0-9._-]/_}"
-  if [[ ! -e "$mark" ]]; then
+  if restore_volume "$sink"; then
+    : >"$mark" 2>/dev/null
+  elif [[ ! -e "$mark" ]]; then
     pactl_ok set-sink-volume "$sink" 25% && mkdir -p "${mark%/*}" && : >"$mark" \
       && log "first boot: ${sink} at 25%"
   fi
@@ -78,6 +80,37 @@ set_default() {
     [[ -n "${idx:-}" ]] || continue
     pactl_ok move-sink-input "$idx" "$sink"
   done < <(pactl_ok list short sink-inputs | awk '{print $1}')
+}
+
+# Volume across hard power-offs. The pro-audio outputs have no routes, so
+# WirePlumber only keeps their volume in its stream state, which a power-off
+# seconds after a change can lose (the Thor came back at 100%). Each output's
+# last volume and mute are saved here, synced to disk, and put back when that
+# output becomes the default.
+VOL_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/steamos-arm/volume"
+vol_file() { echo "$VOL_DIR/${1//[^A-Za-z0-9._-]/_}"; }
+restore_volume() {
+  local sink="$1" f vol mute
+  f="$(vol_file "$sink")"
+  [[ -r "$f" ]] || return 1
+  read -r vol mute <"$f"
+  [[ "$vol" =~ ^[0-9]+%$ ]] || return 1
+  pactl_ok set-sink-volume "$sink" "$vol"
+  [[ "$mute" == yes ]] && pactl_ok set-sink-mute "$sink" 1
+  log "restored ${sink} to ${vol}${mute:+ mute=$mute}"
+}
+save_volume() {
+  local sink f vol mute cur
+  sink="$(pactl_ok get-default-sink)"
+  [[ -n "$sink" ]] || return 0
+  vol="$(pactl_ok get-sink-volume "$sink" | grep -oE '[0-9]+%' | head -1)"
+  mute="$(pactl_ok get-sink-mute "$sink" | awk '{print $2}')"
+  [[ -n "$vol" ]] || return 0
+  f="$(vol_file "$sink")"
+  cur="$(cat "$f" 2>/dev/null)"
+  [[ "$cur" == "$vol $mute" ]] && return 0
+  mkdir -p "$VOL_DIR"
+  printf '%s %s\n' "$vol" "$mute" >"$f.tmp" && sync "$f.tmp" 2>/dev/null; mv -f "$f.tmp" "$f"
 }
 
 find_sink() {
@@ -176,6 +209,7 @@ drm_dp && last=on
 log "watch last_dp=${last}"
 while true; do
   sleep 2
+  save_volume
   cur=off
   drm_dp && cur=on
   if [[ "$cur" != "$last" ]]; then
