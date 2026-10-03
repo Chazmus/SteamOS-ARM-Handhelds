@@ -39,9 +39,18 @@ audio() {  # audio 1 = suspend, 0 = resume
 }
 
 gamescope_screen() {  # 1 = panel off (DPMS, not just backlight), 0 = on
-  [[ -S /run/user/$UID_STEAM/gamescope-0 ]] || return 0
-  timeout 3 runuser -u "$(id -nu "$UID_STEAM")" -- env XDG_RUNTIME_DIR=/run/user/$UID_STEAM \
-    GAMESCOPE_WAYLAND_DISPLAY=gamescope-0 gamescopectl drm_sleep_internal_screen "$1" >/dev/null 2>&1
+  # Every running gamescope, not only Game Mode's: on the Thor and Pocket DS
+  # the bottom panel belongs to a second gamescope on a DRM lease, and with
+  # only gamescope-0 told, the bottom screen stayed black after standby.
+  local sock name
+  for sock in /run/user/$UID_STEAM/gamescope-*; do
+    name=${sock##*/}
+    [[ -S $sock && $name != *.lock ]] || continue
+    # A dead compositor leaves its socket behind; only a live one holds the lock.
+    flock -n "$sock.lock" true 2>/dev/null && continue
+    timeout 3 runuser -u "$(id -nu "$UID_STEAM")" -- env XDG_RUNTIME_DIR=/run/user/$UID_STEAM \
+      GAMESCOPE_WAYLAND_DISPLAY="$name" gamescopectl drm_sleep_internal_screen "$1" >/dev/null 2>&1
+  done
 }
 
 wake_sources() {
