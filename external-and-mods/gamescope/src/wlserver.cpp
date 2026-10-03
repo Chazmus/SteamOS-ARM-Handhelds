@@ -2435,6 +2435,12 @@ static void wlserver_update_keymap()
 		wlserver_set_keyboard_keymap( &wlserver.keyboard_group->keyboard, keymap );
 		for ( struct wlserver_keyboard *pKeyboard : s_Keyboards )
 			wlserver_set_keyboard_keymap( pKeyboard->wlr, keymap );
+		// Emulated input (Xwayland's XTest over libei, InputEmulation.cpp) types
+		// through the virtual keyboard. Nothing else gave it a keymap, so its
+		// xkb_state stayed null: in a gamescope Steam never talks to (the
+		// bottom screen's), the first typed key crashed in the hotkey check.
+		if ( wlserver.wlr.virtual_keyboard_device )
+			wlserver_set_keyboard_keymap( wlserver.wlr.virtual_keyboard_device, keymap );
 	}
 	else
 	{
@@ -2851,6 +2857,10 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press )
 {
 	xkb_keycode_t keycode = key + 8;
+
+	// No keymap yet: nothing to match a binding against.
+	if ( !keyboard || !keyboard->xkb_state )
+		return false;
 
 	// Remember the sym at press time so a release erases exactly what the press inserted.
 	if ( press )
