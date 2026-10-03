@@ -330,6 +330,9 @@ install_file "$OVL/usr/lib/systemd/system/NetworkManager.service.d/99-sm8550-wpa
   "$R/usr/lib/systemd/system/NetworkManager.service.d/99-sm8550-wpa.conf" 0644
 install_file "$OVL/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/lib/steamos/sm8550-audio-setup" 0755
+install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
+install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
+  "$R/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" 0644
 install_file "$OVL/usr/lib/steamos/sm8550-audio-pipewire" \
   "$R/usr/lib/steamos/sm8550-audio-pipewire" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-volume-keys" \

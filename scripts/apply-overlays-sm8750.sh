@@ -513,6 +513,11 @@ install -m0644 "$HC_SRC/plugin.json" "$HC_SRC/main.py" "$HC_DST/"
 install -m0644 "$HC_SRC/dist/index.js" "$HC_DST/dist/"
 chown -R 1000:1000 "$HOME_DST/homebrew"
 
+# GPU/GMU hang dumps kept past the kernel's five minutes (debug-logs copies them).
+install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
+install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
+  "$R/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" 0644
+
 # Return to Gaming Mode on the desktop, as on the 8 Gen 2 / 8 Gen 3 images.
 # This image never had it, so Desktop Mode had no way back but a restart.
 log "== Return to Gaming Mode desktop icon"
