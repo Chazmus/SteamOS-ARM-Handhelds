@@ -67,8 +67,12 @@ Window {
     }
     function refresh() {
         request("GET", "/state", undefined, function (n) {
-            st = n
-            pushFps(n.fps)
+            // An app covers the dashboard: the backend skips the stats, so
+            // keep the last ones and only follow the app rows.
+            if (!n.hidden) {
+                st = n
+                pushFps(n.fps)
+            }
             // Only hand the app rows a new model when the apps changed.
             var key = JSON.stringify([n.running || [], n.pinned || []])
             if (key !== appsKey) {

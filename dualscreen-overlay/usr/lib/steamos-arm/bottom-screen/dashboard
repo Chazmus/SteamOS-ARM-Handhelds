@@ -424,9 +424,14 @@ def konkrd(action: str) -> bool:
 
 
 # ------------------------------------------------------------------ apps ----
-APP_DIRS = [Path.home() / ".local/share/applications", Path("/usr/local/share/applications"),
-            Path("/usr/share/applications"), Path("/var/lib/flatpak/exports/share/applications"),
-            Path.home() / ".local/share/flatpak/exports/share/applications"]
+# First match wins, in the order the desktop uses (XDG_DATA_DIRS puts the
+# flatpak exports ahead of /usr): the Frame ships an "Install Firefox" stub as
+# /usr/share/applications/org.mozilla.firefox.desktop, the same name as the
+# real Firefox flatpak's, and scanning /usr first hid Firefox once installed.
+APP_DIRS = [Path.home() / ".local/share/applications",
+            Path.home() / ".local/share/flatpak/exports/share/applications",
+            Path("/var/lib/flatpak/exports/share/applications"),
+            Path("/usr/local/share/applications"), Path("/usr/share/applications")]
 SKIP_CATEGORIES = {"Settings", "System"}
 # Would fight the Game Mode session (a second Steam, session switches) or are
 # dev/debug tools with no place on a handheld's second screen.
@@ -588,7 +593,18 @@ def window_pid(wid: str) -> int:
     return int(m.group(1)) if m else -1
 
 
-def set_base_window(wid: str | None) -> None:
+# Whether the dashboard itself is on the bottom panel. While an app covers it,
+# /state skips sampling the stats (the UI keeps polling for the app rows), so
+# a hidden dashboard costs next to nothing.
+DASHBOARD_SHOWN = threading.Event()
+DASHBOARD_SHOWN.set()
+
+
+def set_base_window(wid: str | None, dashboard: bool = False) -> None:
+    if dashboard:
+        DASHBOARD_SHOWN.set()
+    else:
+        DASHBOARD_SHOWN.clear()
     if wid:
         run("xprop", "-root", "-f", "GAMESCOPECTRL_BASELAYER_WINDOW", "32c",
             "-set", "GAMESCOPECTRL_BASELAYER_WINDOW", str(int(wid, 16)))
@@ -600,7 +616,7 @@ def show_dashboard() -> None:
     KEYBOARD.set(False)
     for wid, title in toplevel_windows():
         if title == WINDOW_TITLE:
-            set_base_window(wid)
+            set_base_window(wid, dashboard=True)
             return
 
 
@@ -1116,6 +1132,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/state":
             cfg = load_config()
             apps = {a["id"]: a for a in list_apps()}
+            rows = {
+                "pinned": [{k: apps[i][k] for k in ("id", "name", "icon")} for i in cfg["pinned"] if i in apps],
+                "running": [{"id": i, "name": apps[i]["name"], "icon": apps[i]["icon"]}
+                            for i in APPS.running() if i in apps],
+            }
+            if not rows["running"]:
+                DASHBOARD_SHOWN.set()       # last app gone: gamescope shows us again
+            if not DASHBOARD_SHOWN.is_set():
+                self.reply({"hidden": True, **rows})
+                return
             self.reply({
                 "model": MODEL,
                 "time": time.strftime("%H:%M"),
