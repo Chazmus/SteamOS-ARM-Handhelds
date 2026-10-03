@@ -33,6 +33,8 @@ Window {
     property var pinned: []
     property var web: []
     property var hub: []
+    property var recent: []
+    function pollRecent() { Ui.request("GET", "/recent", undefined, function (r) { if (r && r.games) root.recent = r.games }) }
     function pollHub() { Ui.request("GET", "/hub", undefined, function (r) { if (r && r.apps) root.hub = r.apps }) }
     property bool bottomOn: true
     property string rowsKey: ""
@@ -88,6 +90,7 @@ Window {
     Timer { interval: 400; running: root.shotFile === ""; repeat: true; onTriggered: root.pollNav() }
     // One-tap app tiles on home: their install state, every few seconds.
     Timer { interval: 4000; running: root.page === "home"; repeat: true; triggeredOnStart: true; onTriggered: root.pollHub() }
+    Timer { interval: 30000; running: root.page === "home"; repeat: true; triggeredOnStart: true; onTriggered: root.pollRecent() }
     // Home shows the toggles and the game in front: refresh those gently.
     Timer { interval: 3000; running: root.page === "home" && root.shotFile === ""; repeat: true; onTriggered: root.pollState() }
     Timer {
@@ -138,12 +141,13 @@ Window {
             root.pollNav()
             root.pollState()
             root.pollHub()
+            root.pollRecent()
         })
     }
 
     readonly property var titles: ({
         home: "", dash: "Dashboard", pad: "Trackpad and keyboard", keys: "Trackpad and keyboard",
-        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub", skins: "Dashboard look"
+        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub", skins: "Dashboard look", bricks: "Bricks"
     })
 
     // ------------------------------------------------------------- frame --
@@ -207,6 +211,7 @@ Window {
                 pinned: root.pinned
                 web: root.web
                 hub: root.hub
+                recent: root.recent
                 onOpen: function (p) { root.go(p) }
             }
             DashPage {
@@ -228,6 +233,10 @@ Window {
                 anchors.fill: parent
                 visible: root.page === "settings"
                 onOpen: function (p) { root.go(p) }
+            }
+            BricksPage {
+                anchors.fill: parent
+                visible: root.page === "bricks"
             }
             HubPage {
                 anchors.fill: parent

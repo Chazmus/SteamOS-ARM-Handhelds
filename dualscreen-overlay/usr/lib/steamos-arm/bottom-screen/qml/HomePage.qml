@@ -2,6 +2,8 @@
 //
 //   quick toggles   Wi-Fi, Bluetooth, stick lights, bottom screen off
 //   open now        every running app: tap to bring it up, ✕ to quit it
+//   now playing     music or video playing anywhere, with its controls
+//   jump back in    the last games played, started on the top screen
 //   tools           dashboard, touchpad, keyboard, notes for the game
 //   web             Game Guide (follows the game on the top screen), YouTube,
 //                   YouTube Music, Steam Chat and your own web apps
@@ -20,6 +22,8 @@ Item {
     property var pinned: []
     property var web: []
     property var hub: []               // Emulator Hub apps (from /hub)
+    property var recent: []            // last played games (from /recent)
+    readonly property var media: st.media || ({})
     // Apps worth having here that aren't installed yet: one tap gets them,
     // and they pin themselves when done.
     readonly property var suggested: hub.filter(function (a) {
@@ -35,7 +39,8 @@ Item {
         { page: "pad", name: "Touchpad", icon: "input-touchpad-symbolic" },
         { page: "keys", name: "Keyboard", icon: "input-keyboard-symbolic" },
         { page: "notes", name: "Game Notes", icon: "document-edit" },
-        { page: "hub", name: "Get emulators", icon: "download-symbolic" }
+        { page: "hub", name: "Get emulators", icon: "download-symbolic" },
+        { page: "bricks", name: "Bricks", icon: "games-config-board-symbolic" }
     ]
     readonly property var runningIds: running.map(function (a) { return a.id })
 
@@ -144,6 +149,101 @@ Item {
                                     }
                                 }
                                 TapHandler { id: chipTap; onTapped: Ui.post("/focus", { id: chip.modelData.id }) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------------------------------------------- now playing --
+            Card {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 130 * Ui.s
+                visible: !!home.media.title
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16 * Ui.s
+                    spacing: 18 * Ui.s
+                    Rectangle {
+                        Layout.preferredWidth: 98 * Ui.s
+                        Layout.preferredHeight: 98 * Ui.s
+                        radius: 16 * Ui.s
+                        color: Ui.button
+                        clip: true
+                        Image {
+                            id: albumArt
+                            anchors.fill: parent
+                            source: home.media.art || ""
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                        }
+                        Txt { anchors.centerIn: parent; visible: albumArt.status !== Image.Ready; text: "♪"; color: Ui.dim; font.pixelSize: 48 * Ui.s }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2 * Ui.s
+                        Txt { Layout.fillWidth: true; text: home.media.title || ""; font.weight: Font.DemiBold; font.pixelSize: 28 * Ui.s; elide: Text.ElideRight }
+                        Txt { Layout.fillWidth: true; text: home.media.artist || home.media.app || ""; color: Ui.dim; font.pixelSize: 22 * Ui.s; elide: Text.ElideRight }
+                    }
+                    Repeater {
+                        model: [["previous", "⏮"], ["playpause", home.media.status === "Playing" ? "⏸" : "▶"], ["next", "⏭"]]
+                        Btn {
+                            required property var modelData
+                            Layout.preferredWidth: 96 * Ui.s
+                            Layout.preferredHeight: 96 * Ui.s
+                            label: modelData[1]
+                            fontSize: 34
+                            active: modelData[0] === "playpause"
+                            onClicked: Ui.post("/media", { action: modelData[0] })
+                        }
+                    }
+                }
+            }
+
+            // ------------------------------------------- jump back in --
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: home.recent.length > 0 && !Ui.st.desktop
+                spacing: 10 * Ui.s
+                Txt { text: "Jump back in"; color: Ui.dim; font.pixelSize: 24 * Ui.s }
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 250 * Ui.s
+                    contentWidth: covers.implicitWidth
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    Row {
+                        id: covers
+                        spacing: 16 * Ui.s
+                        Repeater {
+                            model: home.recent
+                            Rectangle {
+                                id: cover
+                                required property var modelData
+                                width: 166 * Ui.s
+                                height: 250 * Ui.s
+                                radius: 18 * Ui.s
+                                color: coverTap.pressed ? Ui.cardHi : Ui.card
+                                clip: true
+                                Image {
+                                    id: art
+                                    anchors.fill: parent
+                                    source: cover.modelData.art ? "file://" + cover.modelData.art : ""
+                                    sourceSize: Qt.size(332, 500)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Txt {
+                                    anchors.fill: parent
+                                    anchors.margins: 12 * Ui.s
+                                    visible: art.status !== Image.Ready
+                                    text: cover.modelData.name
+                                    wrapMode: Text.WordWrap
+                                    verticalAlignment: Text.AlignBottom
+                                    font.pixelSize: 22 * Ui.s
+                                    font.weight: Font.DemiBold
+                                }
+                                TapHandler { id: coverTap; onTapped: Ui.post("/play", { gameid: cover.modelData.gameid }) }
                             }
                         }
                     }
