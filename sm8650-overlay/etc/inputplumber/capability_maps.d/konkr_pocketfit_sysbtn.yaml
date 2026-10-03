@@ -21,16 +21,18 @@ mapping:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY2, value_type: button}
     target_event:
       gamepad: {button: QuickAccess}
-  - name: LC → L5
+  # LC/RC by the bumpers are L4/R4, the back paddles L5/R5 (every pad
+  # mode), so all four are separate buttons in Steam Input.
+  - name: LC → L4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY3, value_type: button}
     target_event:
-      gamepad: {button: LeftPaddle2}
-  - name: RC → R5
+      gamepad: {button: LeftPaddle1}
+  - name: RC → R4
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY4, value_type: button}
     target_event:
-      gamepad: {button: RightPaddle2}
+      gamepad: {button: RightPaddle1}
   - name: Front-top-right → F14 (konkr-controls)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_TRIGGER_HAPPY5, value_type: button}

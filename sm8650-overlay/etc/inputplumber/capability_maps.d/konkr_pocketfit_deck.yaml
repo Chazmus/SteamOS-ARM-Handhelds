@@ -4,7 +4,8 @@
 # changed for SteamOS:
 #   BTN_MODE  (KONKR / home)  → Steam button
 #   BTN5      (extra front)   → Quick Access (…)   [ROCKNIX: F1]
-#   BTN_Z/C   (LC1/RC1 back)  → L4 / R4
+#   BTN_Z/C   (LC1/RC1 back)  → L5 / R5 (L4/R4 are the LC/RC buttons by the
+#                                bumpers, konkr_pocketfit_sysbtn)
 version: 2
 kind: CapabilityMap
 name: KONKR Pocket FIT (Steam Deck layout)
@@ -88,16 +89,16 @@ mapping:
     target_event:
       gamepad: {trigger: {name: RightTrigger}}
 
-  - name: L4 (LC1, back left)
+  - name: L5 (LC1, back left)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_Z, value_type: button}
     target_event:
-      gamepad: {button: LeftPaddle1}
-  - name: R4 (RC1, back right)
+      gamepad: {button: LeftPaddle2}
+  - name: R5 (RC1, back right)
     source_events:
       - evdev: {event_type: KEY, event_code: BTN_C, value_type: button}
     target_event:
-      gamepad: {button: RightPaddle1}
+      gamepad: {button: RightPaddle2}
 
   - name: Left Stick
     source_events:
