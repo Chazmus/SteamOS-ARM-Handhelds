@@ -75,8 +75,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-STEAMOS_BUILD="${STEAMOS_BUILD:-20260925.6175226}"
-STEAMOS_BUNDLE="deckard-${STEAMOS_BUILD}-0.5.0"
+STEAMOS_BUILD="${STEAMOS_BUILD:-20261002.6232440}"
+STEAMOS_BUNDLE="deckard-${STEAMOS_BUILD}-${STEAMOS_VERSION:-0.5.3}"
 STEAMOS_URL="https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}"
 
 # SM8750_KERNEL=prebuilt (default): ROCKNIX's binary release, no tracefs.
@@ -135,6 +135,21 @@ ensure_official_rootfs() {
   sudo_run rsync -aHAX --filter="-x btrfs.*" --numeric-ids "${WORKDIR}/.rootfs-ro/" "${R}/"
   sudo_run umount "${WORKDIR}/.rootfs-ro"
   [[ -x "${R}/usr/bin/bash" ]] || die "unpacked rootfs has no /usr/bin/bash"
+}
+
+# Box64 runs Decky's x86-64 PluginLoader. Built inside the Frame rootfs for
+# its glibc, with Oryon flags (SDORYON1, armv8.6-a): the 8 Gen 2 build uses
+# armv9-a, which the 8 Elite's cores don't implement.
+ensure_box64() {
+  local mark="${R}/usr/local/share/box64-target"
+  if [[ -x "${R}/usr/local/bin/box64" && "$(cat "$mark" 2>/dev/null)" == SDORYON1 ]]; then
+    log "Box64 (SDORYON1) already in rootfs"
+    return 0
+  fi
+  log "Building Box64 (SDORYON1) inside the Frame rootfs"
+  sudo_run env BOX64_TARGET=SDORYON1 BOX64_SRC="${BOX64_SRC:-${WORKDIR}/box64}" \
+    "${SCRIPTS}/build-box64-in-rootfs.sh" "${R}"
+  echo SDORYON1 | sudo_run tee "$mark" >/dev/null
 }
 
 apply_mods() {
@@ -353,5 +368,6 @@ EOF
 mkdir -p "${WORKDIR}"
 ensure_kernel
 ensure_official_rootfs
+ensure_box64
 apply_mods
 build_image

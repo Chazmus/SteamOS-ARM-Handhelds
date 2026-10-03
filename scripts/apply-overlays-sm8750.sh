@@ -490,12 +490,19 @@ if [[ ! -s "$DECKY_LOADER" ]]; then
     "https://github.com/SteamDeckHomebrew/decky-loader/releases/download/${DECKY_VERSION}/PluginLoader" &&
     mv "$DECKY_LOADER.part" "$DECKY_LOADER"
 fi
-if [[ -s "$DECKY_LOADER" ]]; then
-  install -m0755 "$DECKY_LOADER" "$HOME_DST/homebrew/services/PluginLoader"
-  printf '%s' "$DECKY_VERSION" >"$HOME_DST/homebrew/services/.loader.version"
-  mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
-  ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service" 2>/dev/null || true
-fi
+[[ -s "$DECKY_LOADER" ]] || die "Decky loader ${DECKY_VERSION} missing and download failed"
+# Decky's PluginLoader is x86-64, so the unit runs it through box64
+# (make-steamos-sm8750.sh builds it into the rootfs). Beta 2 only had the
+# wants link, pointing at a unit that was never installed: no Decky, so no
+# Handheld Control either.
+[[ -x "$R/usr/local/bin/box64" ]] || die "box64 missing from the rootfs (Decky needs it)"
+mkdir -p "$HOME_DST/homebrew/settings" "$HOME_DST/homebrew/data" "$HOME_DST/homebrew/logs"
+install -m0755 "$DECKY_LOADER" "$HOME_DST/homebrew/services/PluginLoader"
+printf '%s' "$DECKY_VERSION" >"$HOME_DST/homebrew/services/.loader.version"
+install_file "${ROOT}/sm8650-overlay/usr/lib/systemd/system/plugin_loader.service" \
+  "$R/usr/lib/systemd/system/plugin_loader.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service"
 # Handheld Control: profiles, fan and stick lighting in Quick Access (talks
 # to odin3d here, konkrd on the other images).
 HC_SRC="${MOD}/Decky/sm8650/konkr-control"
@@ -505,6 +512,18 @@ install -m0644 "$HC_SRC/plugin.json" "$HC_SRC/main.py" "$HC_DST/"
 [[ -f "$HC_SRC/package.json" ]] && install -m0644 "$HC_SRC/package.json" "$HC_DST/"
 install -m0644 "$HC_SRC/dist/index.js" "$HC_DST/dist/"
 chown -R 1000:1000 "$HOME_DST/homebrew"
+
+# Return to Gaming Mode on the desktop, as on the 8 Gen 2 / 8 Gen 3 images.
+# This image never had it, so Desktop Mode had no way back but a restart.
+log "== Return to Gaming Mode desktop icon"
+install_file "$OVL/etc/skel/Desktop/Return.desktop" "$R/etc/skel/Desktop/Return.desktop" 0644
+install_file "$OVL/etc/xdg/plasma-workspace/env/set-return-icon.sh" \
+  "$R/etc/xdg/plasma-workspace/env/set-return-icon.sh" 0755
+install_file "$OVL/usr/share/icons/hicolor/scalable/apps/steamos-gamemode.svg" \
+  "$R/usr/share/icons/hicolor/scalable/apps/steamos-gamemode.svg" 0644
+install_file "$OVL/etc/skel/Desktop/Return.desktop" "$R/usr/share/applications/steamos-gamemode.desktop" 0644
+install_file "$OVL/etc/skel/Desktop/Return.desktop" "$HOME_DST/Desktop/Return.desktop" 0755
+chown -R 1000:1000 "$HOME_DST/Desktop"
 
 # Complete Steam ARM client in the image, same as the 8 Gen 2 / 8 Gen 3 builds.
 # Otherwise first boot unpacks ~2.5 GB of Steam on the SD card behind a black

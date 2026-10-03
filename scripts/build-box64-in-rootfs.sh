@@ -29,11 +29,15 @@ run() {
     "$@"
 }
 
-echo "==> cmake Box64 (SD8G2) against $R"
+# SD8G2 builds for armv9-a. The 8 Elite's Oryon cores are armv8.x, so its
+# image uses SDORYON1 (armv8.6-a), which runs on every chip we support.
+TARGET="${BOX64_TARGET:-SD8G2}"
+case "$TARGET" in SD8G2|SDORYON1) ;; *) echo "ERROR: BOX64_TARGET must be SD8G2 or SDORYON1" >&2; exit 1 ;; esac
+echo "==> cmake Box64 ($TARGET) against $R"
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
 run /usr/bin/cmake -S /src/box64 -B "$BUILD" -G Ninja \
-  -DSD8G2=ON \
+  -D"$TARGET"=ON \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX=/usr/local
 
