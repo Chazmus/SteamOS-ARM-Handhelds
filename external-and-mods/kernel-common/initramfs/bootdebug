@@ -8,7 +8,12 @@
 # any PC can read. After that perf.txt gets CPU/GPU/SD samples for 30 minutes.
 out=/boot/debug-logs
 mountpoint -q /boot || mount /boot 2>/dev/null
-mkdir -p "$out" || exit 0
+# Some images mount BOOT read-only (the 8 Elite ones); the logs need it
+# writable, whichever unit started us.
+if grep -qE '^[^ ]+ /boot [^ ]+ ro[, ]' /proc/mounts; then
+  mount -o remount,rw /boot 2>/dev/null
+fi
+mkdir -p "$out" || { echo "bootdebug: /boot isn't writable, no logs" >&2; exit 0; }
 # The boot before this one: after a freeze and a forced restart, that's the
 # one with the answer (the journal is persistent).
 journalctl -b -1 --no-pager -o short-monotonic > "$out/journal-previous-boot.txt" 2>&1
