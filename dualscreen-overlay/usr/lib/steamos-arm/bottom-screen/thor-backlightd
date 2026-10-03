@@ -106,6 +106,9 @@ class Panel:
         self.max = int(rd(f"{d}/max_brightness", "0") or 0)
         self.fd = os.open(f"{d}/brightness", os.O_RDWR)
         self.last = -1
+        # A write the panel refused (EINVAL while Game Mode powers it up at
+        # boot), retried on the next pass instead of waiting for a new level.
+        self.pending = False
 
     def read(self) -> int:
         try:
@@ -120,8 +123,11 @@ class Panel:
         try:
             os.pwrite(self.fd, str(value).encode(), 0)
             self.last = value
+            self.pending = False
         except OSError as exc:
-            log(f"{os.path.basename(self.d)}: {exc}")
+            if not self.pending:
+                log(f"{os.path.basename(self.d)}: {exc}, retrying")
+            self.pending = True
 
     def power(self, on: bool) -> None:
         want = "0" if on else "4"
@@ -202,8 +208,8 @@ class Daemon:
                 return
             if game_mode():
                 self.level = max(0.0, min(1.0, v / max(self.steam_max, 1)))
-                if top:
-                    self.top.write(max(1, round(self.level * self.top.max)), force)
+                if top or self.top.pending:
+                    self.top.write(max(1, round(self.level * self.top.max)), force or self.top.pending)
                 share = max(SHARE_MIN, min(100, int(self.cfg["bottom_share"]))) / 100
                 pos = self.level ** (1 / STEAM_GAMMA)
                 self.bottom.write(max(1, round(pos * share * self.bottom.max)), force)
