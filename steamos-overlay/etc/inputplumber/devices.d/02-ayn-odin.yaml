@@ -9,11 +9,7 @@ kind: CompositeDevice
 name: AYN Odin 2
 
 matches:
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: AYN Odin 2
+  # The Odin 2 is on 02-ayn-odin2-mini.yaml (7.2.8 button codes).
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:

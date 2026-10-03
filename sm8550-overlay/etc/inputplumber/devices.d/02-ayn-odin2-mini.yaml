@@ -1,12 +1,19 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# AYN Odin 2 Mini and Portal: same as 02-ayn-odin.yaml, with their own button
-# map (ayn_mini_mcu): their A/B come in the other way round from the Odin 2
-# (a Mini tester, and a Portal evtest from a contributor: A=BTN_SOUTH).
+# AYN Odin 2, Mini and Portal on the 7.2.8 kernel: its rsinput driver has one
+# button table for every AYN pad, and A comes in as BTN_SOUTH on all three (a
+# Mini tester, a Portal evtest). The Odin 2's A=BTN_EAST evtest was taken on
+# the old 7.0.14 kernel; with the Odin 2 swap on 7.2.8, A and B were backwards
+# and Steam's Nintendo layout then swapped X and Y too (GitHub #8).
 version: 1
 kind: CompositeDevice
-name: AYN Odin 2 Mini / Portal
+name: AYN Odin 2 / Mini / Portal
 
 matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYN Odin 2
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
