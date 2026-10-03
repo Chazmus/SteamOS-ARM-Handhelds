@@ -331,6 +331,12 @@ install_file "$OVL/usr/lib/systemd/system/NetworkManager.service.d/99-sm8550-wpa
 install_file "$OVL/usr/lib/steamos/sm8550-audio-setup" \
   "$R/usr/lib/steamos/sm8550-audio-setup" 0755
 install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
+# Charging/discharge time for Steam (the Frame's charger daemon is masked).
+install_file "$OVL/usr/lib/steamos-arm/vpower" "$R/usr/lib/steamos-arm/vpower" 0755
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-vpower.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-vpower.service"
 install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
   "$R/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" 0644
 install_file "$OVL/usr/lib/steamos/sm8550-audio-pipewire" \

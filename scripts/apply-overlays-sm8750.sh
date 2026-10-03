@@ -515,6 +515,12 @@ chown -R 1000:1000 "$HOME_DST/homebrew"
 
 # GPU/GMU hang dumps kept past the kernel's five minutes (debug-logs copies them).
 install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
+# Charging/discharge time for Steam (the Frame's charger daemon is masked).
+install_file "$OVL/usr/lib/steamos-arm/vpower" "$R/usr/lib/steamos-arm/vpower" 0755
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-vpower.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-vpower.service"
 install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
   "$R/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" 0644
 
