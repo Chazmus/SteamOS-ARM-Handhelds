@@ -59,15 +59,8 @@ mount --move /proc /sysroot/proc
 mount --move /sys /sysroot/sys
 mount --move /run /sysroot/run 2>/dev/null || true
 
-# Unmount /flash or /boot so systemd's fstab can mount /boot cleanly
+# Unmount /flash so systemd's fstab can mount /boot cleanly
 umount /flash 2>/dev/null || true
-umount /boot 2>/dev/null || true
 
 # Hand over execution to SteamOS systemd
-if [ -x /usr/bin/busybox ]; then
-  exec /usr/bin/busybox switch_root /sysroot /usr/lib/systemd/systemd
-elif [ -x /bin/busybox ]; then
-  exec /bin/busybox switch_root /sysroot /usr/lib/systemd/systemd
-else
-  exec switch_root /sysroot /usr/lib/systemd/systemd
-fi
+exec /usr/bin/busybox switch_root /sysroot /usr/lib/systemd/systemd

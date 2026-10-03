@@ -22,7 +22,6 @@ mkdir -p /boot /newroot
 
 extra=0
 rootarg=""
-bootarg=""
 debug=0
 usbshell=0
 steamosroot=""
@@ -33,7 +32,6 @@ for arg in $(cat /proc/cmdline); do
     steamos.usbshell=1) usbshell=1 ;;
     steamos.root=*) steamosroot="${arg#steamos.root=}" ;;
     root=*) rootarg="${arg#root=}" ;;
-    boot=*) bootarg="${arg#boot=}" ;;
   esac
 done
 [ -n "$steamosroot" ] && rootarg="$steamosroot"
@@ -105,29 +103,13 @@ case "$rootarg" in
     bootdev="$(by_partlabel ROCKNIX)"
     ;;
   *)
-    if [ -n "$bootarg" ]; then
-      case "$bootarg" in
-        UUID=*|LABEL=*)
-          for i in $(seq 1 60); do
-            if mount -t vfat "$bootarg" /boot 2>/dev/null; then
-              bootdev="$bootarg"
-              umount /boot 2>/dev/null || true
-              break
-            fi
-            sleep 0.5
-          done
-          ;;
-      esac
-    fi
-    if [ -z "$bootdev" ]; then
-      for i in $(seq 1 60); do
-        for p in /sys/class/block/mmcblk*p1; do
-          [ -e "$p" ] && bootdev="/dev/$(basename "$p")" && break 2
-        done
-        sleep 0.5
+    for i in $(seq 1 60); do
+      for p in /sys/class/block/mmcblk*p1; do
+        [ -e "$p" ] && bootdev="/dev/$(basename "$p")" && break 2
       done
-    fi
-    [ -n "$bootdev" ] && [ -z "$rootdev" ] && rootdev="${bootdev%p1}p2"
+      sleep 0.5
+    done
+    [ -n "$bootdev" ] && rootdev="${bootdev%p1}p2"
     ;;
 esac
 
@@ -149,9 +131,6 @@ if [ -n "$bootdev" ] && mount -t vfat "$bootdev" /boot; then
   [ -e /boot/debug ] || [ -e /boot/debug.txt ] && debug=1
   n=0
   while [ "$n" -lt "$extra" ]; do snap "snapshot $n"; sleep 4; n=$((n + 1)); done
-  if [ -f /boot/post-flash.sh ]; then
-    . /boot/post-flash.sh
-  fi
 fi
 
 if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
@@ -206,11 +185,7 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
   else
     umount /boot 2>/dev/null
   fi
-  if [ -x /newroot/usr/lib/systemd/systemd ]; then
-    exec switch_root /newroot /usr/lib/systemd/systemd
-  else
-    exec switch_root /newroot /sbin/init
-  fi
+  exec switch_root /newroot /sbin/init
 fi
 snap "FAILED to mount root ($rootdev)"
 echo "root mount failed; see bootlog.txt on the FAT partition"
