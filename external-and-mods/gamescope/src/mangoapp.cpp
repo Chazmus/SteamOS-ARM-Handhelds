@@ -3,6 +3,7 @@
 #include <sys/msg.h>
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -15,7 +16,7 @@
 #include "main.hpp"
 
 static bool inited = false;
-static int msgid = 0;
+static int msgid = -1;
 static std::mutex s_SnapshotMutex;
 static std::unordered_map<uint32_t, MangoappSnapshot_t> s_ConnectorSnapshots;
 extern bool g_bAppWantsHDRCached;
@@ -47,10 +48,23 @@ struct mangoapp_msg_v1 {
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed));
 
+// Every gamescope opens the same queue (ftok of a path that doesn't exist).
+// The bottom-screen gamescope on a dual-screen device runs on a DRM lease and
+// has no overlay of its own, so it stays off it: otherwise it fed its frame
+// stats and panel size to the top screen's mangoapp (the overlay stretched to
+// the bottom panel) and its relay took Steam's overlay commands off the queue.
+static bool mangoapp_disabled()
+{
+    return msgid < 0;
+}
+
 void init_mangoapp(){
+    inited = true;
+    const char *pszLease = getenv("GAMESCOPE_DRM_LEASE_SOCKET");
+    if (pszLease && *pszLease)
+        return;
     int key = ftok("mangoapp", 65);
     msgid = msgget(key, 0666 | IPC_CREAT);
-    inited = true;
 }
 
 static std::mutex s_FrameTimeMutex;
@@ -71,6 +85,8 @@ void mangoapp_drop_stream( uint32_t uMsgType )
 {
     if (!inited)
         init_mangoapp();
+    if (mangoapp_disabled())
+        return;
 
     {
         // Ahead of the drain, so commits finishing later find nothing to send.
@@ -109,6 +125,8 @@ uint32_t mangoapp_flush_control( const std::vector<uint32_t> &msgTypes )
 {
     if (!inited)
         init_mangoapp();
+    if (mangoapp_disabled())
+        return 0;
 
     while (!s_PendingControl.empty())
     {
@@ -127,7 +145,7 @@ MangoappControlRelay_t mangoapp_relay_control( const std::vector<uint32_t> &msgT
 
     // Finish the last fan-out first, so no instance sees commands out of order.
     relay.uHeldBack = mangoapp_flush_control( msgTypes );
-    if (relay.uHeldBack)
+    if (relay.uHeldBack || mangoapp_disabled())
         return relay;
 
     uint32_t uDeferred = 0;
@@ -168,6 +186,8 @@ void mangoapp_post_control( uint32_t uMsgType, uint8_t uNoDisplay, bool bStartLo
 {
     if (!inited)
         init_mangoapp();
+    if (mangoapp_disabled())
+        return;
 
     mangoapp_ctrl_msgid1_v1 ctrl = {};
     ctrl.hdr.msg_type = MangoappControlMsgType(uMsgType);
@@ -192,6 +212,8 @@ void mangoapp_post_control( uint32_t uMsgType, uint8_t uNoDisplay, bool bStartLo
 void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType ) {
     if (!inited)
         init_mangoapp();
+    if (mangoapp_disabled())
+        return;
 
     MangoappSnapshot_t snapshot;
     if ( uMsgType == k_uMangoappLegacyMsgType )
