@@ -105,8 +105,47 @@ report_end() {
   rm -f /run/konkr/sleep-start
 }
 
+# Running from the SD card, the internal UFS is idle, but after a long s2idle
+# sleep its PHY can fail to come back, the host stays in error and every later
+# suspend aborts with -EBUSY until a reboot. So it sleeps unbound: off before
+# suspend, bound again (a fresh init, not a resume) after. Left alone whenever
+# anything on it is mounted, swapped to or held (an internal install).
+UFS_STATE=/run/konkr/ufs-unbound
+ufs_in_use() {  # $1 = ufshc platform device name
+  local blk dev part
+  for blk in /sys/block/sd*; do
+    [[ $(readlink -f "$blk") == */"$1"/* ]] || continue
+    dev=${blk##*/}
+    for part in "$blk" "$blk/$dev"*; do
+      [[ -e $part/dev ]] || continue
+      grep -q "^/dev/${part##*/}[[:space:]]" /proc/mounts /proc/swaps && return 0
+      [[ -n $(ls "$part/holders" 2>/dev/null) ]] && return 0
+    done
+  done
+  return 1
+}
+ufs_off() {
+  local host name
+  mkdir -p "${UFS_STATE%/*}"; : >"$UFS_STATE"
+  for host in /sys/bus/platform/drivers/ufshcd-qcom/*.ufshc; do
+    [[ -e $host ]] || continue
+    name=${host##*/}
+    ufs_in_use "$name" && continue
+    echo "$name" >/sys/bus/platform/drivers/ufshcd-qcom/unbind && echo "$name" >>"$UFS_STATE"
+  done
+  [[ -s $UFS_STATE ]] && echo "$(tr '\n' ' ' <"$UFS_STATE")"
+}
+ufs_on() {
+  local name
+  [[ -s $UFS_STATE ]] || return 0
+  while read -r name; do
+    echo "$name" >/sys/bus/platform/drivers/ufshcd-qcom/bind 2>/dev/null || log "ufs: rebind $name failed"
+  done <"$UFS_STATE"
+  rm -f "$UFS_STATE"
+}
+
 pre() {
-  local n
+  local n u
   report_start
   audio 1
   wake_sources
@@ -115,7 +154,8 @@ pre() {
     timeout 15 modprobe -r "${WIFI_MODS[@]}" || log "ath12k unload failed"
   fi
   sync
-  log "pre: audio suspended, touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded)"
+  u=$(ufs_off)
+  log "pre: audio suspended, touch unbound=$n, wifi=$([[ -d /sys/module/${WIFI_MODS[0]} ]] && echo loaded || echo unloaded), ufs unbound=${u:-none}"
 }
 
 touch_devices() {  # chipone panels on any I2C bus, bound or not
@@ -137,6 +177,7 @@ touch_on() {
 
 post() {
   report_end
+  ufs_on
   touch_on
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
