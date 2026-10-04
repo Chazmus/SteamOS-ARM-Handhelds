@@ -10,7 +10,7 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 | Source | URL | What we use |
 |--------|-----|-------------|
 | **MaSi / SteamOS-ARM-SM8550** | https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550 | The whole base: image builder, SteamOS ARM overlay, Box64/Decky setup, scripts |
-| **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260801, Linux 7.1.2), Pocket FIT panel/touch/MCU patches, device tree, firmware, audio UCM |
+| **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260901, Linux 7.2.8), Pocket FIT panel/touch/MCU patches, DPU inline rotation and QSEED detail enhancer (tiopex), device tree, firmware, audio UCM |
 | **ROCKNIX SM8550** | https://github.com/ROCKNIX/distribution | Kernel recipe, patches and device trees for all 13 SM8550 handhelds, firmware, audio UCM, controller event maps |
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
 | **ROCKNIX MangoHud patches** | https://github.com/ROCKNIX/distribution/tree/next/projects/ROCKNIX/packages/apps/mangohud/patches | Qualcomm GPU, battery and RAM support for Steam's performance overlay (`external-and-mods/MangoHud-qualcomm/`) |
