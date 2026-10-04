@@ -835,6 +835,70 @@ def flatpak_video_accel(ref: str, spec: dict) -> list[str]:
     return opts
 
 
+# Flatpaks not started by the hub that should still decode on the video core.
+# They get a persistent per-app override instead of launch options.
+VIDEO_ACCEL_EXTRA = {"org.mozilla.firefox": {}}
+
+
+FIREFOX_PREFS_MARK = "// steamos-arm: hardware video decoding"
+FIREFOX_PREFS = {
+    # Firefox's GPU list doesn't know Adreno on Linux; the decoder is ours.
+    "media.hardware-video-decoding.force-enabled": "true",
+    # WebRTC (xbox.com/play, video calls) through the hardware decoder too.
+    "media.webrtc.hw.h264.enabled": "true",
+}
+
+
+def firefox_prefs() -> None:
+    """A marked block in each Firefox profile's user.js (rewritten, not appended)."""
+    app = HOME / ".var/app/org.mozilla.firefox"
+    block = [FIREFOX_PREFS_MARK] + [f'user_pref("{k}", {v});' for k, v in FIREFOX_PREFS.items()]
+    block.append(FIREFOX_PREFS_MARK + " end")
+    # Newer Firefox keeps profiles under XDG config, older under ~/.mozilla.
+    profiles = [*app.glob("config/mozilla/firefox/*/prefs.js"), *app.glob(".mozilla/firefox/*/prefs.js")]
+    for prefs in profiles:
+        user = prefs.parent / "user.js"
+        try:
+            lines = user.read_text().splitlines() if user.exists() else []
+        except OSError:
+            continue
+        if FIREFOX_PREFS_MARK in lines:
+            i = lines.index(FIREFOX_PREFS_MARK)
+            end = FIREFOX_PREFS_MARK + " end"
+            j = lines.index(end, i) if end in lines[i:] else i
+            lines[i:j + 1] = []
+        new = "\n".join(lines + block) + "\n"
+        if not user.exists() or user.read_text() != new:
+            tmp = user.with_name("user.js.new")
+            tmp.write_text(new)
+            os.replace(tmp, user)
+
+
+def video_accel_sync() -> int:
+    """At login: keep the decoder files current in every installed Flatpak
+    that uses them, and give the ones the hub doesn't launch an override."""
+    try:
+        out = subprocess.run(["flatpak", "list", "--app", "--columns=application"],
+                             capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 1
+    installed = set(out.split())
+    for ref, spec in VIDEO_ACCEL_EXTRA.items():
+        if ref not in installed:
+            continue
+        opts = flatpak_video_accel(ref, spec)
+        if opts:
+            subprocess.run(["flatpak", "override", "--user", ref, *opts], timeout=60)
+            if ref == "org.mozilla.firefox":
+                firefox_prefs()
+    for e in catalog():
+        va = e.get("video_accel")
+        for src in e.get("sources", []):
+            if va is not None and src.get("kind") == "flathub" and src.get("ref") in installed:
+                flatpak_video_accel(src["ref"], va)      # files only; run() adds the rest
+    return 0
+
+
 def run(app_id: str, args: list[str]) -> None:
     e = entry(app_id)
     rec = installed_db().get(app_id)
@@ -855,7 +919,7 @@ def run(app_id: str, args: list[str]) -> None:
             env.setdefault("APPIMAGE_EXTRACT_AND_RUN", "1")
     elif rec["how"] == "flatpak":
         va = e.get("video_accel")
-        opts = flatpak_video_accel(rec["ref"], va) if va else []
+        opts = flatpak_video_accel(rec["ref"], va) if va is not None else []
         cmd = ["flatpak", "run", *opts, rec["ref"]]
         if opts:
             cmd += va.get("args", [])
@@ -1542,6 +1606,8 @@ def main(argv: list[str]) -> int:
     if cmd == "run":
         run(rest[0], rest[1:])
         return 0
+    if cmd == "video-accel-sync":
+        return video_accel_sync()
     if cmd == "device":
         out = device()
     elif cmd == "catalog":

@@ -816,19 +816,8 @@ else
   log "WARN: no $MHBUILD/mangoapp, Steam's overlay keeps stock (GPU shows 0 %)"
 fi
 
-# Hardware video decode for VA-API apps (Chromium/Electron, FFmpeg, mpv):
-# msm_drv_video.so drives the video core through V4L2; libgbm.so.1 adds the
-# NV12 buffers Mesa's GBM can't make on Adreno. The hub copies both into a
-# Flatpak's data folder when it starts one (scripts/build-v4l2-vaapi.sh).
-VABUILD="${VAAPI_BUILD:-${WORKDIR}/v4l2-vaapi-build}"
-if [[ -f "$VABUILD/msm_drv_video.so" && -f "$VABUILD/libgbm.so.1" ]]; then
-  install_file "$VABUILD/msm_drv_video.so" "$R/usr/lib/dri/msm_drv_video.so" 0755
-  install_file "$VABUILD/msm_drv_video.so" "$R/usr/lib/steamos-arm/va/msm_drv_video.so" 0755
-  install_file "$VABUILD/libgbm.so.1" "$R/usr/lib/steamos-arm/va/libgbm.so.1" 0755
-  log "VA-API: hardware video decoder ($VABUILD)"
-else
-  log "WARN: no $VABUILD, video apps keep decoding on the CPU"
-fi
+# Hardware video decode for VA-API apps (scripts/install-v4l2-vaapi.sh).
+"${SCRIPT_DIR}/install-v4l2-vaapi.sh" "$R" | tee -a "$LOG"
 
 # ---------------------------------------------------------------------------
 # lsfg-vk

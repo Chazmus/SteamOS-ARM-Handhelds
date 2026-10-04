@@ -901,9 +901,26 @@ static VAStatus EndPicture(VADriverContextP ctx, VAContextID cid)
 		 * no fence, so the GPU would sample a half-written frame.
 		 * Decoding takes ~2 ms and pictures are serialised anyway.
 		 */
-		if (dec_submit(c, frame, total, c->target) ||
-		    (c->target->pending && dec_wait(c, c->target, 1000)))
+		if (dec_submit(c, frame, total, c->target)) {
 			st = VA_STATUS_ERROR_DECODING_ERROR;
+		} else if (c->target->pending && !c->late_output) {
+			/*
+			 * Without decode-order output (older kernels) a B-frame
+			 * stream returns each picture only once the next one is
+			 * in: waiting here would stall every frame. After the
+			 * first such delay, leave it to vaSyncSurface.
+			 */
+			if (dec_wait(c, c->target, c->decode_order ? 1000 : 200)) {
+				if (!c->decode_order) {
+					c->late_output = 1;
+					c->target->pending = 1;
+					c->target->error = 0;
+					dbg(d, "pictures come back late (no decode-order output), not waiting for them");
+				} else {
+					st = VA_STATUS_ERROR_DECODING_ERROR;
+				}
+			}
+		}
 		free(frame);
 	}
 	c->target = NULL;

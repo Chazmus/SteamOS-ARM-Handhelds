@@ -92,6 +92,19 @@ int dec_open(struct context *c)
 		goto fail;
 	}
 
+	/*
+	 * Decode-order output (iris, kernel patch 0049): every picture comes
+	 * back right after it is decoded. Without it the firmware holds frames
+	 * for display order and B-frame streams arrive a frame late.
+	 */
+	struct v4l2_control order = {.id = V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE, .value = 1};
+	c->decode_order = !xioctl(c->fd, VIDIOC_S_CTRL, &order);
+	if (c->decode_order) {
+		struct v4l2_control delay = {.id = V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY, .value = 0};
+		xioctl(c->fd, VIDIOC_S_CTRL, &delay);   /* absent on iris: zero is implied */
+	}
+	dbg(c->drv, "decode-order output %s", c->decode_order ? "on" : "not available");
+
 	struct v4l2_requestbuffers rb = {.count = NUM_OUT_BUFS,
 		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, .memory = V4L2_MEMORY_MMAP};
 	if (xioctl(c->fd, VIDIOC_REQBUFS, &rb) || !rb.count)
@@ -458,7 +471,7 @@ int dec_submit(struct context *c, const uint8_t *data, size_t len, struct surfac
 	 * the previous picture first; decoding takes about a millisecond.
 	 */
 	if (c->cap_ready && !c->copy_mode) {
-		for (unsigned i = 0; i < MAX_INFLIGHT; i++) {
+		for (unsigned i = 0; !c->late_output && i < MAX_INFLIGHT; i++) {
 			struct surface *o = c->inflight[i];
 			if (o && o->pending && o != target)
 				dec_wait(c, o, 1000);

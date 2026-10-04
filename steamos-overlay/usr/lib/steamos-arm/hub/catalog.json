@@ -570,7 +570,8 @@
           "kind": "flathub",
           "ref": "com.moonlight_stream.Moonlight"
         }
-      ]
+      ],
+      "video_accel": {}
     },
     {
       "id": "chiaki",
@@ -583,7 +584,8 @@
           "kind": "flathub",
           "ref": "io.github.streetpea.Chiaki4deck"
         }
-      ]
+      ],
+      "video_accel": {}
     },
     {
       "id": "greenlight",

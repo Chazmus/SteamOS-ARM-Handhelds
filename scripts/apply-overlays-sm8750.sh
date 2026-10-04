@@ -339,6 +339,8 @@ if [[ -x "$MHBUILD/mangoapp" ]]; then
 else
   log "WARN: no $MHBUILD/mangoapp, the overlay keeps stock (GPU shows 0 %)"
 fi
+# Hardware video decode for VA-API apps (scripts/install-v4l2-vaapi.sh).
+"${SCRIPT_DIR}/install-v4l2-vaapi.sh" "$R" | tee -a "$LOG"
 
 # ---------------------------------------------------------------------------
 # 5. Odin 3 Overlay (InputPlumber, Display, Audio, Device Manager)

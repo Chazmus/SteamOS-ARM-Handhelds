@@ -94,6 +94,8 @@ struct context {
 
 	int cap_ready;
 	int copy_mode;               /* decode into driver buffers, then copy */
+	int decode_order;            /* firmware returns pictures in decode order */
+	int late_output;             /* pictures come back a frame late: don't wait for them */
 	uint32_t cap_pitch, cap_height, cap_size, cap_count;
 	void *cap_map[MAX_SLOTS];
 	struct surface *slot_owner[MAX_SLOTS];
