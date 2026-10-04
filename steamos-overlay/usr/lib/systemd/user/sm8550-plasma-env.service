@@ -1,4 +1,7 @@
 [Unit]
+# Only the player's session: a root login (SSH, the updater) starts a
+# user manager for root too, which ran these as root every time.
+ConditionUser=!root
 Description=SM8550 Plasma Wayland environment
 DefaultDependencies=no
 Before=plasma-core.target plasma-workspace.target plasma-workspace-wayland.target

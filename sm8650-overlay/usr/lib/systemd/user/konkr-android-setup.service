@@ -1,4 +1,7 @@
 [Unit]
+# Only the player's session: a root login (SSH, the updater) starts a
+# user manager for root too, which ran these as root every time.
+ConditionUser=!root
 Description=Add the Google Play Store to the Steam library
 # konkr-apk setup exits at once when Steam already has the shortcut; on a
 # fresh install it waits for the Steam sign-in, then adds and verifies it.
