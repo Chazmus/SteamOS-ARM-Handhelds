@@ -489,8 +489,13 @@ KONKR_CEF = (
     "# UI draw call twice on the CPU and made menus/game pages sluggish.\n"
     'KONKR_CEF_FLAGS="--use-gl=angle --use-angle=vulkan '
     '--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"\n'
-    'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log'
+    "# Games get gamescope's WSI layer (ENABLE_GAMESCOPE_WSI=1: Steam's frame\n"
+    "# limiter lives in it); the UI must not: with it, ANGLE-Vulkan's overlay\n"
+    "# windows (Quick Access, the Steam menu) came up empty.\n"
+    'DISABLE_GAMESCOPE_WSI=1 exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log'
 )
+# The exec line konkrd wrote before the WSI rule above, upgraded in place.
+KONKR_CEF_OLD_EXEC = 'exec taskset 0x7c $(pwd)/steamwebhelper "$@" $KONKR_CEF_FLAGS &> ~/.steam/steam/logs/steamwebhelper.log'
 
 
 # The Adreno 740 GMU can wedge when a GPU interrupt wakes one of the little
@@ -538,12 +543,18 @@ def ensure_webhelper_vulkan() -> None:
     """Re-apply the ANGLE-Vulkan flags if a Steam client update rewrote the
     launcher (Steam restarts the UI on its own after updates)."""
     s = rd(WEBHELPER_SH)
-    if not s or "KONKR_CEF_FLAGS" in s or WEBHELPER_EXEC not in s:
+    if not s or "DISABLE_GAMESCOPE_WSI=1 exec" in s:
+        return
+    if "KONKR_CEF_FLAGS" in s and KONKR_CEF_OLD_EXEC in s:
+        new = s.replace(KONKR_CEF_OLD_EXEC, "DISABLE_GAMESCOPE_WSI=1 " + KONKR_CEF_OLD_EXEC)
+    elif WEBHELPER_EXEC in s and "KONKR_CEF_FLAGS" not in s:
+        new = s.replace(WEBHELPER_EXEC, KONKR_CEF)
+    else:
         return
     try:
         tmp = WEBHELPER_SH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(s.replace(WEBHELPER_EXEC, KONKR_CEF) + "\n")
+            fh.write(new + ("" if new.endswith("\n") else "\n"))
         st = os.stat(WEBHELPER_SH)
         os.chown(tmp, st.st_uid, st.st_gid)
         os.chmod(tmp, st.st_mode)
