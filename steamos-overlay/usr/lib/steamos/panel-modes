@@ -4,6 +4,9 @@
   panel-modes              one line per connected DSI/eDP connector:
                            <name> <W>x<H> <orientation> <rate> [<rate> ...]
   panel-modes --max NAME   highest rate NAME lists at its preferred size
+  panel-modes --rates NAME the rates NAME lists at its preferred size, comma
+                           separated (what Steam's refresh and frame limit
+                           lists are built from)
   panel-modes --json       the same as JSON
 
 <orientation> is the connector's "panel orientation" property (set from the
@@ -131,10 +134,10 @@ def main() -> int:
         print(json.dumps([{"name": n, "width": w, "height": h, "orientation": o, "rates": r}
                           for n, w, h, o, r in found]))
         return 0
-    if len(sys.argv) == 3 and sys.argv[1] == "--max":
+    if len(sys.argv) == 3 and sys.argv[1] in ("--max", "--rates"):
         for name, _, _, _, rates in found:
             if name == sys.argv[2] and rates:
-                print(max(rates))
+                print(max(rates) if sys.argv[1] == "--max" else ",".join(map(str, rates)))
                 return 0
         return 1
     for name, w, h, orient, rates in found:

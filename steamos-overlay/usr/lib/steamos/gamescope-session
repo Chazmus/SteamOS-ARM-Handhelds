@@ -206,7 +206,15 @@ MAX_HZ="$(/usr/lib/steamos/panel-modes --max "$OUTPUT" 2>/dev/null)"
 # doubles UI GPU/CPU load (heat, fan, sluggishness). Steam's refresh slider
 # (STEAM_DISPLAY_REFRESH_LIMITS) still reaches MAX_HZ per game.
 REFRESH_HZ="${REFRESH_HZ:-60}"
-if (( MAX_HZ > 60 )); then
+# Steam reads two numbers here as a range and offers every rate in it, so the
+# frame limiter fills with values the panel can only reach by stretching its
+# timing. Hand it the rates the panel actually lists instead (Pocket FIT:
+# 60,90,120,144 -> limits 30/60/90/120/144). Only a panel that lists a single
+# rate above 60 Hz gets the old 60-to-max range, so it still has a slider.
+PANEL_RATES="$(/usr/lib/steamos/panel-modes --rates "$OUTPUT" 2>/dev/null)"
+if [[ "$PANEL_RATES" =~ ^[0-9]+(,[0-9]+)+$ ]]; then
+  export STEAM_DISPLAY_REFRESH_LIMITS="${STEAM_DISPLAY_REFRESH_LIMITS:-${PANEL_RATES}}"
+elif (( MAX_HZ > 60 )); then
   export STEAM_DISPLAY_REFRESH_LIMITS="${STEAM_DISPLAY_REFRESH_LIMITS:-${MIN_HZ},${MAX_HZ}}"
 fi
 
