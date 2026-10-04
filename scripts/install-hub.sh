@@ -36,4 +36,11 @@ install -D -m0644 "$OVL/usr/lib/systemd/system/steamos-arm-power.service" "$R/us
 install -D -m0644 "$OVL/usr/share/steamos-manager/remotes.d/50-steamos-arm.toml" "$R/usr/share/steamos-manager/remotes.d/50-steamos-arm.toml"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../steamos-arm-power.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-power.service"
+# gamescope's CAP_SYS_NICE, re-applied at boot if a copy or update dropped it.
+install -D -m0644 "$OVL/usr/lib/systemd/system/steamos-arm-gamescope-caps.service" "$R/usr/lib/systemd/system/steamos-arm-gamescope-caps.service"
+mkdir -p "$R/usr/lib/systemd/system/graphical.target.wants"
+ln -sfn ../steamos-arm-gamescope-caps.service "$R/usr/lib/systemd/system/graphical.target.wants/steamos-arm-gamescope-caps.service"
+for gs in "$R/usr/bin/gamescope" "$R/usr/local/bin/gamescope"; do
+  [[ -x "$gs" ]] && setcap cap_sys_nice=eip "$gs"
+done
 echo "Emulator Hub installed"

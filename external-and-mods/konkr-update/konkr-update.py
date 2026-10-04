@@ -231,7 +231,7 @@ def stage(args):
         if shutil.disk_usage('/').free + managed < size + (512 << 20):
             raise ValueError('root partition is too small for this update')
         payload = work / 'payload'; payload.mkdir()
-        run('tar', '--xattrs', '--acls', '--numeric-owner', '-xzf', package, '-C', payload)
+        run('tar', '--xattrs', '--xattrs-include=*', '--acls', '--numeric-owner', '-xzf', package, '-C', payload)
         verify_payload(payload, manifest)
         info = {'id': work.name, 'version': manifest['version'], 'sha256': expected,
                 'root_uuid': root_info['uuid'], 'home_uuid': home_info['uuid'],

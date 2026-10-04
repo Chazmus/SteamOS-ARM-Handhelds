@@ -115,6 +115,14 @@ for b in gamescope gamescopectl gamescopereaper gamescopestream; do
   mkdir -p "$R/usr/local/bin"
   install_file "$GSBUILD/src/$b" "$R/usr/local/bin/$b" 0755
 done
+# CAP_SYS_NICE, as SteamOS ships it: without it gamescope never gets its
+# realtime Vulkan queue, so its compositing waited behind the game on the GPU
+# and missed vblanks (Pocket FIT at 120 Hz: ~5 a second with the performance
+# overlay up, draw spikes of 8-13 ms in an 8.3 ms slot; with it ~1, 6.6 ms).
+# A plain copy drops file capabilities, so set them after every install.
+for gs in "$R/usr/bin/gamescope" "$R/usr/local/bin/gamescope"; do
+  setcap cap_sys_nice=eip "$gs" || die "setcap on $gs failed"
+done
 if [[ -f "$GSBUILD/layer/libVkLayer_FROG_gamescope_wsi_aarch64.so" ]]; then
   backup "$R/usr/lib/libVkLayer_FROG_gamescope_wsi_aarch64.so" \
     "$STOCK/usr/lib/libVkLayer_FROG_gamescope_wsi_aarch64.so"

@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='konkr-package-', dir=output.parent) as 
         files[str(p.relative_to(stage))] = h.hexdigest()
     (stage / 'manifest.json').write_text(json.dumps({'format': 1, 'architecture': 'aarch64',
         'devices': _updater.SOC_MODELS[a.soc], 'version': a.version, 'files': files}, indent=2))
-    subprocess.run(['tar', '--xattrs', '--acls', '--numeric-owner', '-czf', str(output) + '.part',
+    subprocess.run(['tar', '--xattrs', "--xattrs-include=*", '--acls', '--numeric-owner', '-czf', str(output) + '.part',
                     '-C', str(stage), 'manifest.json', 'root', 'home', 'boot'], check=True)
     os.replace(str(output) + '.part', output)
 h = hashlib.sha256()
