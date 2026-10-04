@@ -5,10 +5,15 @@ they apply a profile. The limits come from their state.json, where the
 steamos-arm-power bridge writes what Steam's Quick Access asks for:
 
   tdp            watts, or absent for no limit. There is no power limiter on
-                 these chips, so a TDP is turned into clocks: the big CPU
-                 cores and the GPU are capped in proportion between their
-                 lowest and highest frequencies (the little cores are left
-                 alone, they barely draw anything).
+                 these chips, so a TDP is turned into clocks. The share of
+                 the slider is a share of power, not of clock speed: each
+                 big cluster gets its fastest step whose power (from the
+                 kernel's energy model) stays inside that share of its own
+                 range, and the GPU the same along a f^2.5 power curve.
+                 Power climbs much faster than clock, so a linear clock
+                 split left 8 W on an 8 Gen 3 at 1.19 GHz big cores and a
+                 500 MHz GPU, far below what 8 W actually affords. The
+                 little cores are left alone, they barely draw anything.
   gpu_manual_mhz Steam's "Manual GPU clock": the GPU held at that clock.
 
 Nothing here is applied when neither is set, so the profiles behave exactly
@@ -99,6 +104,30 @@ def _big_policies() -> list[str]:
     return [p for m, p in pols if m > lowest]
 
 
+# Dynamic power grows roughly with f * V^2, and V rises with f.
+GPU_POWER_EXP = 2.5
+
+
+def _energy_model(pol: str) -> list[tuple[int, int]]:
+    """(kHz, uW) per performance state of a policy, from debugfs, or []."""
+    first = (_rd(f"{pol}/related_cpus").split() or [""])[0]
+    out = []
+    for ps in glob.glob(f"/sys/kernel/debug/energy_model/cpu{first}/ps:*"):
+        try:
+            out.append((int(_rd(f"{ps}/frequency")), int(_rd(f"{ps}/power"))))
+        except ValueError:
+            pass
+    return sorted(out)
+
+
+def _power_cap(states: list[tuple[int, float]], frac: float) -> int:
+    """Fastest state whose power is within frac of the min..max power span."""
+    lo, hi = states[0][1], states[-1][1]
+    budget = lo + frac * (hi - lo)
+    fits = [f for f, pw in states if pw <= budget + 1e-9]
+    return fits[-1] if fits else states[0][0]
+
+
 def _snap(freqs: list[int], want: float) -> int:
     """The highest available frequency not above want (or the lowest)."""
     below = [f for f in freqs if f <= want]
@@ -114,7 +143,13 @@ def apply(state: dict) -> None:
         if not fmax:
             continue
         avail = sorted(int(f) for f in _rd(f"{pol}/scaling_available_frequencies").split() if f.isdigit()) or [fmin, fmax]
-        cap = fmax if frac is None else _snap(avail, fmin + frac * (fmax - fmin))
+        if frac is None:
+            cap = fmax
+        else:
+            em = _energy_model(pol)
+            if len(em) < 2:
+                em = [(f, (f / fmax) ** GPU_POWER_EXP) for f in avail]
+            cap = _snap(avail, _power_cap(em, frac))
         _wr(f"{pol}/scaling_max_freq", cap)
     # GPU: a manual clock wins; else the TDP caps the profile's ceiling.
     d = gpu_dir()
@@ -129,7 +164,8 @@ def apply(state: dict) -> None:
         _wr(f"{d}/max_freq", f)
         return
     if frac is not None:
-        cap = freqs[max(0, round(frac * (len(freqs) - 1)))]
+        top = freqs[-1]
+        cap = _power_cap([(f, (f / top) ** GPU_POWER_EXP) for f in freqs], frac)
         cur_max = int(_rd(f"{d}/max_freq", str(freqs[-1])) or freqs[-1])
         cur_min = int(_rd(f"{d}/min_freq", str(freqs[0])) or freqs[0])
         if cur_min > cap:

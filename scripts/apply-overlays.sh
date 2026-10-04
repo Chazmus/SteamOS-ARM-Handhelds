@@ -756,6 +756,11 @@ fi
 rm -f "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
       "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
       "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-untag.rules"
+for f in usr/lib/systemd/zram-generator.conf.d/60-steamos-arm-zram.conf \
+         usr/lib/tmpfiles.d/steamos-arm-cpuidle-teo.conf \
+         usr/lib/udev/rules.d/99-zz-steamos-arm-backlight-untag.rules; do
+  install_file "$OVL/$f" "$R/$f" 0644
+done
 IMG_OVL="${ROOT}/sm8550-image-overlay"
 mapfile -t _img_files < <(cd "$IMG_OVL" && find usr -type f)
 if [[ "${SOC:-sm8650}" == sm8550 ]]; then
