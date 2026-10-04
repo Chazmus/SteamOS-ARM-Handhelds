@@ -20,18 +20,20 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
      input::{
          capability::Capability,
          event::native::NativeEvent,
-@@ -19,6 +26,10 @@
+@@ -19,6 +26,12 @@
  pub const VID: u16 = 0x4001;
  pub const PID: u16 = 0x0428;
  
-+/// The motors don't turn at all below about this level, so a weak but
-+/// non-zero request is lifted to it instead of being lost.
-+const MIN_LEVEL: u8 = 0x28;
++/// Measured on a Pocket FIT: a 90 ms pulse at 0x80 can't be felt and 0xc0
++/// is faint, while short pulses at full level feel crisp. Rumble is scaled
++/// into FLOOR..=0xff so a weak request is still felt, and haptic pulses run
++/// at full level with their strength carried by their length.
++const FLOOR: u8 = 0x90;
 +
  #[derive(PackedStruct, Debug, Default, Copy, Clone, PartialEq)]
  #[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
  struct AyaneoRumbleReport {
-@@ -40,16 +51,88 @@
+@@ -40,16 +53,89 @@
      reserved_7: u8,
  }
  
@@ -77,12 +79,13 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
 +    sent: Motors,
  }
  
-+/// High byte of an evdev/Steam 16-bit magnitude, lifted to what the motors feel.
++/// A 16-bit evdev/Steam magnitude as a motor level the motors can produce.
 +fn level(magnitude: u16) -> u8 {
-+    match (magnitude >> 8) as u8 {
-+        0 if magnitude == 0 => 0,
-+        v => v.max(MIN_LEVEL),
++    if magnitude == 0 {
++        return 0;
 +    }
++    let span = u32::from(0xff - FLOOR);
++    (u32::from(FLOOR) + u32::from(magnitude) * span / 0xffff) as u8
 +}
 +
 +/// What the motors should do at `now`.
@@ -101,28 +104,28 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
 +}
 +
 +/// A Steam Deck trackpad haptic command as a motor pulse: level and length.
++/// Full level always (lower is barely felt); intensity and gain set the length.
 +fn haptic_pulse(report: &PackedHapticReport) -> Option<(u8, Duration)> {
-+    let (base, ms) = match report.cmd_type {
++    let ms = match report.cmd_type {
 +        CommandType::Off => return None,
-+        CommandType::Tick => (0x70_u16, 18_u64),
-+        CommandType::Click => (0xb0, 30),
++        CommandType::Tick => 22.0,
++        CommandType::Click => 35.0,
 +    };
-+    let (stretch, boost) = match report.intensity {
-+        Intensity::Default | Intensity::Short => (1.0, 0),
-+        Intensity::Medium => (1.5, 0),
-+        Intensity::Long => (2.0, 0),
-+        Intensity::Insane => (3.0, 0x30),
++    let stretch = match report.intensity {
++        Intensity::Default | Intensity::Short => 1.0,
++        Intensity::Medium => 1.4,
++        Intensity::Long => 1.8,
++        Intensity::Insane => 2.5,
 +    };
-+    // Gain is in dB, -24..+6.
-+    let gain = 10f32.powf(f32::from(report.gain.clamp(-24, 6)) / 20.0);
-+    let value = ((f32::from(base + boost)) * gain).round().clamp(f32::from(MIN_LEVEL), 255.0);
-+    Some((value as u8, Duration::from_millis((ms as f64 * stretch) as u64)))
++    // Gain is in dB, -24..+6; it shortens or lengthens the pulse a little.
++    let gain = 10f32.powf(f32::from(report.gain.clamp(-24, 6)) / 20.0).clamp(0.7, 1.3);
++    Some((0xff, Duration::from_millis((ms * stretch * gain) as u64)))
 +}
 +
  impl AyaneoHaptics {
      pub fn new(device_info: UdevDevice) -> Result<Self, Box<dyn Error + Send + Sync>> {
          let path = device_info.devnode();
-@@ -69,6 +152,9 @@
+@@ -69,6 +155,9 @@
          Ok(Self {
              device,
              ff_evdev_effects: HashMap::new(),
@@ -132,7 +135,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
          })
      }
  
-@@ -79,20 +165,16 @@
+@@ -79,20 +168,16 @@
              .unwrap_or(-1)
      }
  
@@ -158,7 +161,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
          let written = self.device.write(&report)?;
          if written != report.len() {
              return Err(format!(
-@@ -100,10 +182,46 @@
+@@ -100,10 +185,46 @@
                  report.len()
              )
              .into());
@@ -205,7 +208,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
      fn process_evdev_ff(
          &mut self,
          input_event: evdev::InputEvent,
-@@ -117,7 +235,8 @@
+@@ -117,7 +238,8 @@
              };
  
          if value == 0 {
@@ -215,7 +218,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
          }
  
          let effect_id = code.0 as i16;
-@@ -131,11 +250,40 @@
+@@ -131,11 +253,40 @@
              weak_magnitude,
          } = effect.kind
          {
@@ -257,7 +260,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
  }
  
  impl Debug for AyaneoHaptics {
-@@ -146,7 +294,7 @@
+@@ -146,7 +297,7 @@
  
  impl Drop for AyaneoHaptics {
      fn drop(&mut self) {
@@ -266,7 +269,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
              log::debug!("Failed to stop AYANEO haptics during shutdown: {err:?}");
          }
      }
-@@ -154,6 +302,10 @@
+@@ -154,6 +305,10 @@
  
  impl SourceInputDevice for AyaneoHaptics {
      fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
@@ -277,7 +280,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
          Ok(vec![])
      }
  
-@@ -183,11 +335,12 @@
+@@ -183,11 +338,12 @@
                  report.left_speed.to_primitive(),
                  report.right_speed.to_primitive(),
              )?),
@@ -291,7 +294,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
          }
      }
  
-@@ -212,22 +365,26 @@
+@@ -212,22 +368,26 @@
      }
  
      fn stop(&mut self) -> Result<(), OutputError> {
@@ -311,7 +314,7 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
      use packed_struct::PackedStruct;
  
 -    use super::AyaneoHaptics;
-+    use super::{level, mix, AyaneoHaptics, Motors, Pulse, Rumble, MIN_LEVEL};
++    use super::{level, mix, AyaneoHaptics, Motors, Pulse, Rumble, FLOOR};
  
      #[test]
      fn builds_left_and_right_motor_report() {
@@ -321,16 +324,17 @@ diff --git a/src/input/source/hidraw/ayaneo_haptics.rs b/src/input/source/hidraw
                  .pack()
                  .unwrap(),
              [0x00, 0x00, 0x00, 0x00, 0x80, 0x60, 0x00, 0x00]
-@@ -235,20 +392,41 @@
+@@ -235,20 +395,42 @@
      }
  
      #[test]
 -    fn uses_high_byte_of_each_evdev_magnitude() {
-+    fn weak_requests_still_turn_the_motor() {
++    fn rumble_is_scaled_into_what_the_motors_produce() {
 +        assert_eq!(level(0), 0);
-+        assert_eq!(level(0x0001), MIN_LEVEL);
-+        assert_eq!(level(0x1200), MIN_LEVEL);
-+        assert_eq!(level(0xab01), 0xab);
++        assert_eq!(level(0x0001), FLOOR);
++        assert_eq!(level(0xffff), 0xff);
++        let mid = level(0x8000);
++        assert!(mid > FLOOR && mid < 0xff);
 +    }
 +
 +    #[test]
