@@ -806,6 +806,53 @@ def gamepad_mode_attr() -> str | None:
     return None
 
 
+# The two front MCU buttons (Custom Function above ABXY, K below the right
+# stick) run a konkrd action by default (F13/F14). Set to "game" in Handheld
+# Control and the button becomes a controller button Steam can bind per game
+# instead: the Pocket FIT has no trackpads, so the Deck pad's trackpad clicks
+# are free for it. InputPlumber can't switch that at runtime, so the map is
+# rewritten and InputPlumber restarted, only when it actually changes.
+SYSBTN_MAP = "/etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml"
+SYSBTN_GAME = {"F13": "RightTouchpadPress", "F14": "LeftTouchpadPress"}
+SYSBTN_CODE = {"F13": "BTN_TRIGGER_HAPPY1", "F14": "BTN_TRIGGER_HAPPY5"}
+
+
+def ensure_sysbtn_map(st: dict) -> None:
+    if "KONKR Pocket FIT" not in rd("/sys/firmware/devicetree/base/model"):
+        return
+    text = rd(SYSBTN_MAP)
+    if not text:
+        return
+    out, changed = [], False
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        for key, code in SYSBTN_CODE.items():
+            if f"event_code: {code}," in line and i + 2 < len(lines) and "target_event:" in lines[i + 1]:
+                want = (f"      gamepad: {{button: {SYSBTN_GAME[key]}}}"
+                        if st.get("buttons", {}).get(key) == "game" else f"      keyboard: Key{key}")
+                out.append(lines[i + 1])
+                if lines[i + 2] != want:
+                    changed = True
+                out.append(want)
+                i += 2
+        i += 1
+    if not changed:
+        return
+    try:
+        tmp = SYSBTN_MAP + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(out))
+        os.replace(tmp, SYSBTN_MAP)
+    except OSError as exc:
+        log(f"sysbtn map: {exc}")
+        return
+    subprocess.run(["systemctl", "try-restart", "inputplumber.service"], check=False)
+    log("front buttons: " + ", ".join(f"{k}={st.get('buttons', {}).get(k, '?')}" for k in SYSBTN_CODE))
+
+
 def ensure_gamepad_mode(conf: configparser.ConfigParser) -> None:
     want = conf.get("controller", "mode", fallback="default")
     if want not in ("default", "xbox"):
@@ -984,6 +1031,7 @@ class Daemon:
         self.apply_profile(flash=False)
         self.leds.apply_sticks(self.st)
         ensure_gamepad_mode(self.conf)
+        ensure_sysbtn_map(self.st)
 
     def stop(self, *_):
         # On shutdown the device is off a few seconds later: the failsafe only
@@ -1170,6 +1218,7 @@ class Daemon:
                 self.apply_profile()
                 self.leds.apply_sticks(self.st)
                 ensure_gamepad_mode(self.conf)
+                ensure_sysbtn_map(self.st)
             now = time.monotonic()
             if now >= next_ui_check:
                 next_ui_check = now + 60.0

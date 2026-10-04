@@ -22,7 +22,7 @@ STATE = "/var/lib/odin3/state.json" if ODIN3D else "/var/lib/konkrd/state.json"
 DAEMON = "odin3d" if ODIN3D else "konkrd"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 PROFILES = ("silent", "balanced", "turbo")
-ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "none")
+ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "game", "none")
 
 
 def rd(path: str, default: str = "") -> str:

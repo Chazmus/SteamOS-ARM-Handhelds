@@ -30,6 +30,15 @@ const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
 const setBypass = callable("set_bypass");
+const setButton = callable("set_button");
+const BUTTON_ACTIONS = [
+    { data: "profile-next", label: "Next performance profile" },
+    { data: "rgb-next", label: "Next stick lighting" },
+    { data: "sticks-toggle", label: "Stick lights on/off" },
+    { data: "fan-boost", label: "Fan boost" },
+    { data: "game", label: "Game button (bind in Steam)" },
+    { data: "none", label: "Nothing" },
+];
 
 const PROFILES = [
     { data: "silent", label: "Silent", desc: "Quiet fan, GPU capped at 75%, no game boost" },
@@ -140,7 +149,15 @@ function Content() {
             })) : null,
         ] }),
         st.fit_buttons ? jsxs(DFL.PanelSection, { title: "Buttons", children: [
-            note("KONKR cycles stick lighting · Performance cycles the performance profile"),
+            ...[["F13", "KONKR button"], ["F14", "Performance button"]].map(([key, label]) => row(jsx(DFL.DropdownItem, {
+                label,
+                description: (st.buttons || {})[key] === "game"
+                    ? "A controller button: bind it per game in Steam's controller settings (shows as a trackpad click)"
+                    : "",
+                rgOptions: BUTTON_ACTIONS,
+                selectedOption: (st.buttons || {})[key] || "none",
+                onChange: (o) => setButton(key, o.data).then(refresh),
+            }))),
             note("Home = Steam button · right front button = Quick Access · Power: tap to sleep, hold for the power menu"),
         ] }) : null,
         st.has_mcu_link ? jsxs(DFL.PanelSection, { title: "Hardware", children: [
