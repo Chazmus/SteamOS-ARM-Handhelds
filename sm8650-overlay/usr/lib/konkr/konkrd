@@ -215,6 +215,23 @@ FIXED_OVERRIDE_OFF_C = 82
 STANDBY_FAN_OFF_C = 60
 
 
+def game_fan(st: dict) -> dict | None:
+    """The fan settings in force: the running game's own (state "fan_games",
+    set in Handheld Control) over the global ones. A game entry is either
+    {"curve": "silent"|"balanced"|"turbo"} or {"mode": "fixed", "fixed": n};
+    fan boost still wins."""
+    glob_fan = st.get("fan") or {}
+    entry = (st.get("fan_games") or {}).get(str(CURRENT_APPID)) if CURRENT_APPID else None
+    if not entry:
+        return glob_fan
+    out = {"boost": glob_fan.get("boost", False)}
+    if entry.get("mode") == "fixed":
+        out.update(mode="fixed", fixed=int(entry.get("fixed", 50)))
+    else:
+        out.update(mode="auto", curve=entry.get("curve", ""))
+    return out
+
+
 class Fan:
     def __init__(self, conf):
         self.dir = find_fan()
@@ -271,6 +288,8 @@ class Fan:
                 log(f"fan: fixed {fan.get('fixed')}% -> pwm {step}")
                 self.cur = step
             return
+        if fan.get("curve") in FAN_CURVES:
+            profile = fan["curve"]          # a game's own curve (game_fan())
         if fan.get("boost"):
             profile = "turbo"
         # Smooth short spikes (boot, shader compiles) but react at once to
@@ -399,13 +418,20 @@ def set_uclamp_min(tid: int, value: int) -> bool:
     return _libc.syscall(SYS_SCHED_SETATTR, tid, ctypes.byref(attr), 0) == 0
 
 
+# Steam App ID of the running game (from its `reaper SteamLaunch AppId=` launcher),
+# 0 when none. Written by scan_procs(); per-game fan settings key on it.
+CURRENT_APPID = 0
+GAME_FILE = "/run/konkr/game.json"
+
+
 def scan_procs() -> tuple[set[int], list[int]]:
     """One /proc pass: (game pids, UI pids). Descendants of Steam's
     `reaper SteamLaunch` are the game; UI_COMMS outside it are the UI.
     comm comes from stat, and cmdline is read only for `reaper`: this runs
     every second, and reading three files per process cost ~5 % CPU idle."""
+    global CURRENT_APPID
     children: dict[int, list[int]] = {}
-    roots, ui = [], []
+    roots, ui, appids = [], [], []
     for p in os.listdir("/proc"):
         if not p.isdigit():
             continue
@@ -430,6 +456,19 @@ def scan_procs() -> tuple[set[int], list[int]]:
             # argv: /…/reaper SteamLaunch AppId=<id> -- <game>
             if b"reaper\0SteamLaunch\0" in cmd:
                 roots.append(pid)
+                m = re.search(rb"\0AppId=(\d+)\0", cmd)
+                if m:
+                    appids.append(int(m.group(1)))
+    appid = appids[-1] if appids else 0
+    if appid != CURRENT_APPID:
+        CURRENT_APPID = appid
+        try:
+            os.makedirs(os.path.dirname(GAME_FILE), exist_ok=True)
+            with open(GAME_FILE + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump({"appid": appid}, fh)
+            os.replace(GAME_FILE + ".tmp", GAME_FILE)
+        except OSError:
+            pass
     out, stack = set(), list(roots)
     while stack:
         pid = stack.pop()
@@ -1240,7 +1279,7 @@ class Daemon:
             if now >= next_slow:
                 next_slow = now + 1.0
                 p = self.st["profile"]
-                self.fan.tick(p, self.st.get("fan"), os.path.exists(STANDBY_FLAG))
+                self.fan.tick(p, game_fan(self.st), os.path.exists(STANDBY_FLAG))
                 self.leds.tick(self.st.get("power_led", True))
                 # Battery/heat light modes follow the device every 10 s.
                 if now >= next_live and not os.path.exists(STANDBY_FLAG):

@@ -31,6 +31,24 @@ const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
 const setBypass = callable("set_bypass");
 const setButton = callable("set_button");
+const setGameFan = callable("set_game_fan");
+const GAME_FAN_OPTIONS = [
+    { data: "global", label: "Same as above" },
+    { data: "silent", label: "Quiet curve" },
+    { data: "balanced", label: "Balanced curve" },
+    { data: "turbo", label: "Cool curve" },
+    { data: "fixed-40", label: "Fixed 40%" },
+    { data: "fixed-60", label: "Fixed 60%" },
+    { data: "fixed-80", label: "Fixed 80%" },
+    { data: "fixed-100", label: "Fixed 100%" },
+];
+function gameName(appid) {
+    try {
+        const o = window.appStore && window.appStore.GetAppOverviewByAppID(appid);
+        if (o && o.display_name) return o.display_name;
+    } catch (e) {}
+    return `App ${appid}`;
+}
 const BUTTON_ACTIONS = [
     { data: "profile-next", label: "Next performance profile" },
     { data: "rgb-next", label: "Next stick lighting" },
@@ -161,6 +179,15 @@ function Content() {
                 checked: !!fan.boost,
                 onChange: (v) => setFan(fan.mode, fan.fixed, v).then(refresh),
             })),
+            st.game && st.game.appid ? row(jsx(DFL.DropdownItem, {
+                label: `For ${gameName(st.game.appid)}`,
+                description: st.game.fan === "global"
+                    ? "Uses the settings above. Pick a curve or speed to keep for this game"
+                    : "Used whenever this game runs (above 90 °C a fixed speed still gives way)",
+                rgOptions: GAME_FAN_OPTIONS,
+                selectedOption: st.game.fan,
+                onChange: (o) => setGameFan(st.game.appid, o.data).then(refresh),
+            })) : null,
         ] }),
         st.bypass && st.bypass.supported ? jsxs(DFL.PanelSection, { title: "Battery", children: [
             row(jsx(DFL.ToggleField, {

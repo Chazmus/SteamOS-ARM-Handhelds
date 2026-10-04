@@ -47,6 +47,25 @@ def load() -> dict[str, Any]:
     return st
 
 
+GAME_FILE = "/run/konkr/game.json"
+
+
+def game_fan_state(st: dict[str, Any]) -> dict[str, Any]:
+    """The game konkrd sees running (0 for none) and its fan choice."""
+    try:
+        appid = int(json.load(open(GAME_FILE, encoding="utf-8")).get("appid", 0))
+    except (OSError, ValueError, TypeError):
+        appid = 0
+    entry = (st.get("fan_games") or {}).get(str(appid)) if appid else None
+    if not entry:
+        choice = "global"
+    elif entry.get("mode") == "fixed":
+        choice = f"fixed-{int(entry.get('fixed', 50))}"
+    else:
+        choice = entry.get("curve", "global")
+    return {"appid": appid, "fan": choice}
+
+
 def save(st: dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     with open(STATE + ".tmp", "w", encoding="utf-8") as fh:
@@ -146,6 +165,7 @@ class Plugin:
             "profile": st["profile"],
             "rgb": st["rgb"],
             "fan": st["fan"],
+            "game": game_fan_state(st),
             "power_led": st["power_led"],
             "buttons": st["buttons"],
             # What this device has, so the panel only shows what works here.
@@ -200,6 +220,23 @@ class Plugin:
                      "fixed": max(0, min(100, int(fixed))), "boost": bool(boost)}
         save(st)
         return st["fan"]
+
+    async def set_game_fan(self, appid: int = 0, choice: str = "global", **_: Any) -> dict:
+        """The running game's own fan setting: "global" (none), a curve
+        ("silent", "balanced", "turbo") or "fixed-<percent>"."""
+        appid = int(appid or 0)
+        st = load()
+        games = st.setdefault("fan_games", {})
+        if not appid:
+            return game_fan_state(st)
+        if choice == "global":
+            games.pop(str(appid), None)
+        elif choice in ("silent", "balanced", "turbo"):
+            games[str(appid)] = {"curve": choice}
+        elif choice.startswith("fixed-") and choice[6:].isdigit():
+            games[str(appid)] = {"mode": "fixed", "fixed": max(0, min(100, int(choice[6:])))}
+        save(st)
+        return game_fan_state(st)
 
     async def set_button(self, key: str = "F13", action: str = "none", **_: Any) -> dict:
         if key not in ("F13", "F14") or action not in ACTIONS:
