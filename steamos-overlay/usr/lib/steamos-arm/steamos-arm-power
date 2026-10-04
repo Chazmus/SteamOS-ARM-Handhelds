@@ -12,6 +12,9 @@ battery charge limit goes to the battery driver's own threshold.
   TdpLimit1             watts                      -> state "tdp"
   GpuPerformanceLevel1  auto / manual + MHz        -> state "gpu_manual_mhz"
   BatteryChargeLimit1   percent                    -> charge_control_end_threshold
+  org.steamos_arm.Power1.BypassCharging (ours, for Handheld Control and the
+                        bottom screen): plugged in, the battery holds where it
+                        is and the device runs from the charger
 
 Changes made elsewhere (a button, Handheld Control) are announced to Steam
 with PropertiesChanged, so its sliders follow.
@@ -84,33 +87,75 @@ def charge_node() -> str | None:
     return None
 
 
-def set_charge_limit(level: int) -> None:
+# The battery driver (qcom_battmgr) won't stop charging below 55 %: lower
+# requests come back as 50/55 (measured on a Pocket FIT).
+CHARGE_FLOOR = 55
+
+
+def write_thresholds(end: int) -> None:
     node = charge_node()
     if not node:
         return
-    level = 100 if level < 0 else max(50, min(100, level))
     # The start threshold has to stay below the end one; charging resumes 5 %
-    # under the limit, like a phone's "protect battery".
-    for name, value in (("charge_control_start_threshold", max(0, level - 5) if level < 100 else 0),
-                        ("charge_control_end_threshold", level)):
+    # under it, like a phone's "protect battery". The end goes first when
+    # raising, last when lowering, so start < end holds at every step.
+    pairs = [("charge_control_start_threshold", max(0, end - 5) if end < 100 else 0),
+             ("charge_control_end_threshold", end)]
+    try:
+        cur = int(open(f"{node}/charge_control_end_threshold").read().strip())
+    except (OSError, ValueError):
+        cur = 100
+    if end > cur:
+        pairs.reverse()
+    for name, value in pairs:
         try:
             with open(f"{node}/{name}", "w") as fh:
                 fh.write(str(value))
         except OSError as exc:
-            log(f"charge limit {name}={value}: {exc}")
+            log(f"charge {name}={value}: {exc}")
+
+
+def capacity() -> int:
+    node = charge_node()
+    try:
+        return int(open(f"{node}/capacity").read().strip()) if node else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def apply_charging() -> None:
+    """Bypass wins over the limit; with neither, charge to full."""
     own = read_json(OWN_STATE)
-    own["charge_limit"] = level
+    if own.get("bypass"):
+        write_thresholds(int(own.get("bypass_level", CHARGE_FLOOR)))
+    else:
+        limit = int(own.get("charge_limit", 100))
+        write_thresholds(100 if limit < 0 else limit)
+
+
+def set_charge_limit(level: int) -> None:
+    own = read_json(OWN_STATE)
+    own["charge_limit"] = 100 if level < 0 else max(CHARGE_FLOOR, min(100, level))
     write_json(OWN_STATE, own)
+    apply_charging()
+
+
+def set_bypass(on: bool) -> None:
+    """Hold the battery where it is now (55 % at least) while plugged in."""
+    own = read_json(OWN_STATE)
+    own["bypass"] = bool(on)
+    if on:
+        own["bypass_level"] = max(CHARGE_FLOOR, min(100, capacity()))
+    write_json(OWN_STATE, own)
+    apply_charging()
+    log(f"bypass charging {'on at ' + str(own.get('bypass_level')) + ' %' if on else 'off'}")
 
 
 def charge_limit() -> int:
-    node = charge_node()
-    if not node:
+    """What Steam's slider shows: the limit chosen, not bypass's hold level."""
+    if not charge_node():
         return -1
-    try:
-        v = int(open(f"{node}/charge_control_end_threshold").read().strip())
-    except (OSError, ValueError):
-        return -1
+    v = int(read_json(OWN_STATE).get("charge_limit", 100))
     return -1 if v >= 100 else v
 
 
@@ -133,6 +178,11 @@ XML = f"""
     <property name="ManualGpuClock" type="u" access="readwrite"/>
     <property name="ManualGpuClockMin" type="u" access="read"/>
     <property name="ManualGpuClockMax" type="u" access="read"/>
+  </interface>
+  <interface name="org.steamos_arm.Power1">
+    <property name="BypassCharging" type="b" access="readwrite"/>
+    <property name="BypassLevel" type="i" access="read"/>
+    <property name="BypassSupported" type="b" access="read"/>
   </interface>
   <interface name="{IFACE}BatteryChargeLimit1">
     <property name="MaxChargeLevel" type="i" access="readwrite"/>
@@ -174,7 +224,12 @@ class Power:
             },
             "BatteryChargeLimit1": {
                 "MaxChargeLevel": GLib.Variant("i", charge_limit()),
-                "SuggestedMinimumLimit": GLib.Variant("i", 50),
+                "SuggestedMinimumLimit": GLib.Variant("i", CHARGE_FLOOR),
+            },
+            "Power1": {
+                "BypassCharging": GLib.Variant("b", bool(read_json(OWN_STATE).get("bypass"))),
+                "BypassLevel": GLib.Variant("i", int(read_json(OWN_STATE).get("bypass_level", CHARGE_FLOOR))),
+                "BypassSupported": GLib.Variant("b", charge_node() is not None),
             },
         }
 
@@ -184,11 +239,15 @@ class Power:
         except Exception:
             return {}
 
+    @staticmethod
+    def short(iface: str) -> str:
+        return "Power1" if iface == "org.steamos_arm.Power1" else iface[len(IFACE):]
+
     def get(self, conn, sender, path, iface, prop):
-        return self.values()[iface[len(IFACE):]][prop]
+        return self.values()[self.short(iface)][prop]
 
     def set(self, conn, sender, path, iface, prop, value):
-        short = iface[len(IFACE):]
+        short = self.short(iface)
         v = value.unpack()
         st = read_json(STATE)
         if short == "PerformanceProfile1" and prop == "PerformanceProfile":
@@ -209,6 +268,8 @@ class Power:
                 change_daemon_state(gpu_manual_mhz=self.manual_mhz)
         elif short == "BatteryChargeLimit1" and prop == "MaxChargeLevel":
             set_charge_limit(int(v))
+        elif short == "Power1" and prop == "BypassCharging":
+            set_bypass(bool(v))
         else:
             return False
         GLib.idle_add(self.announce)
@@ -223,8 +284,9 @@ class Power:
                 if not changed:
                     continue
                 full = self.values()[iface]
+                name = "org.steamos_arm.Power1" if iface == "Power1" else IFACE + iface
                 self.conn.emit_signal(None, PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
-                                      GLib.Variant("(sa{sv}as)", (IFACE + iface, {k: full[k] for k in changed}, [])))
+                                      GLib.Variant("(sa{sv}as)", (name, {k: full[k] for k in changed}, [])))
         self.last = now or self.last
         return False
 
@@ -235,10 +297,17 @@ class Power:
 
 def main() -> int:
     # The charge limit outlives reboots (the firmware forgets it).
-    own = read_json(OWN_STATE)
     if charge_node():
-        if "charge_limit" in own:
-            set_charge_limit(int(own["charge_limit"]))
+        # First run: keep a limit set before us (Plasma's battery protection).
+        own = read_json(OWN_STATE)
+        if "charge_limit" not in own:
+            try:
+                end = int(open(f"{charge_node()}/charge_control_end_threshold").read().strip())
+            except (OSError, ValueError):
+                end = 100
+            own["charge_limit"] = end
+            write_json(OWN_STATE, own)
+        apply_charging()
         # steamos-manager only relays the battery interface where there is a
         # threshold to set; the other three are in /usr/share.
         os.makedirs(os.path.dirname(REMOTES), exist_ok=True)

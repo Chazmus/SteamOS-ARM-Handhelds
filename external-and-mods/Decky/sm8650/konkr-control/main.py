@@ -76,6 +76,23 @@ def telemetry() -> dict[str, Any]:
     return out
 
 
+# Bypass charging lives in steamos-arm-power (it also serves Steam's charge
+# limit): plugged in, the battery holds and the device runs from the charger.
+POWER = ["busctl", "--system", "--", "org.steamos_arm.Power", "/org/steamos_arm/Power", "org.steamos_arm.Power1"]
+
+
+def bypass_state() -> dict[str, Any]:
+    out: dict[str, Any] = {"supported": False, "on": False, "level": 55}
+    for prop, key in (("BypassSupported", "supported"), ("BypassCharging", "on"), ("BypassLevel", "level")):
+        r = subprocess.run(["busctl", "--system", "get-property", *POWER[3:], prop],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return out
+        val = r.stdout.split(maxsplit=1)[-1].strip()
+        out[key] = (val == "true") if key != "level" else int(val)
+    return out
+
+
 def mode_of(st: dict[str, Any]) -> tuple[str, bool]:
     return st["profile"], bool(st["fan"].get("boost"))
 
@@ -140,8 +157,15 @@ class Plugin:
             "mcu_loaded": os.path.isdir("/sys/module/konkr_sysbtn"),
             "sticks_led": bool(leds),
             "daemon": subprocess.run(["systemctl", "is-active", "--quiet", DAEMON]).returncode == 0,
+            "bypass": await asyncio.to_thread(bypass_state),
             **await asyncio.to_thread(telemetry),
         }
+
+    async def set_bypass(self, on: bool = False, **_: Any) -> dict[str, Any]:
+        await asyncio.to_thread(subprocess.run, ["busctl", "--system", "set-property", *POWER[3:],
+                                                 "BypassCharging", "b", "true" if on else "false"],
+                                capture_output=True, timeout=5)
+        return await asyncio.to_thread(bypass_state)
 
     async def set_profile(self, profile: str = "balanced", **_: Any) -> str:
         if profile not in PROFILES:

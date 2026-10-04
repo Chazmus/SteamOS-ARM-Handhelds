@@ -94,6 +94,10 @@ Item {
                     onFlipped: Ui.post("/konkrd/sticks-toggle")
                 }
                 Toggle {
+                    label: "Bypass"; icon: "battery-full-charging-symbolic"; on: home.tg.bypass
+                    onFlipped: Ui.post("/toggle", { name: "bypass", on: !home.tg.bypass })
+                }
+                Toggle {
                     label: "Screen off"; icon: "video-display-symbolic"; on: false
                     onFlipped: Ui.post("/brightness", { bottom_on: false })
                 }

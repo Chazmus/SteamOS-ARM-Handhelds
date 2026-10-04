@@ -552,8 +552,14 @@ def notes_put(appid: int, text: str) -> bool:
 def toggles() -> dict:
     wifi = run("nmcli", "radio", "wifi").strip()
     bt = re.search(r"Powered:\s*(\w+)", run("bluetoothctl", "show", timeout=3))
+    # Bypass charging (steamos-arm-power); None where the battery can't.
+    bp = run("busctl", "--system", "get-property", "org.steamos_arm.Power", "/org/steamos_arm/Power",
+             "org.steamos_arm.Power1", "BypassCharging", timeout=3).split()
+    sup = run("busctl", "--system", "get-property", "org.steamos_arm.Power", "/org/steamos_arm/Power",
+              "org.steamos_arm.Power1", "BypassSupported", timeout=3).split()
     return {"wifi": wifi == "enabled" if wifi else None,
-            "bluetooth": (bt.group(1) == "yes") if bt else None}
+            "bluetooth": (bt.group(1) == "yes") if bt else None,
+            "bypass": (bp[-1] == "true") if bp and sup and sup[-1] == "true" else None}
 
 
 def set_toggle(name: str, on: bool) -> bool:
@@ -562,6 +568,10 @@ def set_toggle(name: str, on: bool) -> bool:
         return True
     if name == "bluetooth":
         run("bluetoothctl", "power", "on" if on else "off", timeout=5)
+        return True
+    if name == "bypass":
+        run("busctl", "--system", "set-property", "org.steamos_arm.Power", "/org/steamos_arm/Power",
+            "org.steamos_arm.Power1", "BypassCharging", "b", "true" if on else "false", timeout=5)
         return True
     return False
 

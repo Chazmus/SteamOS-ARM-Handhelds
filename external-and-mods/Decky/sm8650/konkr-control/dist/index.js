@@ -29,6 +29,7 @@ const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
+const setBypass = callable("set_bypass");
 
 const PROFILES = [
     { data: "silent", label: "Silent", desc: "Quiet fan, GPU capped at 75%, no game boost" },
@@ -102,6 +103,16 @@ function Content() {
                 onChange: (v) => setFan(fan.mode, fan.fixed, v).then(refresh),
             })),
         ] }),
+        st.bypass && st.bypass.supported ? jsxs(DFL.PanelSection, { title: "Battery", children: [
+            row(jsx(DFL.ToggleField, {
+                label: "Bypass charging",
+                description: st.bypass.on
+                    ? `Plugged in, the battery stays at ${st.bypass.level} % and the device runs from the charger`
+                    : "Run from the charger and leave the battery alone, for long sessions plugged in (holds at 55 % or more)",
+                checked: !!st.bypass.on,
+                onChange: (v) => setBypass(v).then(refresh),
+            })),
+        ] }) : null,
         jsxs(DFL.PanelSection, { title: "Lighting", children: [
             row(jsx(DFL.DropdownItem, {
                 label: "Stick lighting",
