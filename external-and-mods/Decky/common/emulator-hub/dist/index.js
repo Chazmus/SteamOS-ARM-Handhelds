@@ -132,14 +132,20 @@ async function watchJobs() {
 }
 
 // ------------------------------------------------------------- the panel --
+// Our own bar: Steam's ProgressBarWithInfo is laid out for full-width pages
+// and spills past the left edge of the Quick Access panel.
 function Progress({ job, onCancel }) {
-    const pct = Math.round(job.pct || 0);
-    const bar = DFL.ProgressBarWithInfo
-        ? jsx(DFL.ProgressBarWithInfo, { nProgress: pct, sOperationText: job.stage || "Working", nTransitionSec: 0.4 })
-        : small(`${job.stage || "Working"} · ${pct}%`);
-    return jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", width: "100%" }, children: [
-        jsx("div", { style: { flex: 1 }, children: bar }),
-        jsx(DFL.DialogButton, { style: { minWidth: "0", width: "56px", padding: "6px" }, onClick: onCancel, children: "✕" }),
+    const pct = Math.max(0, Math.min(100, Math.round(job.pct || 0)));
+    return jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px", width: "100%", boxSizing: "border-box" }, children: [
+        jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [
+            jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.85, marginBottom: "4px" }, children: [
+                jsx("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: job.stage || "Working" }),
+                jsx("span", { children: `${pct}%` }),
+            ] }),
+            jsx("div", { style: { height: "6px", borderRadius: "3px", background: "rgba(255,255,255,0.12)", overflow: "hidden" }, children:
+                jsx("div", { style: { height: "100%", width: `${pct}%`, borderRadius: "3px", background: "#1a9fff", transition: "width 0.4s ease" } }) }),
+        ] }),
+        jsx(DFL.DialogButton, { style: { minWidth: "0", width: "44px", height: "32px", padding: "0", flexShrink: 0 }, onClick: onCancel, children: "✕" }),
     ] });
 }
 
