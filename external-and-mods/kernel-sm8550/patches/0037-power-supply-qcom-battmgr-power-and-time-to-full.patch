@@ -1,0 +1,61 @@
+From: hashtagbasit
+Subject: power: supply: qcom_battmgr: real power and a time to full on SM8550-family firmware
+
+On a Pocket FIT (SM8650) the firmware's battery power reading is stale: it
+sat at 99.18 W while the battery took 19.7 W (2.3 A at 8.6 V), and it has
+no time-to-full estimate at all (-1). UPower derives the charge rate from
+power_now and Steam shows "??" for the time until charged.
+
+For the SM8550 variant:
+- power_now is the battery's own current times its voltage.
+- time_to_full_avg, when the firmware has none and the battery is charging,
+  is the charge still to go (up to the charge limit when one is set, since
+  that is when charging stops) over the charging current.
+
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -600,6 +600,17 @@
+ 		break;
+ 	case POWER_SUPPLY_PROP_POWER_NOW:
+ 		val->intval = battmgr->status.power_now;
++		/*
++		 * The SM8550-family firmware's power reading goes stale: a Pocket
++		 * FIT reported a fixed 99.18 W while its battery took 19.7 W, and
++		 * UPower (and Steam through it) take the charge and drain rate
++		 * from here. Report the battery's own current times voltage.
++		 */
++		if (battmgr->variant == QCOM_BATTMGR_SM8550 && battmgr->status.voltage_now) {
++			s64 ua = abs(battmgr->status.current_now);
++
++			val->intval = (int)div_s64(ua * battmgr->status.voltage_now, 1000000);
++		}
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+@@ -663,6 +674,25 @@
+ 		break;
+ 	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
+ 		val->intval = battmgr->status.charge_time;
++		/*
++		 * This firmware has no estimate (-1), so Steam shows "??" while
++		 * charging. Estimate it from the charge still to go and the
++		 * charging current, up to the charge limit when one is set: that
++		 * is when charging stops.
++		 */
++		if (battmgr->variant == QCOM_BATTMGR_SM8550 &&
++		    (int)battmgr->status.charge_time <= 0 &&
++		    battmgr->status.status == POWER_SUPPLY_STATUS_CHARGING &&
++		    battmgr->status.current_now > 0) {
++			u64 target = battmgr->info.last_full_capacity;
++			unsigned int end = battmgr->info.charge_ctrl_end;
++
++			if (end > 0 && end < 100)
++				target = div_u64(target * end, 100);
++			val->intval = target > battmgr->status.capacity ?
++				(int)div_u64((target - battmgr->status.capacity) * 3600,
++					     battmgr->status.current_now) : 0;
++		}
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
+ 		val->intval = battmgr->info.charge_ctrl_start;
