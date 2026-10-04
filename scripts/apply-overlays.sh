@@ -782,6 +782,17 @@ for lib in libMangoHud.so libMangoHud_opengl.so libMangoHud_shim.so libMangoHud-
     install_file "$STOCK/usr/lib/$lib" "$R/usr/lib/$lib" 0755
   fi
 done
+# Wi-Fi back in under a second after sleep: the Frame's NetworkManager with
+# Valve's resume scan patch (scripts/build-networkmanager-in-rootfs.sh).
+NMBUILD="${NETWORKMANAGER_BUILD:-${WORKDIR}/networkmanager-build}"
+NMVER="$(cat "$NMBUILD/VERSION" 2>/dev/null)"
+if [[ -x "$NMBUILD/NetworkManager" && -d "$R/usr/lib/NetworkManager/$NMVER" ]]; then
+  install_file "$NMBUILD/NetworkManager" "$R/usr/bin/NetworkManager" 0755
+  install_file "$NMBUILD/libnm-device-plugin-wifi.so" "$R/usr/lib/NetworkManager/$NMVER/libnm-device-plugin-wifi.so" 0755
+  log "NetworkManager: ours ($NMVER, fast resume)"
+else
+  log "WARN: no NetworkManager build for this rootfs, Wi-Fi takes ~9 s to come back after sleep"
+fi
 # Steam's performance overlay: our mangoapp (scripts/build-mangohud-in-rootfs.sh)
 # reads GPU load, clock and VRAM on Adreno; stock shows the GPU at 0 %.
 MHBUILD="${MANGOHUD_BUILD:-${WORKDIR}/mangohud-build}"
