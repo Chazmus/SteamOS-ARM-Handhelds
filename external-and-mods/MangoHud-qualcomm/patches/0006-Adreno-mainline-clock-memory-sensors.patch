@@ -1,0 +1,151 @@
+Subject: Adreno on mainline kernels: clock, memory, no fake zeros, no crash
+
+On mainline msm (no kgsl) the overlay read 0 for the GPU clock and VRAM
+and showed 0 W / 0 MHz for sensors these SoCs do not have.
+
+- GPU clock from the GPU devfreq cur_freq when there is no kgsl.
+- VRAM: the game's GPU memory (msm drm-total-memory per client); Adreno
+  shares system RAM, so the system-wide VRAM line shows that too.
+- CPU/GPU power and the memory clock are left blank when there is no
+  sensor, instead of a made-up 0.
+- Listing a game's fds no longer throws (process gone or unreadable),
+  which took the whole overlay down; the next rescan tries again.
+
+--- a/src/gpu_fdinfo.cpp	2026-10-04 02:50:33
++++ b/src/gpu_fdinfo.cpp	2026-10-04 02:48:14
+@@ -26,7 +26,19 @@
+     std::set<std::string> client_ids;
+     int total = 0;
+ 
+-    for (const auto& entry : fs::directory_iterator(path)) {
++    // A game can exit, or be unreadable to us, while we list its fds; the
++    // throwing iterator would take the whole overlay down. Treat that as
++    // "no fds this time", the next rescan tries again.
++    std::error_code ec;
++    fs::directory_iterator it(path, ec);
++    if (ec) {
++        SPDLOG_DEBUG("can't list {}: {}", path.string(), ec.message());
++        return;
++    }
++    for (; it != fs::directory_iterator(); it.increment(ec)) {
++        if (ec)
++            break;
++        const auto& entry = *it;
+         auto fd_path = entry.path().string();
+         auto file = std::ifstream(fd_path);
+ 
+@@ -554,8 +566,11 @@
+ {
+     if (module == "panfrost" || module == "panthor")
+         return get_gpu_clock_mali();
+-    else if (module == "msm_dpu")
+-        return get_kgsl_clock();
++    else if (module == "msm_dpu") {
++        // Android's kgsl when there is one, else the mainline GPU's devfreq.
++        int kgsl = get_kgsl_clock();
++        return kgsl > 0 ? kgsl : get_devfreq_gpu_clock();
++    }
+ 
+     if (!gpu_clock_stream.is_open())
+         return 0;
+@@ -572,6 +587,28 @@
+     return std::stoi(clock_str);
+ }
+ 
++int GPU_fdinfo::get_devfreq_gpu_clock() {
++    if (!devfreq_clock_stream.is_open()) {
++        std::error_code ec;
++        for (const auto& entry : fs::directory_iterator("/sys/class/devfreq", ec)) {
++            auto name = entry.path().filename().string();
++            if (name.find("gpu") == std::string::npos)
++                continue;
++            devfreq_clock_stream.open(entry.path() / "cur_freq");
++            break;
++        }
++        if (!devfreq_clock_stream.is_open())
++            return 0;
++    }
++    std::string freq_str;
++    devfreq_clock_stream.clear();
++    devfreq_clock_stream.seekg(0);
++    std::getline(devfreq_clock_stream, freq_str);
++    if (freq_str.empty())
++        return 0;
++    return static_cast<int>(std::round(std::stoull(freq_str) / 1'000'000.0));
++}
++
+ int GPU_fdinfo::get_gpu_clock_mali() {
+     if (fdinfo_data.empty())
+         return 0;
+@@ -763,6 +800,10 @@
+ 
+         metrics.load = get_gpu_load();
+         metrics.proc_vram_used = get_memory_used();
++        // Adreno has no VRAM of its own; the VRAM line shows the game's GPU
++        // memory (system-wide figures only exist on discrete cards).
++        if (module == "msm_dpu")
++            metrics.sys_vram_used = metrics.proc_vram_used;
+ 
+         metrics.powerUsage = get_power_usage();
+         metrics.powerLimit = static_cast<float>(hwmon_sensors["power_limit"].val) / 1'000'000;
+--- a/src/gpu_fdinfo.h	2026-10-04 02:50:33
++++ b/src/gpu_fdinfo.h	2026-10-04 02:48:14
+@@ -98,6 +98,8 @@
+ 
+     uint64_t get_gpu_time_panfrost();
+     int get_gpu_clock_mali();
++    int get_devfreq_gpu_clock();
++    std::ifstream devfreq_clock_stream;
+ 
+     std::ifstream throttle_status_stream;
+     std::vector<std::ifstream> throttle_power_streams;
+@@ -145,8 +147,10 @@
+             drm_engine_type = "drm-engine-gfx";
+             drm_memory_type = "drm-memory-vram";
+         } else if (module == "msm_dpu") {
+-            // msm driver does not report vram usage
++            // Adreno shares system RAM: what a game's GPU work holds is its
++            // "VRAM" (drm-total-memory, reported per client by msm).
+             drm_engine_type = "drm-engine-gpu";
++            drm_memory_type = "drm-total-memory";
+             init_kgsl();
+         } else if (module == "msm_drm") {
+             init_kgsl();
+--- a/src/hud_elements.cpp	2026-10-04 02:50:33
++++ b/src/hud_elements.cpp	2026-10-04 02:48:14
+@@ -369,8 +369,11 @@
+                 ImGui::PopFont();
+             }
+ 
+-            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_power]) {
++            // No power sensor (Qualcomm SoCs): an empty cell, not a made-up 0 W.
++            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_power] && gpu->metrics.powerUsage <= 0) {
+                 ImguiNextColumnOrNewRow();
++            } else if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_power]) {
++                ImguiNextColumnOrNewRow();
+                 char str[16];
+                 snprintf(str, sizeof(str), "%.1f", gpu->metrics.powerUsage);
+                 if (strlen(str) > 4)
+@@ -476,7 +479,9 @@
+             ImGui::PopFont();
+         }
+ 
+-        if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_cpu_power]){
++        if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_cpu_power] && cpuStats.GetCPUDataTotal().power <= 0) {
++            ImguiNextColumnOrNewRow();
++        } else if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_cpu_power]){
+             ImguiNextColumnOrNewRow();
+             char str[16];
+             snprintf(str, sizeof(str), "%.1f", cpuStats.GetCPUDataTotal().power);
+@@ -672,7 +677,10 @@
+                         HUDElements.TextColored(HUDElements.colors.text, "°C");
+                 }
+ 
+-                if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock]){
++                // Shared-memory GPUs (Adreno) have no memory clock of their own.
++                if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock] && gpu->metrics.MemClock <= 0) {
++                    ImguiNextColumnOrNewRow();
++                } else if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock]){
+                     ImguiNextColumnOrNewRow();
+                     right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", gpu->metrics.MemClock);
+                     ImGui::SameLine(0, 1.0f);

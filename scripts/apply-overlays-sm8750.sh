@@ -331,6 +331,14 @@ cat >"$R/usr/share/steamos-sm8650/frame-turnip_icd.aarch64.json" <<'JSON'
 JSON
 install_file "${ROOT}/sm8650-overlay/usr/lib/steamos-sm8650/bin/mangoapp" \
   "$R/usr/lib/steamos-sm8650/bin/mangoapp" 0755
+# Our mangoapp (GPU load, clock and VRAM on Adreno; stock shows 0 %), built
+# by scripts/build-mangohud-in-rootfs.sh in the same rootfs.
+MHBUILD="${MANGOHUD_BUILD:-${WORKDIR:-/work}/mangohud-build}"
+if [[ -x "$MHBUILD/mangoapp" ]]; then
+  install_file "$MHBUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
+else
+  log "WARN: no $MHBUILD/mangoapp, the overlay keeps stock (GPU shows 0 %)"
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Odin 3 Overlay (InputPlumber, Display, Audio, Device Manager)

@@ -13,6 +13,7 @@ from MaSi's **SteamOS-ARM-SM8550**, so everything MaSi credits below still appli
 | **ROCKNIX SM8650** | https://github.com/ROCKNIX/distribution | Kernel recipe (20260801, Linux 7.1.2), Pocket FIT panel/touch/MCU patches, device tree, firmware, audio UCM |
 | **ROCKNIX SM8550** | https://github.com/ROCKNIX/distribution | Kernel recipe, patches and device trees for all 13 SM8550 handhelds, firmware, audio UCM, controller event maps |
 | **ROCKNIX ABL** | https://github.com/ROCKNIX/abl | Bootloader with device model selection |
+| **ROCKNIX MangoHud patches** | https://github.com/ROCKNIX/distribution/tree/next/projects/ROCKNIX/packages/apps/mangohud/patches | Qualcomm GPU, battery and RAM support for Steam's performance overlay (`external-and-mods/MangoHud-qualcomm/`) |
 | **ArmadaOS** | https://github.com/armada-os/armada | Reference for SM8550 device quirks: IRQ affinity for the Adreno 740, AYANEO Pocket button codes, Thor/DS panel and backlight layout |
 | **lsfg-vk 2.0** by PancakeTAS | https://lsfg-vk.dev | Frame generation layer. The ARM64 build shipped here is compiled from the official source with no code changes; licensed under [CC BY-NC-ND 4.0](sm8650-overlay/usr/share/licenses/lsfg-vk/LICENSE.txt) |
 | **lsfg-vk 1.x** by PancakeTAS, fork by xXJSONDeruloXx | https://github.com/xXJSONDeruloXx/lsfg-vk | Older frame generation layer (MIT) in `external-and-mods/lsfg-vk/` |

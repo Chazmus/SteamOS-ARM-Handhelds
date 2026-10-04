@@ -777,6 +777,15 @@ for lib in libMangoHud.so libMangoHud_opengl.so libMangoHud_shim.so libMangoHud-
     install_file "$STOCK/usr/lib/$lib" "$R/usr/lib/$lib" 0755
   fi
 done
+# Steam's performance overlay: our mangoapp (scripts/build-mangohud-in-rootfs.sh)
+# reads GPU load, clock and VRAM on Adreno; stock shows the GPU at 0 %.
+MHBUILD="${MANGOHUD_BUILD:-${WORKDIR}/mangohud-build}"
+if [[ -x "$MHBUILD/mangoapp" ]]; then
+  install_file "$MHBUILD/mangoapp" "$R/usr/bin/mangoapp" 0755
+  log "mangoapp: ours ($MHBUILD)"
+else
+  log "WARN: no $MHBUILD/mangoapp, Steam's overlay keeps stock (GPU shows 0 %)"
+fi
 
 # ---------------------------------------------------------------------------
 # lsfg-vk
