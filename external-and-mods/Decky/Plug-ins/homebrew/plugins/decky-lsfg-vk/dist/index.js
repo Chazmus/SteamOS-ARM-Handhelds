@@ -392,7 +392,7 @@ const FLOW_SCALE = "flow_scale";
 const PERFORMANCE_MODE = "performance_mode";
 const OVERRIDE_PRESENT_MODE = "override_present_mode";
 const PRESERVE_SWAPCHAIN_IMAGE_COUNT = "preserve_swapchain_image_count";
-function getDefaults() { return { dll: "", no_fp16: false, active_in: [], pacing_mode: "vsync", multiplier: 2, flow_scale: 0.8, performance_mode: false, override_present_mode: true, preserve_swapchain_image_count: false }; }
+function getDefaults() { return { dll: "", no_fp16: false, active_in: [], pacing_mode: "vsync", multiplier: 2, flow_scale: 0.5, performance_mode: true, override_present_mode: true, preserve_swapchain_image_count: false }; }
 
 const DEFAULT_WRAPPER_PATH = "~/.lsfg";
 const COMMAND_TOKEN = "%command%";

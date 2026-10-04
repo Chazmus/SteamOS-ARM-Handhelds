@@ -22,8 +22,11 @@ PROFILE_DEFAULTS: Dict[str, Any] = {
     "active_in": [],
     "pacing_mode": "vsync",
     "multiplier": 2,
-    "flow_scale": 0.8,
-    "performance_mode": False,
+    # SteamOS-ARM: on Adreno the full-quality chain costs about as much GPU
+    # time as it gives back (GTA III on a Pocket FIT: 45-60 fps with or
+    # without it); performance mode at 0.5 flow doubled it to 75-110.
+    "flow_scale": 0.5,
+    "performance_mode": True,
     "override_present_mode": True,
     "preserve_swapchain_image_count": False,
 }
