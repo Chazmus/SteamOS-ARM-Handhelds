@@ -2,7 +2,7 @@
 Description=Redo USB-C Power Delivery for a charger connected at boot
 
 [Service]
-Type=oneshot
+Type=exec
 ExecStart=/usr/lib/konkr/konkr-pd-kick
 
 [Install]
