@@ -259,6 +259,8 @@ bool wlserver_init( void );
 void wlserver_run(void);
 
 void wlserver_lock(void);
+// Lock, giving up after ms milliseconds. True when the lock was taken.
+bool wlserver_lock_within(int ms);
 void wlserver_unlock(bool flush = true);
 bool wlserver_is_lock_held(void);
 

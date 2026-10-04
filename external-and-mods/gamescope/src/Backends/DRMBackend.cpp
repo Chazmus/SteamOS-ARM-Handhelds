@@ -2467,7 +2467,15 @@ void finish_drm(struct drm_t *drm)
 		g_page_flip_pipe_fds[0] = -1;
 	}
 
+	// Handing the device back to logind goes over the session's D-Bus
+	// connection, which the wlserver thread's event loop reads too. If that
+	// thread takes logind's reply, the release sits out D-Bus's 25 s timeout
+	// and systemd kills gamescope when Game Mode stops. Keep the wlserver
+	// thread out meanwhile (bounded, so a lock held elsewhere can't hang us).
+	bool bLocked = wlserver_lock_within( 1000 );
 	wlsession_close_kms();
+	if ( bLocked )
+		wlserver_unlock( false );
 	g_DRM.fd = -1;
 }
 

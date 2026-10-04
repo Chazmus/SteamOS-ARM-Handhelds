@@ -2873,6 +2873,19 @@ void wlserver_lock(void)
 	pthread_mutex_lock(&waylock);
 }
 
+bool wlserver_lock_within(int ms)
+{
+	struct timespec until;
+	clock_gettime(CLOCK_REALTIME, &until);
+	until.tv_sec += ms / 1000;
+	until.tv_nsec += (long)(ms % 1000) * 1000000;
+	if (until.tv_nsec >= 1000000000) {
+		until.tv_sec++;
+		until.tv_nsec -= 1000000000;
+	}
+	return pthread_mutex_timedlock(&waylock, &until) == 0;
+}
+
 void wlserver_unlock(bool flush)
 {
     if (flush)
