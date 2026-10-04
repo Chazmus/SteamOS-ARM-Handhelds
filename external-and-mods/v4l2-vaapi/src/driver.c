@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 #include <linux/dma-buf.h>
 #include <linux/ioctl.h>
@@ -37,6 +38,7 @@ struct k_drm_msm_gem_new { uint64_t size; uint32_t flags, handle; };
 #define K_DRM_IOCTL_VERSION _IOWR('d', 0x00, struct k_drm_version)
 #define K_DRM_IOCTL_GEM_CLOSE _IOW('d', 0x09, struct k_drm_gem_close)
 #define K_DRM_IOCTL_PRIME_HANDLE_TO_FD _IOWR('d', 0x2d, struct k_drm_prime_handle)
+#define K_DRM_IOCTL_PRIME_FD_TO_HANDLE _IOWR('d', 0x2e, struct k_drm_prime_handle)
 #define K_DRM_IOCTL_MSM_GEM_NEW _IOWR('d', 0x40 + 0x02, struct k_drm_msm_gem_new)
 #define K_MSM_BO_WC 0x00020000
 #define K_DRM_RDWR 02
@@ -52,10 +54,12 @@ void dbg(struct drv *d, const char *fmt, ...)
 	if (!d->debug)
 		return;
 	va_list ap;
+	FILE *f = d->log ? d->log : stderr;
 	va_start(ap, fmt);
-	fprintf(stderr, "msm_drv_video: ");
-	vfprintf(stderr, fmt, ap);
-	fputc('\n', stderr);
+	fprintf(f, "msm_drv_video: ");
+	vfprintf(f, fmt, ap);
+	fputc('\n', f);
+	fflush(f);
 	va_end(ap);
 }
 
@@ -223,20 +227,72 @@ static void layout_for(uint32_t w, uint32_t h, uint32_t *pitch, uint32_t *uv, ui
 	*size = ALIGN(*uv + *pitch * ALIGN((h + 1) / 2, 16), 4096);
 }
 
-static int alloc_dmabuf(struct drv *d, uint32_t size)
+static int alloc_dmabuf(struct drv *d, uint32_t size, uint32_t *gem)
 {
 	struct k_drm_msm_gem_new g = {.size = size, .flags = K_MSM_BO_WC};
 	if (ioctl(d->render_fd, K_DRM_IOCTL_MSM_GEM_NEW, &g))
 		return -1;
 	struct k_drm_prime_handle ph = {.handle = g.handle, .flags = O_CLOEXEC | K_DRM_RDWR};
-	int r = ioctl(d->render_fd, K_DRM_IOCTL_PRIME_HANDLE_TO_FD, &ph);
-	struct k_drm_gem_close gc = {.handle = g.handle};
-	ioctl(d->render_fd, K_DRM_IOCTL_GEM_CLOSE, &gc);     /* the dma-buf keeps it */
-	return r ? -1 : ph.fd;
+	if (ioctl(d->render_fd, K_DRM_IOCTL_PRIME_HANDLE_TO_FD, &ph)) {
+		struct k_drm_gem_close gc = {.handle = g.handle};
+		ioctl(d->render_fd, K_DRM_IOCTL_GEM_CLOSE, &gc);
+		return -1;
+	}
+	*gem = g.handle;            /* kept to wait for the GPU, see gpu_wait() */
+	return ph.fd;
 }
 
-static void surface_free(struct surface *s)
+/* A handle on our render node for a client's dma-buf (0 if it isn't ours to have). */
+static uint32_t import_gem(struct drv *d, int fd)
 {
+	struct k_drm_prime_handle ph = {.fd = fd};
+	return ioctl(d->render_fd, K_DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph) ? 0 : ph.handle;
+}
+
+struct k_drm_msm_timespec { int64_t tv_sec, tv_nsec; };
+struct k_drm_msm_gem_cpu_prep { uint32_t handle, op; struct k_drm_msm_timespec timeout; };
+#define K_DRM_IOCTL_MSM_GEM_CPU_PREP _IOW('d', 0x40 + 0x04, struct k_drm_msm_gem_cpu_prep)
+#define K_MSM_PREP_READ 0x01
+#define K_MSM_PREP_WRITE 0x02
+#define K_MSM_PREP_BOOKKEEP 0x10
+
+/*
+ * Wait until the GPU has finished with a surface. With VM_BIND (Turnip) the
+ * GPU's fences on shared buffers are bookkeeping-only and need the kernel's
+ * MSM_PREP_BOOKKEEP (patch 0048). Returns 0 when waited, -1 when this kernel
+ * can't, so the caller falls back to a time guard.
+ */
+int gpu_wait(struct drv *d, struct surface *s, int timeout_ms)
+{
+	if (d->gpu_wait == 0 || !s->gem)
+		return -1;
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	int64_t ns = t.tv_nsec + (int64_t)timeout_ms * 1000000;
+	struct k_drm_msm_gem_cpu_prep cp = {.handle = s->gem,
+		.op = K_MSM_PREP_READ | K_MSM_PREP_WRITE | K_MSM_PREP_BOOKKEEP,
+		.timeout = {.tv_sec = t.tv_sec + ns / 1000000000, .tv_nsec = ns % 1000000000}};
+	int r = ioctl(d->render_fd, K_DRM_IOCTL_MSM_GEM_CPU_PREP, &cp);
+	if (r && errno == EINVAL && d->gpu_wait < 0) {
+		dbg(d, "kernel can't wait for GPU readers (no MSM_PREP_BOOKKEEP), using a time guard");
+		d->gpu_wait = 0;
+		return -1;
+	}
+	if (d->gpu_wait < 0) {
+		d->gpu_wait = 1;
+		dbg(d, "waiting for GPU readers with MSM_PREP_BOOKKEEP");
+	}
+	if (r && errno == ETIMEDOUT)
+		dbg(d, "GPU still reading a surface after %d ms", timeout_ms);
+	return 0;
+}
+
+static void surface_free(struct drv *d, struct surface *s)
+{
+	if (s->gem) {
+		struct k_drm_gem_close gc = {.handle = s->gem};
+		ioctl(d->render_fd, K_DRM_IOCTL_GEM_CLOSE, &gc);
+	}
 	if (s->map)
 		munmap(s->map, s->size);
 	if (s->fd >= 0)
@@ -317,6 +373,7 @@ static VAStatus CreateSurfaces2(VADriverContextP ctx, unsigned int format, unsig
 			s->imported = 1;
 			if (!s->size)
 				s->size = (uint32_t)lseek(s->fd, 0, SEEK_END);
+			s->gem = import_gem(d, s->fd);
 		} else if (ext) {
 			if (n >= ext->num_buffers || ext->num_planes != 2 ||
 			    ext->pitches[0] != ext->pitches[1] || ext->offsets[0]) {
@@ -328,9 +385,10 @@ static VAStatus CreateSurfaces2(VADriverContextP ctx, unsigned int format, unsig
 			s->pitch = ext->pitches[0];
 			s->uv_offset = ext->offsets[1];
 			s->imported = 1;
+			s->gem = import_gem(d, s->fd);
 		} else {
 			layout_for(width, height, &s->pitch, &s->uv_offset, &s->size);
-			s->fd = alloc_dmabuf(d, s->size);
+			s->fd = alloc_dmabuf(d, s->size, &s->gem);
 		}
 		if (s->fd < 0) {
 			free(s);
@@ -350,7 +408,7 @@ bad:
 			obj_del(d, O_SURFACE, out[k]);
 			UNLOCK(d);
 			if (o)
-				surface_free(o);
+				surface_free(d, o);
 		}
 		return VA_STATUS_ERROR_INVALID_PARAMETER;
 fail:
@@ -360,7 +418,7 @@ fail:
 			obj_del(d, O_SURFACE, out[k]);
 			UNLOCK(d);
 			if (o)
-				surface_free(o);
+				surface_free(d, o);
 		}
 		return VA_STATUS_ERROR_ALLOCATION_FAILED;
 	}
@@ -389,7 +447,7 @@ static VAStatus DestroySurfaces(VADriverContextP ctx, VASurfaceID *list, int num
 					s->ctx->inflight[k] = NULL;
 		if (s->ctx && s->ctx->target == s)
 			s->ctx->target = NULL;
-		surface_free(s);
+		surface_free(d, s);
 	}
 	UNLOCK(d);
 	return VA_STATUS_SUCCESS;
@@ -1057,7 +1115,11 @@ VAStatus __attribute__((visibility("default"))) __vaDriverInit_1_17(VADriverCont
 		return VA_STATUS_ERROR_ALLOCATION_FAILED;
 	const char *e = getenv("MSM_VA_DEBUG");
 	d->debug = e ? atoi(e) : 0;
+	const char *lf = getenv("MSM_VA_LOG");
+	if (lf && *lf && (d->log = fopen(lf, "a")) && !d->debug)
+		d->debug = 1;
 	pthread_mutex_init(&d->lock, NULL);
+	d->gpu_wait = -1;
 	d->render_fd = open_msm_render();
 	if (d->render_fd < 0 || dec_find(d->dec_path, sizeof(d->dec_path))) {
 		dbg(d, "no msm render node or V4L2 H.264 decoder");

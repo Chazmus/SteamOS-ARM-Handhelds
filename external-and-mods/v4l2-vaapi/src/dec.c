@@ -13,9 +13,11 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 #include <linux/dma-buf.h>
 #include <linux/videodev2.h>
@@ -164,11 +166,119 @@ static int layout_fits(const struct surface *s, uint32_t pitch, uint32_t height)
  * on screen). Wait for every fence on the buffer before the decoder writes
  * into it, as the GPU-side VA drivers get for free from their kernels.
  */
+uint64_t now_ns(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+
 static void wait_idle(struct context *c, int fd)
 {
 	struct pollfd p = {.fd = fd, .events = POLLOUT};
-	if (poll(&p, 1, 100) == 0)
-		dbg(c->drv, "surface still busy after 100 ms");
+	uint64_t t0 = now_ns();
+	int r = poll(&p, 1, 0);
+	if (r == 0) {
+		c->st.blocked++;
+		if (poll(&p, 1, 100) == 0)
+			dbg(c->drv, "surface still busy after 100 ms");
+	}
+	c->st.waits++;
+	c->st.wait_ns += now_ns() - t0;
+}
+
+/* What the GPU did with a surface: its fences, from an exported sync file. */
+struct k_sync_fence_info {
+	char obj_name[32], driver_name[32];
+	int32_t status;
+	uint32_t flags;
+	uint64_t timestamp_ns;
+};
+struct k_sync_file_info {
+	char name[32];
+	int32_t status;
+	uint32_t flags, num_fences, pad;
+	uint64_t sync_fence_info;
+};
+#define K_SYNC_IOC_FILE_INFO _IOWR('>', 4, struct k_sync_file_info)
+
+static void fence_stats(struct context *c, struct surface *s)
+{
+	struct dma_buf_export_sync_file ex = {.flags = DMA_BUF_SYNC_WRITE, .fd = -1};
+	if (ioctl(s->fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &ex) || ex.fd < 0)
+		return;
+	struct k_sync_fence_info fi[16];
+	struct k_sync_file_info info = {.num_fences = 16, .sync_fence_info = (uintptr_t)fi};
+	if (!ioctl(ex.fd, K_SYNC_IOC_FILE_INFO, &info)) {
+		uint64_t latest = 0;
+		for (uint32_t i = 0; i < info.num_fences && i < 16; i++)
+			if (fi[i].status == 1 && fi[i].timestamp_ns > latest)
+				latest = fi[i].timestamp_ns;
+		/* A stub fence (no real users) reports one signaled fence at time 0. */
+		if (!latest) {
+			c->st.nofence++;
+		} else {
+			c->st.fenced++;
+			/* sync_file timestamps are CLOCK_MONOTONIC */
+			if (latest > s->done_ns)
+				c->st.read_after_decode++;
+			uint64_t age = now_ns() - latest;
+			if (!c->st.read_age_min_ns || age < c->st.read_age_min_ns)
+				c->st.read_age_min_ns = age;
+		}
+	}
+	close(ex.fd);
+}
+
+/*
+ * Until the GPU's reads can be waited for (see wait_idle), give the
+ * compositor time to finish with a frame: don't decode into a surface until
+ * MSM_VA_REUSE_GUARD_MS after a newer picture replaced it.
+ */
+static void reuse_guard(struct context *c, struct surface *s)
+{
+	static long guard_ms = -1;
+	if (guard_ms < 0) {
+		const char *e = getenv("MSM_VA_REUSE_GUARD_MS");
+		guard_ms = e ? atol(e) : 12;
+	}
+	if (!guard_ms || !s->replaced_ns)
+		return;
+	uint64_t until = s->replaced_ns + (uint64_t)guard_ms * 1000000ull, now = now_ns();
+	if (now < until) {
+		struct timespec ts = {.tv_sec = 0, .tv_nsec = (long)(until - now)};
+		nanosleep(&ts, NULL);
+		c->st.guarded++;
+	}
+}
+
+static void reuse_stats(struct context *c, struct surface *s)
+{
+	fence_stats(c, s);
+	if (!s->replaced_ns)
+		return;
+	uint64_t d = now_ns() - s->replaced_ns;
+	if (!c->st.reuses || d < c->st.reuse_min_ns)
+		c->st.reuse_min_ns = d;
+	c->st.reuse_sum_ns += d;
+	c->st.reuses++;
+	if (d < 25000000)
+		c->st.fast++;
+	if (c->st.reuses % 600 == 0) {
+		dbg(c->drv, "reuse after replace: min %.1f avg %.1f ms, %llu of 600 under 25 ms; "
+		    "fence wait blocked %llu of %llu, total %.1f ms",
+		    c->st.reuse_min_ns / 1e6, c->st.reuse_sum_ns / 1e6 / 600,
+		    (unsigned long long)c->st.fast, (unsigned long long)c->st.blocked,
+		    (unsigned long long)c->st.waits, c->st.wait_ns / 1e6);
+		dbg(c->drv, "fences at reuse: none %llu, present %llu (GPU read after our decode %llu, "
+		    "latest read finished >= %.1f ms before reuse)",
+		    (unsigned long long)c->st.nofence, (unsigned long long)c->st.fenced,
+		    (unsigned long long)c->st.read_after_decode, c->st.read_age_min_ns / 1e6);
+		dbg(c->drv, "reuse guard held %llu of 600", (unsigned long long)c->st.guarded);
+		uint64_t r = c->st.reuses;
+		memset(&c->st, 0, sizeof(c->st));
+		c->st.reuses = r;
+	}
 }
 
 static int queue_cap_slot(struct context *c, unsigned slot)
@@ -180,6 +290,9 @@ static int queue_cap_slot(struct context *c, unsigned slot)
 		b.memory = V4L2_MEMORY_MMAP;
 	} else {
 		struct surface *s = c->slot_owner[slot];
+		reuse_stats(c, s);
+		if (gpu_wait(c->drv, s, 100))
+			reuse_guard(c, s);
 		wait_idle(c, s->fd);
 		b.memory = V4L2_MEMORY_DMABUF;
 		pl[0].m.fd = s->fd;
@@ -456,6 +569,11 @@ int dec_wait(struct context *c, struct surface *s, int timeout_ms)
 		o->pending = 0;
 		o->error = (b.flags & V4L2_BUF_FLAG_ERROR) || !pl[0].bytesused;
 		c->frames++;
+		if (c->newest && c->newest != o)
+			c->newest->replaced_ns = now_ns();
+		c->newest = o;
+		o->replaced_ns = 0;
+		o->done_ns = now_ns();
 	}
 	return s->error ? -1 : 0;
 }

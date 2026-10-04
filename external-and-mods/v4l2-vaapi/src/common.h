@@ -18,6 +18,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <va/va.h>
@@ -43,6 +44,8 @@ struct drv {
 	char dec_path[32];           /* /dev/videoN of the decoder */
 	struct obj_table tab[O_MAX];
 	int debug;
+	FILE *log;
+	int gpu_wait;                /* 1 kernel can wait for bookkeeping fences, 0 no, -1 unknown */
 };
 
 struct config {
@@ -58,6 +61,7 @@ struct surface {
 	uint32_t uv_offset;
 	uint32_t size;
 	int fd;                      /* dma-buf */
+	uint32_t gem;                /* its handle on our render node, 0 if none */
 	int imported;
 	void *map;
 	int slot;                    /* capture slot in ctx, -1 if none */
@@ -65,6 +69,8 @@ struct surface {
 	int pending;                 /* submitted, not yet returned by the decoder */
 	int error;
 	uint64_t ts;
+	uint64_t replaced_ns;         /* when a newer picture finished decoding */
+	uint64_t done_ns;             /* when this picture finished decoding */
 };
 
 struct pps_learned {
@@ -116,6 +122,11 @@ struct context {
 	uint64_t seq;
 	uint64_t frames;
 	struct surface *inflight[MAX_INFLIGHT];
+	struct surface *newest;
+	struct {
+		uint64_t waits, blocked, wait_ns, reuse_min_ns, reuse_sum_ns, reuses, fast;
+		uint64_t nofence, fenced, read_after_decode, read_age_min_ns, guarded;
+	} st;
 };
 
 struct buffer {
@@ -150,3 +161,5 @@ void dec_close(struct context *c);
 int dec_submit(struct context *c, const uint8_t *data, size_t len, struct surface *target);
 int dec_wait(struct context *c, struct surface *s, int timeout_ms);
 int surf_map(struct surface *s);
+uint64_t now_ns(void);
+int gpu_wait(struct drv *d, struct surface *s, int timeout_ms);
