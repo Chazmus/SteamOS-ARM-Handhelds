@@ -7173,17 +7173,31 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 	}
 	else
 	{
-		// vblank_idx counts the panel's real vblanks, so the divisor has to
-		// come from the output's refresh, not --nested-refresh: with the
-		// Steam UI kept at 60 Hz nested on a 120 Hz mode, a 30 fps limit
-		// became every 2nd vblank (60 fps) and a 60 fps limit nothing.
+		// Pace by time, not by counting vblank wakeups. vblank_idx counts
+		// the wakeups gamescope's vblank timer gets, and it misses vblanks
+		// whenever a frame takes longer than its slot (a Pocket FIT at
+		// 120 Hz woke ~75 times a second), so "every Nth wakeup" turned a
+		// 30 fps limit into ~18. The divisor also came from --nested-refresh
+		// (the Steam UI's 60 Hz), not the panel's mode. Instead let a frame
+		// through once a target frame time has passed since the window's
+		// last one, minus half a vblank so it lands on the closest vblank.
 		int nVblankHz = g_nOutputRefresh ? gamescope::ConvertmHzToHz( g_nOutputRefresh ) : nRefreshHz;
 		if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nVblankHz > nTargetFPS )
 		{
-			int nVblankDivisor = nVblankHz / nTargetFPS;
+			if ( w && w->last_commit_first_latch_time && now )
+			{
+				const uint64_t ulCycle = 1'000'000'000ull / uint64_t( nTargetFPS );
+				const uint64_t ulHalfVblank = 500'000'000ull / uint64_t( nVblankHz );
+				if ( now + ulHalfVblank < w->last_commit_first_latch_time + ulCycle )
+					bSendCallback = false;
+			}
+			else
+			{
+				int nVblankDivisor = nVblankHz / nTargetFPS;
 
-			if ( vblank_idx % nVblankDivisor != 0 )
-				bSendCallback = false;
+				if ( vblank_idx % nVblankDivisor != 0 )
+					bSendCallback = false;
+			}
 		}
 	}
 
@@ -10783,7 +10797,9 @@ steamcompmgr_main(int argc, char **argv)
 			{
 				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
 				int nTargetFPS = g_nSteamCompMgrTargetFPS;
-				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+				// Cap at the panel's mode, not the nested (Steam UI) refresh.
+				const int nOutputHz = g_nOutputRefresh ? gamescope::ConvertmHzToHz( g_nOutputRefresh ) : nRealRefreshHz;
+				nTargetFPS = std::min<int>( nTargetFPS, nOutputHz );
 
 				if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
 				{
@@ -10791,9 +10807,9 @@ steamcompmgr_main(int argc, char **argv)
 				}
 				else
 				{
-					int nVblankDivisor = nRealRefreshHz / nTargetFPS;
-
-					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
+					// The frame time apps are told matches the time-based pacing
+					// above (the target, not a multiple of the nested refresh).
+					g_SteamCompMgrLimitedAppRefreshCycle = gamescope::mHzToRefreshCycle( gamescope::ConvertHztomHz( nTargetFPS ) );
 				}
 			}
 		}
