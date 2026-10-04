@@ -741,8 +741,13 @@ elif [[ -d "$STOCK/wcn7850-frame" ]]; then
   rm -f "$WIFI_FW_DST/Notice.txt"
 fi
 
-# 8 Gen 2 image only (zram, cpuidle, UFS, backlight, mic, CPU pins): sm8550-image-overlay.
+# 8 Gen 2 image only (UFS, mic, CPU pins): sm8550-image-overlay.
 # The rootfs is reused between builds, so an 8 Gen 3 build removes them again.
+# zram, TEO and the backlight untag moved to steamos-overlay (every SoC);
+# drop their old 8 Gen 2 names from a reused rootfs.
+rm -f "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
+      "$R/usr/lib/systemd/zram-generator.conf.d/60-sm8550-zram.conf" \
+      "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-untag.rules"
 IMG_OVL="${ROOT}/sm8550-image-overlay"
 mapfile -t _img_files < <(cd "$IMG_OVL" && find usr -type f)
 if [[ "${SOC:-sm8650}" == sm8550 ]]; then
