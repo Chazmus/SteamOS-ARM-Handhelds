@@ -182,6 +182,10 @@ class Plugin:
         return self.flatpak_profile_service.get_running_apps()
 
     async def _main(self):
+        try:
+            self.configuration_service.migrate_adreno_defaults()
+        except Exception as error:
+            decky.logger.error(f"Could not update old frame generation profiles: {error}")
         repair = self.wrapper_service.repair()
         if not repair.get("success"):
             decky.logger.error(f"Could not repair lsfg workaround wrapper: {repair.get('error')}")

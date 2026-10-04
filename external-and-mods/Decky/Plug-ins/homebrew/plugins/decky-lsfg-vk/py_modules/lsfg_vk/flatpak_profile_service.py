@@ -29,7 +29,7 @@ class FlatpakProfileService:
     def default_state(cls) -> Dict[str, Any]:
         return {
             "dxvkFrameRate": 0,
-            "disableGamescopeWsi": True,
+            "disableGamescopeWsi": False,
             "disableHdr": True,
             "disableSteamdeckMode": False,
             "disableVkbasalt": False,

@@ -37,6 +37,31 @@ class ConfigurationService(BaseService):
                 raise
             return self._reset_legacy_config(error.version)
 
+    ADRENO_MIGRATION_MARKER = ".steamos-arm-adreno-defaults"
+
+    def migrate_adreno_defaults(self) -> int:
+        """Once: per-game profiles still on the upstream defaults (flow 0.8,
+        quality mode) move to performance mode at 0.5. On Adreno the quality
+        chain costs as much GPU time as it gives back, so frame generation in
+        those games added nothing. Profiles someone tuned are left alone."""
+        marker = self.config_file_path.parent / self.ADRENO_MIGRATION_MARKER
+        if marker.exists() or not self.config_file_path.exists():
+            return 0
+        data = self._get_profile_data()
+        changed = 0
+        for profile in data["profiles"].values():
+            per_game = all(re.fullmatch(r"[0-9]+|flatpak:.+", str(a)) for a in profile.get("active_in", []))
+            if (per_game and profile.get("active_in") and not profile.get("performance_mode")
+                    and abs(float(profile.get("flow_scale", 0)) - 0.8) < 1e-6):
+                profile["flow_scale"] = 0.5
+                profile["performance_mode"] = True
+                changed += 1
+        if changed:
+            self._save_profile_data(data)
+        self._write_file(marker, "1\n", 0o644)
+        self.log.info(f"Moved {changed} frame generation profile(s) to performance mode for Adreno")
+        return changed
+
     def _save_profile_data(self, data: ProfileData) -> None:
         content = ConfigurationManager.generate_toml_content_multi_profile(data)
         self.runtime_service.validate_config_content(content)

@@ -813,7 +813,7 @@ function mergeInstalledGames(backendGames, shortcutGames) {
 }
 const DEFAULT_WORKAROUND_STATE$1 = {
     dxvkFrameRate: 0,
-    disableGamescopeWsi: true,
+    disableGamescopeWsi: false,
     disableHdr: true,
     disableSteamdeckMode: false,
     disableVkbasalt: false,
@@ -1769,7 +1769,7 @@ function FpsMultiplierControl({ config, onConfigChange, autoFocus = false, onAut
 const SLIDER_DEBOUNCE_MS = 250;
 const DEFAULT_WORKAROUND_STATE = {
     dxvkFrameRate: 0,
-    disableGamescopeWsi: true,
+    disableGamescopeWsi: false,
     disableHdr: true,
     disableSteamdeckMode: false,
     disableVkbasalt: false,

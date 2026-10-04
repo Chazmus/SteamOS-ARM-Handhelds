@@ -12,7 +12,7 @@ from .constants import WRAPPER_FILENAME
 
 class WrapperService(BaseService):
     LEGACY_FORMAT_VERSION = 1
-    FORMAT_VERSION = 2
+    FORMAT_VERSION = 3
     LEGACY_MARKER = "# lsfg-vk-wrapper-format: 1"
     MARKER = "# lsfg-vk-wrapper-format: 2"
     WRAPPER_TOKEN = "~/.lsfg"
@@ -26,8 +26,6 @@ class WrapperService(BaseService):
     )
     BOOLEAN_FIELDS = STATE_FIELDS[1:]
     MANAGED_ENV_KEYS = (
-        "ENABLE_GAMESCOPE_WSI",
-        "DISABLE_GAMESCOPE_WSI",
         "DXVK_HDR",
         "DISABLE_LSFGVK",
         "DISABLE_LSFG",
@@ -49,7 +47,9 @@ class WrapperService(BaseService):
     def default_state(cls) -> Dict[str, Any]:
         return {
             "dxvkFrameRate": 0,
-            "disableGamescopeWsi": True,
+            # SteamOS-ARM: off. Gamescope's WSI layer is where Steam's frame
+            # limiter runs; frame generation works with it on (Pocket FIT).
+            "disableGamescopeWsi": False,
             "disableHdr": True,
             "disableSteamdeckMode": False,
             "disableVkbasalt": False,
@@ -98,6 +98,7 @@ class WrapperService(BaseService):
     def _validate_document(cls, raw: Any) -> Dict[str, Any]:
         if not isinstance(raw, dict) or raw.get("version") not in (
             cls.LEGACY_FORMAT_VERSION,
+            2,
             cls.FORMAT_VERSION,
         ):
             raise ValueError("Unsupported lsfg-vk workaround state version")
@@ -110,6 +111,12 @@ class WrapperService(BaseService):
             if normalized != str(appid):
                 raise ValueError("Workaround AppIDs must not contain leading zeroes")
             validated_apps[normalized] = cls._validate_entry(entry)
+        if raw.get("version") != cls.FORMAT_VERSION:
+            # v3 (SteamOS-ARM): every profile made under the old default had
+            # the Gamescope WSI layer off, which silently disabled Steam's
+            # frame limiter in that game. Turn it back on once.
+            for entry in validated_apps.values():
+                entry["state"]["disableGamescopeWsi"] = False
         return {"version": cls.FORMAT_VERSION, "apps": validated_apps}
 
     def _empty_document(self) -> Dict[str, Any]:
@@ -157,8 +164,10 @@ class WrapperService(BaseService):
             f"    LSFGVK_CONFIG={self._shell(str(self.config_file_path))}",
             "    export LSFGVK_CONFIG",
         ])
+        # Steam hands games ENABLE_GAMESCOPE_WSI=1; the wrapper leaves it be
+        # unless this profile turns the layer off.
         if state["disableGamescopeWsi"]:
-            lines.extend(["    ENABLE_GAMESCOPE_WSI=0", "    export ENABLE_GAMESCOPE_WSI"])
+            lines.extend(["    unset DISABLE_GAMESCOPE_WSI", "    ENABLE_GAMESCOPE_WSI=0", "    export ENABLE_GAMESCOPE_WSI"])
         if state["disableHdr"]:
             lines.extend(["    DXVK_HDR=0", "    export DXVK_HDR"])
         if state["disableSteamdeckMode"]:
@@ -349,11 +358,14 @@ class WrapperService(BaseService):
     def repair(self) -> Dict[str, Any]:
         try:
             with self._lock:
-                document, _, _ = self._read_document()
+                document, exists, content = self._read_document()
                 self._assert_wrapper_owned_or_absent()
                 if not document["apps"]:
                     return self._response(document)
-                self._write_file(self.wrapper_path, self._render_wrapper(document), 0o755)
+                if exists and json.loads(content).get("version") != self.FORMAT_VERSION:
+                    self._write_pair(document)   # saves the migrated state too
+                else:
+                    self._write_file(self.wrapper_path, self._render_wrapper(document), 0o755)
                 return self._response(document)
         except Exception as error:
             return {
