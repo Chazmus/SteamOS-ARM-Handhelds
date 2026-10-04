@@ -513,6 +513,10 @@ install_file "${ROOT}/sm8650-overlay/usr/lib/systemd/system/plugin_loader.servic
   "$R/usr/lib/systemd/system/plugin_loader.service" 0644
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service"
+# Updating Decky writes its own unit to /etc (runs the x86 binary without
+# box64); this drop-in keeps box64 in front whatever unit file wins.
+install_file "$OVL/usr/lib/systemd/system/plugin_loader.service.d/50-steamos-arm-box64.conf" \
+  "$R/usr/lib/systemd/system/plugin_loader.service.d/50-steamos-arm-box64.conf" 0644
 # Handheld Control: profiles, fan and stick lighting in Quick Access (talks
 # to odin3d here, konkrd on the other images).
 HC_SRC="${MOD}/Decky/sm8650/konkr-control"

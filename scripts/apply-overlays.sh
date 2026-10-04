@@ -955,6 +955,10 @@ install -m0755 "$DECKY_LOADER" "$HOME_DST/homebrew/services/PluginLoader"
 printf '%s' "$DECKY_VERSION" >"$HOME_DST/homebrew/services/.loader.version"
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../plugin_loader.service "$R/usr/lib/systemd/system/multi-user.target.wants/plugin_loader.service"
+# Updating Decky writes its own unit to /etc (runs the x86 binary without
+# box64); this drop-in keeps box64 in front whatever unit file wins.
+install_file "$OVL/usr/lib/systemd/system/plugin_loader.service.d/50-steamos-arm-box64.conf" \
+  "$R/usr/lib/systemd/system/plugin_loader.service.d/50-steamos-arm-box64.conf" 0644
 # Emulator Hub: one-tap emulators and apps (engine + Decky panel).
 "${SCRIPT_DIR}/install-hub.sh" "$R" "$HOME_DST"
 # Fix lsfg-vk home paths
