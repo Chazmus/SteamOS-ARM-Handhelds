@@ -40,7 +40,24 @@ const hub = {
     desktop: callable("desktop"),
     steamMade: callable("steam_made"),
     steamGone: callable("steam_gone"),
+    icon: callable("icon"),
 };
+// Steam's Quick Access page can't show file:// images: the backend hands each
+// icon over as a data: URL once, and every list after that reuses it.
+const iconCache = new Map();
+function AppIcon({ path }) {
+    const [src, setSrc] = useState(iconCache.get(path) || "");
+    useEffect(() => {
+        if (iconCache.has(path)) { setSrc(iconCache.get(path)); return; }
+        let live = true;
+        hub.icon(path).then((d) => { if (d) iconCache.set(path, d); if (live) setSrc(d || ""); }).catch(() => {});
+        return () => { live = false; };
+    }, [path]);
+    return src
+        ? jsx("img", { src, style: { width: "28px", height: "28px", borderRadius: "6px" } })
+        : jsx("div", { style: { width: "28px", height: "28px", borderRadius: "6px", background: "rgba(255,255,255,0.08)" } });
+}
+
 
 const CHIP_NAMES = { sm8350: "Snapdragon 888", sm8550: "Snapdragon 8 Gen 2", sm8650: "Snapdragon 8 Gen 3", sm8750: "Snapdragon 8 Elite" };
 const SECTIONS = [
@@ -158,7 +175,7 @@ function AppRow({ app, refresh }) {
     return jsxs(SP_JSX.Fragment, { children: [
         row(jsx(DFL.Field, {
             label: jsxs("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
-                app.icon ? jsx("img", { src: `file://${app.icon}`, style: { width: "28px", height: "28px", borderRadius: "6px" } }) : null,
+                app.icon ? jsx(AppIcon, { path: app.icon }) : null,
                 jsxs("div", { children: [jsx("div", { children: app.title }), state ? small(state, { opacity: 0.9, color: app.update ? "#ffc857" : "#7bd88f" }) : null] }),
             ] }),
             description: desc,

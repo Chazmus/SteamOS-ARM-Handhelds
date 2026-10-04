@@ -8,6 +8,7 @@ hub's own processes, so closing the panel mid-install changes nothing.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import subprocess
@@ -32,7 +33,25 @@ def hub(*args: str, timeout: int = 60) -> dict:
         return {"error": str(exc)}
 
 
+def icon_data(path: str) -> str:
+    """The icon at path as a data: URL. Steam's Quick Access page can't load
+    file:// images, so the panel gets the bytes; only the hub's own icons."""
+    icons = os.path.realpath(os.path.join(decky.DECKY_USER_HOME, ".local/share/icons/hicolor"))
+    real = os.path.realpath(path or "")
+    if not real.startswith(icons + os.sep) or not real.endswith(".png"):
+        return ""
+    try:
+        with open(real, "rb") as fh:
+            data = fh.read(512 * 1024)
+    except OSError:
+        return ""
+    return "data:image/png;base64," + base64.b64encode(data).decode()
+
+
 class Plugin:
+    async def icon(self, path):
+        return await asyncio.to_thread(icon_data, path)
+
     async def status(self):
         return await asyncio.to_thread(hub, "status")
 
