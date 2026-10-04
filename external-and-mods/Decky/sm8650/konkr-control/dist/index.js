@@ -58,8 +58,58 @@ const RGB_PRESETS = [
 const row = (child) => jsx(DFL.PanelSectionRow, { children: child });
 const note = (text) => row(jsx("div", { style: { fontSize: "12px", opacity: 0.75 }, children: text }));
 
+
+// Short frame limit list. Steam offers every whole fraction of every refresh
+// rate down to 12 (Pocket FIT: 12 15 18 20 24 30 36 40 45 48 60 72 90 120
+// 144). It reads them from its GamescopeService state in the UI's query
+// cache, so the copy there is trimmed to 30 plus the panel's refresh rates
+// (Pocket FIT 30/60/90/120/144, RP6 30/60/120). Only entries are removed; the
+// limiter is still Steam's. If the cache can't be found nothing changes.
+const SHORT_FPS_KEY = "steamos-arm:short-fps-list";
+const GS_STATE = ["GamescopeService", "State"];
+let shortFpsUnsub = null;
+let queryClient = null;
+function shortFpsWanted() {
+    try { return localStorage.getItem(SHORT_FPS_KEY) !== "0"; } catch (e) { return true; }
+}
+function findQueryClient() {
+    if (queryClient) return queryClient;
+    try {
+        // Decky's module search: Steam's loader doesn't expose its module cache.
+        // By shape only: the GamescopeService entry is only filled once
+        // something asks for it, and the subscription catches that.
+        queryClient = DFL.findModuleExport((e) => e && typeof e.getQueryData === "function"
+            && typeof e.getQueryCache === "function" && typeof e.setQueryData === "function"
+            && typeof e.invalidateQueries === "function") || null;
+    } catch (e) { console.log("Handheld Control: query cache", e); }
+    return queryClient;
+}
+function trimFrameRates(d) {
+    const adi = d && d.active_display_info;
+    const fr = adi && adi.supported_frame_rates, rr = adi && adi.supported_refresh_rates;
+    if (!Array.isArray(fr) || !Array.isArray(rr) || rr.length === 0) return null;
+    const keep = new Set(rr);
+    if (rr.some((r) => r % 30 === 0)) keep.add(30);
+    const out = fr.filter((v) => keep.has(v));
+    if (out.length === 0 || out.length === fr.length) return null;
+    return { ...d, active_display_info: { ...adi, supported_frame_rates: out } };
+}
+function applyShortFps(on) {
+    if (shortFpsUnsub) { shortFpsUnsub(); shortFpsUnsub = null; }
+    const qc = findQueryClient();
+    if (!qc) return false;
+    if (!on) { qc.invalidateQueries({ queryKey: GS_STATE }); return true; }
+    const apply = () => { const t = trimFrameRates(qc.getQueryData(GS_STATE)); if (t) qc.setQueryData(GS_STATE, t); };
+    shortFpsUnsub = qc.getQueryCache().subscribe((ev) => {
+        const key = ev && ev.query && ev.query.queryKey;
+        if (ev && ev.type === "updated" && key && key[0] === GS_STATE[0] && key[1] === GS_STATE[1]) apply();
+    });
+    apply();
+    return true;
+}
 function Content() {
     const [st, setSt] = useState(null);
+    const [shortFps, setShortFps] = useState(shortFpsWanted());
     const refresh = useCallback(() => {
         getState().then(setSt).catch(() => {});
     }, []);
@@ -148,6 +198,14 @@ function Content() {
                 onChange: (v) => setPowerLed(v).then(refresh),
             })) : null,
         ] }),
+        jsxs(DFL.PanelSection, { title: "Display", children: [
+            row(jsx(DFL.ToggleField, {
+                label: "Short frame limit list",
+                description: "Steam's Frame Limit offers 30 plus the screen's refresh rates instead of every fraction",
+                checked: shortFps,
+                onChange: (v) => { try { localStorage.setItem(SHORT_FPS_KEY, v ? "1" : "0"); } catch (e) {} setShortFps(v); applyShortFps(v); },
+            })),
+        ] }),
         st.fit_buttons ? jsxs(DFL.PanelSection, { title: "Buttons", children: [
             ...[["F13", "KONKR button"], ["F14", "Performance button"]].map(([key, label]) => row(jsx(DFL.DropdownItem, {
                 label,
@@ -191,6 +249,11 @@ function onMode(profile, boost, profileChanged) {
 
 var index = definePlugin(() => {
     api.addEventListener("konkr_mode", onMode);
+    // Steam may not have its GamescopeService state yet at plugin load.
+    let shortFpsTries = 0;
+    const shortFpsTimer = setInterval(() => {
+        if (!shortFpsWanted() || applyShortFps(true) || ++shortFpsTries > 30) clearInterval(shortFpsTimer);
+    }, 2000);
     return {
         name: "Handheld Control",
         content: jsx(Content, {}),
@@ -198,6 +261,8 @@ var index = definePlugin(() => {
         alwaysRender: false,
         onDismount() {
             api.removeEventListener("konkr_mode", onMode);
+            clearInterval(shortFpsTimer);
+            if (shortFpsUnsub) { shortFpsUnsub(); shortFpsUnsub = null; }
         },
     };
 });
