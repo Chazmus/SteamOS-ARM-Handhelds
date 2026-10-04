@@ -35,6 +35,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 # Steam's TDP slider and manual GPU clock, on top of the profile (shared with
@@ -125,6 +126,7 @@ def load_state() -> dict:
     st.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
     st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
     st.setdefault("power_led", True)
+    st.setdefault("menu_clicks", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
     if st["rgb"].get("mode") == "rainbow":
         st["rgb"]["mode"] = "static"
@@ -1065,6 +1067,102 @@ def open_request_socket():
 
 
 # ----------------------------------------------------------------- main ----
+# ------------------------------------------------------------ menu clicks ---
+DECK_HID = "HID_ID=0003:000028DE:000012F0"      # InputPlumber's virtual Deck pad
+RUMBLE_HID = "HID_ID=0003:00004001:00000428"    # the AYANEO DirectInput motors
+CLICK_S = 0.025                                  # felt crisp at full level (Pocket FIT)
+
+
+def find_hidraw(hid_id: str) -> str | None:
+    for d in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        if hid_id in rd(f"{d}/device/uevent"):
+            return "/dev/" + os.path.basename(d)
+    return None
+
+
+class MenuClicks(threading.Thread):
+    """A short tick from the motors while moving through Steam's menus.
+
+    Steam plays haptics only on trackpads, which these handhelds don't have,
+    so menus only beep. This reads the controller Steam sees (InputPlumber's
+    virtual Deck pad; every hidraw reader gets every report, Steam loses
+    nothing) and ticks on a new D-pad or bumper press, or when the left
+    stick swings into a new direction. Never while a game runs or in
+    standby: that's the game's rumble."""
+
+    STICK_ON, STICK_OFF = 20000, 9000            # of 32767, with hysteresis
+
+    def __init__(self, daemon: "Daemon"):
+        super().__init__(name="menu-clicks", daemon=True)
+        self.daemon_ref = daemon
+        self.motor = -1
+        self.last_click = 0.0
+
+    def wanted(self) -> bool:
+        return (self.daemon_ref.st.get("menu_clicks", True) and not CURRENT_APPID
+                and not os.path.exists(STANDBY_FLAG))
+
+    def click(self) -> None:
+        now = time.monotonic()
+        if now - self.last_click < 0.06:
+            return
+        self.last_click = now
+        if self.motor < 0:
+            path = find_hidraw(RUMBLE_HID)
+            if not path:
+                return
+            try:
+                self.motor = os.open(path, os.O_WRONLY | os.O_CLOEXEC)
+            except OSError:
+                return
+        try:
+            os.write(self.motor, bytes([0, 0, 0, 0, 0xFF, 0xFF, 0, 0]))
+            time.sleep(CLICK_S)
+            os.write(self.motor, bytes(8))
+        except OSError:
+            os.close(self.motor)
+            self.motor = -1
+
+    def watch(self, path: str) -> None:
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            prev_buttons, stick_dir = 0, None
+            while True:
+                r, _, _ = select.select([fd], [], [], 5.0)
+                if not r:
+                    continue
+                rep = os.read(fd, 64)
+                if len(rep) < 52 or rep[2] != 0x09:
+                    continue
+                # byte 8: L1 0x08, R1 0x04; byte 9: D-pad down/left/right/up
+                buttons = ((rep[8] & 0x0C) << 4) | (rep[9] & 0x0F)
+                x, y = struct.unpack_from("<hh", rep, 48)
+                mag = max(abs(x), abs(y))
+                if mag > self.STICK_ON:
+                    d = ("x+" if x > 0 else "x-") if abs(x) >= abs(y) else ("y+" if y > 0 else "y-")
+                elif mag < self.STICK_OFF:
+                    d = None
+                else:
+                    d = stick_dir
+                pressed = buttons & ~prev_buttons
+                swung = d is not None and d != stick_dir
+                prev_buttons, stick_dir = buttons, d
+                if (pressed or swung) and self.wanted():
+                    self.click()
+        finally:
+            os.close(fd)
+
+    def run(self) -> None:
+        while True:
+            path = find_hidraw(DECK_HID)
+            if path:
+                try:
+                    self.watch(path)
+                except OSError:
+                    pass                     # pad went away (InputPlumber restart)
+            time.sleep(3.0)
+
+
 class Daemon:
     def __init__(self):
         self.conf = load_conf()
@@ -1074,6 +1172,8 @@ class Daemon:
         self.leds = Leds()
         self.keys = Hotkeys()
         self.touch = TouchBoost()
+        self.clicks = MenuClicks(self)
+        self.clicks.start()
         self.reload = False
         self.requests = open_request_socket()
         signal.signal(signal.SIGHUP, lambda *_: setattr(self, "reload", True))

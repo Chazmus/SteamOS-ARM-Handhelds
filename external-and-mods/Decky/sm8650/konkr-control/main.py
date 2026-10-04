@@ -43,6 +43,7 @@ def load() -> dict[str, Any]:
     st.setdefault("rgb", {"mode": "static", "color": "ff3c00", "brightness": 160})
     st.setdefault("fan", {"mode": "auto", "fixed": 50, "boost": False})
     st.setdefault("power_led", True)
+    st.setdefault("menu_clicks", True)
     st.setdefault("buttons", {"F13": "rgb-next", "F14": "profile-next"})
     return st
 
@@ -167,6 +168,9 @@ class Plugin:
             "fan": st["fan"],
             "game": game_fan_state(st),
             "power_led": st["power_led"],
+            "menu_clicks": st["menu_clicks"],
+            "has_motors": any("HID_ID=0003:00004001:00000428" in rd(f"{d}/device/uevent")
+                              for d in glob.glob("/sys/class/hidraw/hidraw*")),
             "buttons": st["buttons"],
             # What this device has, so the panel only shows what works here.
             "has_power_led": not ODIN3D and bool(glob.glob("/sys/class/leds/*power-led*")),
@@ -245,6 +249,12 @@ class Plugin:
         st["buttons"][key] = action
         save(st)
         return st["buttons"]
+
+    async def set_menu_clicks(self, on: bool = True, **_: Any) -> bool:
+        st = load()
+        st["menu_clicks"] = bool(on)
+        save(st)
+        return st["menu_clicks"]
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
         st = load()

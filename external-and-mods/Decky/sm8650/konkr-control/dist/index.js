@@ -29,6 +29,7 @@ const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
+const setMenuClicks = callable("set_menu_clicks");
 const setBypass = callable("set_bypass");
 const setButton = callable("set_button");
 const setGameFan = callable("set_game_fan");
@@ -241,6 +242,12 @@ function Content() {
                 checked: shortFps,
                 onChange: (v) => { try { localStorage.setItem(SHORT_FPS_KEY, v ? "1" : "0"); } catch (e) {} setShortFps(v); applyShortFps(v); },
             })),
+            st.has_motors ? row(jsx(DFL.ToggleField, {
+                label: "Menu clicks",
+                description: "A light buzz when moving through Steam's menus",
+                checked: st.menu_clicks !== false,
+                onChange: (v) => setMenuClicks(v).then(refresh),
+            })) : null,
         ] }),
         st.fit_buttons ? jsxs(DFL.PanelSection, { title: "Buttons", children: [
             ...[["F13", "KONKR button"], ["F14", "Performance button"]].map(([key, label]) => row(jsx(DFL.DropdownItem, {
