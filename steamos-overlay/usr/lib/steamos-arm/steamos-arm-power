@@ -92,14 +92,14 @@ def charge_node() -> str | None:
 CHARGE_FLOOR = 55
 
 
-def write_thresholds(end: int) -> None:
+def write_thresholds(end: int, gap: int = 5) -> None:
     node = charge_node()
     if not node:
         return
-    # The start threshold has to stay below the end one; charging resumes 5 %
+    # The start threshold has to stay below the end one; charging resumes gap %
     # under it, like a phone's "protect battery". The end goes first when
     # raising, last when lowering, so start < end holds at every step.
-    pairs = [("charge_control_start_threshold", max(0, end - 5) if end < 100 else 0),
+    pairs = [("charge_control_start_threshold", max(0, end - gap) if end < 100 else 0),
              ("charge_control_end_threshold", end)]
     try:
         cur = int(open(f"{node}/charge_control_end_threshold").read().strip())
@@ -127,7 +127,10 @@ def apply_charging() -> None:
     """Bypass wins over the limit; with neither, charge to full."""
     own = read_json(OWN_STATE)
     if own.get("bypass"):
-        write_thresholds(int(own.get("bypass_level", CHARGE_FLOOR)))
+        # The charger runs the device while the battery sits still; a 1 %
+        # window tops it back up right away if a heavy game outpulls the
+        # charger, instead of letting it sag 5 % first.
+        write_thresholds(int(own.get("bypass_level", CHARGE_FLOOR)), gap=1)
     else:
         limit = int(own.get("charge_limit", 100))
         write_thresholds(100 if limit < 0 else limit)
