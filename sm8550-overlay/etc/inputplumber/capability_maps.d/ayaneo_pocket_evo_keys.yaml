@@ -1,11 +1,12 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
-# Event codes from ROCKNIX / ArmadaOS; Steam Deck targets are ours.
+# Our aya-keys gpio-keys node (kernel-sm8550/dts/qcs8550-ayaneo-pocketevo.dts.append)
+# sends these codes; LC/RC are L4/R4 like on the Pocket FIT, the menu button L5.
 version: 2
 kind: CapabilityMap
 name: AYANEO Pocket EVO side keys
 id: ayaneo_pocket_evo_keys
 mapping:
-- name: Quick Access
+- name: AYANEO button -> Quick Access
   source_events:
   - evdev:
       event_type: KEY
@@ -14,7 +15,7 @@ mapping:
   target_event:
     gamepad:
       button: QuickAccess
-- name: LC
+- name: Menu -> L5
   source_events:
   - evdev:
       event_type: KEY
@@ -23,7 +24,7 @@ mapping:
   target_event:
     gamepad:
       button: LeftPaddle2
-- name: L4
+- name: LC -> L4
   source_events:
   - evdev:
       event_type: KEY
@@ -32,7 +33,7 @@ mapping:
   target_event:
     gamepad:
       button: LeftPaddle1
-- name: R4
+- name: RC -> R4
   source_events:
   - evdev:
       event_type: KEY

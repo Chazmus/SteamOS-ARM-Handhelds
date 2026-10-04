@@ -87,12 +87,18 @@ fi
 card_id="$(awk 'BEGIN{IGNORECASE=1} /AYN|Odin2|Thor|SM8550/{print $1; exit}' /proc/asound/cards)"
 card_id="${card_id:-0}"
 card_name="$(cat "/proc/asound/card${card_id}/id" 2>/dev/null)"
-card_long="$(awk -v c="$card_id" '$1==c {sub(/.*\]: */,""); sub(/ - .*/,""); print; exit}' /proc/asound/cards)"
+# "<id> [<name>]: <driver> - <longname>": the UCM profile is found by the long
+# name (AYN-Thor, SM8550-APS). Thor's driver and long name are the same, the
+# AYANEO Pockets' are not ("sm8550 - SM8550-APS"), so take what follows " - ".
+card_long="$(awk -v c="$card_id" '$1==c {sub(/.*\]: */,""); sub(/^[^ ]+ - /,""); print; exit}' /proc/asound/cards)"
 card_long="${card_long:-AYN-Odin2}"
 log "card ${card_id} (${card_name} / ${card_long}): $(tr '\n' ' ' </proc/asound/cards 2>/dev/null)"
 
-if ucm "$card_long" || ucm "hw:${card_id}"; then
-  log "alsaucm ${card_long} HiFi Speaker ok"
+# By card number first: alsaucm then picks the profile from the card itself.
+# "sm8550" (the driver name) was accepted too but routed nothing on a Pocket
+# EVO (GitHub #32: no speaker sound).
+if ucm "hw:${card_id}" || ucm "$card_long"; then
+  log "alsaucm hw:${card_id} (${card_long}) HiFi Speaker ok"
 else
   log "alsaucm failed"
   cat /tmp/sm8550-alsaucm.log >&2 || true
