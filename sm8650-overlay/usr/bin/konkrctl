@@ -8,8 +8,10 @@
   konkrctl mcu status|enable|disable   MCU UART driver (extra buttons + stick RGB; on by default)
   konkrctl monitor                     print key/button events from the pads
                                        (find out what each extra button sends)
-  konkrctl sleep standby|s2idle|status standby (default: panel off, session
-                                       frozen, ~1 W) or experimental kernel s2idle
+  konkrctl sleep standby|s2idle|auto|status
+                                       kernel s2idle (default on 8 Gen 3 with
+                                       the 7.2 kernel) or standby (panel off,
+                                       session frozen, ~1 W); auto = default
   konkrctl speaker boost|flat|status   speaker loudness chain (default: boost)
 """
 from __future__ import annotations
@@ -25,6 +27,7 @@ import sys
 STATE = "/var/lib/konkrd/state.json"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 S2IDLE = "/var/lib/konkrd/sleep-s2idle"
+STANDBY = "/var/lib/konkrd/sleep-standby"
 PROFILES = ("silent", "balanced", "turbo")
 SPEAKER_CONF = "/etc/wireplumber/wireplumber.conf.d/55-konkr-speaker.conf"
 
@@ -82,7 +85,7 @@ def status() -> None:
     if temps:
         print(f"soc temp: {max(temps):.1f} °C (hottest cpu/gpu zone)")
     mcu = "loaded" if os.path.isdir("/sys/module/konkr_sysbtn") else "not loaded"
-    print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) or os.path.exists("/run/konkr/s2idle") else "standby")
+    print("sleep   :", sleep_now())
     print(f"mcu     : {mcu} ({'blacklisted' if os.path.exists(BLACKLIST) else 'enabled at boot'})")
 
 
@@ -107,19 +110,29 @@ def mcu(cmd: str) -> None:
         sys.exit(__doc__)
 
 
+def sleep_now() -> str:
+    try:
+        mode = subprocess.run(["/usr/lib/konkr/sleep-mode"], capture_output=True,
+                              text=True, check=False).stdout.strip() or "standby"
+    except OSError:
+        mode = "standby"
+    chosen = os.path.exists(S2IDLE) or os.path.exists(STANDBY) or os.path.exists("/run/konkr/s2idle")
+    return f"{mode} ({'set by konkrctl or BOOT' if chosen else 'default'})"
+
+
 def sleep_mode(cmd: str) -> None:
     if cmd == "status":
-        print("sleep   :", "s2idle (experimental)" if os.path.exists(S2IDLE) or os.path.exists("/run/konkr/s2idle") else "standby")
+        print("sleep   :", sleep_now())
         return
     need_root()
-    if cmd == "s2idle":
-        os.makedirs(os.path.dirname(S2IDLE), exist_ok=True)
-        open(S2IDLE, "w").close()
-    elif cmd == "standby":
-        if os.path.exists(S2IDLE):
-            os.remove(S2IDLE)
-    else:
+    if cmd not in ("s2idle", "standby", "auto"):
         sys.exit(__doc__)
+    for f in (S2IDLE, STANDBY):
+        if os.path.exists(f):
+            os.remove(f)
+    if cmd != "auto":
+        os.makedirs(os.path.dirname(S2IDLE), exist_ok=True)
+        open(S2IDLE if cmd == "s2idle" else STANDBY, "w").close()
     sleep_mode("status")
 
 

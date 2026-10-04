@@ -1,0 +1,21 @@
+#!/bin/sh
+# sleep-mode: prints how this handheld sleeps, "s2idle" or "standby".
+# One answer for konkr-suspend, konkr-sleep.service and konkrctl.
+#
+#   /var/lib/konkrd/sleep-standby          `konkrctl sleep standby`: standby
+#   /var/lib/konkrd/sleep-s2idle, or an    `konkrctl sleep s2idle` / BOOT flag:
+#   "s2idle" file on BOOT                  s2idle
+#   otherwise                              s2idle on 8 Gen 3 with our 7.2
+#                                          kernel (it carries the s2idle
+#                                          fixes; 2026-10-04 on a Pocket FIT),
+#                                          standby everywhere else
+[ -e /var/lib/konkrd/sleep-standby ] && { echo standby; exit 0; }
+if [ -e /var/lib/konkrd/sleep-s2idle ] || [ -e /run/konkr/s2idle ]; then
+  echo s2idle; exit 0
+fi
+if tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | grep -qx 'qcom,sm8650'; then
+  case "$(uname -r)" in
+    7.[2-9].*|7.[1-9][0-9].*|[89].*) echo s2idle; exit 0 ;;
+  esac
+fi
+echo standby

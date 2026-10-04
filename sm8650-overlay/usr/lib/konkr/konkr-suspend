@@ -1,12 +1,11 @@
 #!/bin/sh
 # systemd-suspend.service ExecStart on the KONKR Pocket FIT.
-# Default: konkr-standby: panel powered off, user session frozen, big cores
-# offline, Wi-Fi/touch/audio off. Measured ~1.1 W (was ~3 W+ with the old
-# screen-off-only standby). Kernel s2idle is opt-in (`konkrctl sleep s2idle`)
-# until it stops hanging on the 7.1.2 kernel (2026-09-24: first entry bounced
-# straight back, the second never resumed).
-# s2idle on: `konkrctl sleep s2idle`, or an "s2idle" file on BOOT (konkr-bootflags).
-if [ -e /var/lib/konkrd/sleep-s2idle ] || [ -e /run/konkr/s2idle ]; then
+# Kernel s2idle or konkr-standby (panel powered off, user session frozen, big
+# cores offline, Wi-Fi/touch/audio off, ~1.1 W), as sleep-mode decides:
+# s2idle by default on 8 Gen 3 with our 7.2 kernel, standby elsewhere (the
+# 7.1.2 kernel hung in s2idle: first entry bounced back, the second never
+# resumed). `konkrctl sleep s2idle|standby` overrides it.
+if [ "$(/usr/lib/konkr/sleep-mode)" = s2idle ]; then
   exec /usr/lib/systemd/systemd-sleep suspend
 fi
 exec /usr/lib/konkr/konkr-standby

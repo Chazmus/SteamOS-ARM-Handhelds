@@ -144,9 +144,27 @@ ufs_on() {
   rm -f "$UFS_STATE"
 }
 
+# 8 Gen 3 on our 7.2 kernel: the kernel itself handles Wi-Fi, audio graphs,
+# touch and the PMIC wake sources across s2idle (Armada's suspend series).
+# Unloading ath12k and unbinding touch on top of that hung the Pocket FIT on
+# the first sleep; with only the report and the UFS step it sleeps and wakes
+# every time (2026-10-04). The full preparation stays for older kernels and
+# the other chips, where the s2idle fixes are not in.
+light() {
+  tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | grep -qx 'qcom,sm8650' || return 1
+  case "$(uname -r)" in 7.[2-9].*|7.[1-9][0-9].*|[89].*) return 0 ;; esac
+  return 1
+}
+
 pre() {
   local n u
   report_start
+  if light; then
+    sync
+    u=$(ufs_off)
+    log "pre: kernel handles the devices, ufs unbound=${u:-none}"
+    return
+  fi
   audio 1
   wake_sources
   n=$(touch_off)
@@ -178,6 +196,11 @@ touch_on() {
 post() {
   report_end
   ufs_on
+  if light; then
+    systemctl kill -s HUP konkrd.service >/dev/null 2>&1
+    log "post: restored"
+    return
+  fi
   touch_on
   if [[ ! -d /sys/module/${WIFI_MODS[0]} ]]; then
     modprobe "${WIFI_MODS[0]}" || log "ath12k reload failed"
