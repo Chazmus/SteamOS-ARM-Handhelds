@@ -596,7 +596,22 @@
           "kind": "flathub",
           "ref": "io.github.unknownskl.greenlight"
         }
-      ]
+      ],
+      "video_accel": {
+        "gbm_nv12": true,
+        "command": "zypak-wrapper.sh",
+        "args": [
+          "/app/main/greenlight-desktop",
+          "--enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks,VaapiVideoDecoder,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan",
+          "--ignore-gpu-blocklist",
+          "--use-gl=angle",
+          "--use-angle=vulkan",
+          "--use-vulkan"
+        ],
+        "env": {
+          "VK_ICD_FILENAMES": "/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json"
+        }
+      }
     },
     {
       "id": "vesktop",

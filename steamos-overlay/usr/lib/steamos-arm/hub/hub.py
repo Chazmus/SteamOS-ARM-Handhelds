@@ -784,6 +784,57 @@ def bottom_touch_name() -> str:
     return ""
 
 
+# The hardware video decoder for VA-API clients (Chromium/Electron, FFmpeg):
+# msm_drv_video.so drives the Snapdragon video core through V4L2, and
+# libgbm.so.1 adds the NV12 buffers Mesa's GBM can't make on Adreno (it
+# depends on Mesa's own libgbm under the name libgbm-mesa.so.1).
+VA_SYSTEM = Path("/usr/lib/steamos-arm/va")
+VA_DIR = ".steamos-arm-va"
+FLATPAK_MESA_GBM = "/usr/lib/aarch64-linux-gnu/GL/default/lib/libgbm.so.1"
+
+
+def _sync_file(src: Path, dst: Path) -> None:
+    """Copy when it differs, replacing atomically: a running app may have it mapped."""
+    try:
+        if dst.stat().st_size == src.stat().st_size and dst.read_bytes() == src.read_bytes():
+            return
+    except OSError:
+        pass
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".new")
+    shutil.copyfile(src, tmp)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, dst)
+
+
+def flatpak_video_accel(ref: str, spec: dict) -> list[str]:
+    """`flatpak run` options that give a Flatpak app the hardware decoder.
+
+    A sandbox can't see the host's /usr, so the driver is copied into the
+    app's own data folder, which it can always read."""
+    drv = VA_SYSTEM / "msm_drv_video.so"
+    if not drv.exists():
+        return []
+    dest = HOME / ".var" / "app" / ref / VA_DIR
+    try:
+        _sync_file(drv, dest / "msm_drv_video.so")
+        opts = [f"--env=LIBVA_DRIVERS_PATH={dest}", "--env=LIBVA_DRIVER_NAME=msm"]
+        if spec.get("gbm_nv12") and (VA_SYSTEM / "libgbm.so.1").exists():
+            _sync_file(VA_SYSTEM / "libgbm.so.1", dest / "lib" / "libgbm.so.1")
+            link = dest / "lib" / "libgbm-mesa.so.1"
+            if not link.is_symlink() or os.readlink(link) != FLATPAK_MESA_GBM:
+                link.unlink(missing_ok=True)
+                link.symlink_to(FLATPAK_MESA_GBM)
+            opts.append(f"--env=LD_LIBRARY_PATH={dest / 'lib'}")
+    except OSError as err:
+        log(f"video decoder setup for {ref} failed: {err}")
+        return []
+    opts += [f"--env={k}={v}" for k, v in spec.get("env", {}).items()]
+    if spec.get("command"):
+        opts.append(f"--command={spec['command']}")
+    return opts
+
+
 def run(app_id: str, args: list[str]) -> None:
     e = entry(app_id)
     rec = installed_db().get(app_id)
@@ -803,7 +854,11 @@ def run(app_id: str, args: list[str]) -> None:
         if not os.path.exists("/dev/fuse") or not shutil.which("fusermount"):
             env.setdefault("APPIMAGE_EXTRACT_AND_RUN", "1")
     elif rec["how"] == "flatpak":
-        cmd = ["flatpak", "run", rec["ref"]]
+        va = e.get("video_accel")
+        opts = flatpak_video_accel(rec["ref"], va) if va else []
+        cmd = ["flatpak", "run", *opts, rec["ref"]]
+        if opts:
+            cmd += va.get("args", [])
     else:
         cmd = [rec["exec"]]
     os.execvpe(cmd[0], cmd + args, env)
