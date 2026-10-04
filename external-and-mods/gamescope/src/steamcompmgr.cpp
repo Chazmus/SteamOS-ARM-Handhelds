@@ -7173,9 +7173,14 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 	}
 	else
 	{
-		if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefreshHz > nTargetFPS )
+		// vblank_idx counts the panel's real vblanks, so the divisor has to
+		// come from the output's refresh, not --nested-refresh: with the
+		// Steam UI kept at 60 Hz nested on a 120 Hz mode, a 30 fps limit
+		// became every 2nd vblank (60 fps) and a 60 fps limit nothing.
+		int nVblankHz = g_nOutputRefresh ? gamescope::ConvertmHzToHz( g_nOutputRefresh ) : nRefreshHz;
+		if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nVblankHz > nTargetFPS )
 		{
-			int nVblankDivisor = nRefreshHz / nTargetFPS;
+			int nVblankDivisor = nVblankHz / nTargetFPS;
 
 			if ( vblank_idx % nVblankDivisor != 0 )
 				bSendCallback = false;
