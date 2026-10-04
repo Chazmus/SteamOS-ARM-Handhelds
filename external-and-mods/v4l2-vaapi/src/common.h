@@ -46,6 +46,7 @@ struct drv {
 	int debug;
 	FILE *log;
 	int gpu_wait;                /* 1 kernel can wait for bookkeeping fences, 0 no, -1 unknown */
+	uint64_t gpu_busy, gpu_checks, gpu_wait_ns, gpu_wait_max_ns;
 };
 
 struct config {

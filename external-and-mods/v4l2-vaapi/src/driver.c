@@ -266,8 +266,17 @@ int gpu_wait(struct drv *d, struct surface *s, int timeout_ms)
 {
 	if (d->gpu_wait == 0 || !s->gem)
 		return -1;
+	if (d->gpu_wait > 0) {
+		/* How often the GPU is still on it, for the statistics. */
+		struct k_drm_msm_gem_cpu_prep nb = {.handle = s->gem,
+			.op = K_MSM_PREP_READ | K_MSM_PREP_WRITE | K_MSM_PREP_BOOKKEEP | 0x04};
+		if (ioctl(d->render_fd, K_DRM_IOCTL_MSM_GEM_CPU_PREP, &nb) && errno == EBUSY)
+			d->gpu_busy++;
+		d->gpu_checks++;
+	}
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
+	uint64_t t0 = (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
 	int64_t ns = t.tv_nsec + (int64_t)timeout_ms * 1000000;
 	struct k_drm_msm_gem_cpu_prep cp = {.handle = s->gem,
 		.op = K_MSM_PREP_READ | K_MSM_PREP_WRITE | K_MSM_PREP_BOOKKEEP,
@@ -284,6 +293,17 @@ int gpu_wait(struct drv *d, struct surface *s, int timeout_ms)
 	}
 	if (r && errno == ETIMEDOUT)
 		dbg(d, "GPU still reading a surface after %d ms", timeout_ms);
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	uint64_t w = (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec - t0;
+	d->gpu_wait_ns += w;
+	if (w > d->gpu_wait_max_ns)
+		d->gpu_wait_max_ns = w;
+	if (d->gpu_checks >= 600) {
+		dbg(d, "GPU still reading at reuse: %llu of %llu, waited %.1f ms total, max %.1f ms",
+		    (unsigned long long)d->gpu_busy, (unsigned long long)d->gpu_checks,
+		    d->gpu_wait_ns / 1e6, d->gpu_wait_max_ns / 1e6);
+		d->gpu_busy = d->gpu_checks = d->gpu_wait_ns = d->gpu_wait_max_ns = 0;
+	}
 	return 0;
 }
 
@@ -874,7 +894,15 @@ static VAStatus EndPicture(VADriverContextP ctx, VAContextID cid)
 		memcpy(frame, ps, hdr);
 		memcpy(frame + hdr, c->nal, c->nal_len);
 		memcpy(frame + hdr + c->nal_len, aud, sizeof(aud));
-		if (dec_submit(c, frame, total, c->target))
+		/*
+		 * Finish the picture before returning. Clients that rely on the
+		 * kernel's implicit sync (Chromium on Linux) hand the surface to
+		 * the GPU without vaSyncSurface; the video core's driver attaches
+		 * no fence, so the GPU would sample a half-written frame.
+		 * Decoding takes ~2 ms and pictures are serialised anyway.
+		 */
+		if (dec_submit(c, frame, total, c->target) ||
+		    (c->target->pending && dec_wait(c, c->target, 1000)))
 			st = VA_STATUS_ERROR_DECODING_ERROR;
 		free(frame);
 	}
