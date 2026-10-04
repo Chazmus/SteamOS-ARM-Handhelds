@@ -1,0 +1,125 @@
+From: hashtagbasit
+Subject: PCI: qcom / of: walk iommu-map by #iommu-cells, not a fixed 4 words
+
+On 7.2 the SM8550 device tree spells iommu-map out with the SMMU's
+#iommu-cells = <2>, so each entry is 5 words (rid-base, phandle, SID, mask,
+length). qcom_pcie_config_sid_1_9_0() and parse_iommu_maps() still stepped
+by 4, which programmed wrong SIDs into the BDF-to-SID table and linked the
+PCIe host to unrelated nodes. On the AYANEO Pocket EVO the Wi-Fi never came
+up (MHI not ready) and the Renesas USB controller carrying the gamepad
+stalled. Only for 7.2: the 7.1.2 tree still has 4-word entries.
+
+---
+diff -ru a/drivers/of/property.c b/drivers/of/property.c
+--- a/drivers/of/property.c	2026-09-30 20:14:44.715309455 +0200
++++ b/drivers/of/property.c	2026-09-30 20:14:44.781309865 +0200
+@@ -1443,10 +1443,36 @@
+ static struct device_node *parse_iommu_maps(struct device_node *np,
+ 					    const char *prop_name, int index)
+ {
++	const __be32 *map;
++	struct device_node *iommu;
++	u32 cells;
++	int len, i;
++
+ 	if (strcmp(prop_name, "iommu-map"))
+ 		return NULL;
+ 
+-	return of_parse_phandle(np, prop_name, (index * 4) + 1);
++	/*
++	 * Entries are <rid-base iommu-phandle specifier... length> with
++	 * #iommu-cells words of specifier, not a fixed 4 words: with 5-word
++	 * entries (#iommu-cells = <2>) the fixed stride took rid-base/length
++	 * values of later entries for phandles and linked the PCIe host to
++	 * unrelated nodes.
++	 */
++	map = of_get_property(np, prop_name, &len);
++	if (!map)
++		return NULL;
++	len /= sizeof(*map);
++	for (i = 0; i + 1 < len; i += 3 + cells) {
++		iommu = of_find_node_by_phandle(be32_to_cpup(map + i + 1));
++		if (!iommu)
++			return NULL;
++		cells = 1;
++		of_property_read_u32(iommu, "#iommu-cells", &cells);
++		if (index-- == 0)
++			return iommu;
++		of_node_put(iommu);
++	}
++	return NULL;
+ }
+ 
+ static struct device_node *parse_gpio_compat(struct device_node *np,
+diff -ru a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+--- a/drivers/pci/controller/dwc/pcie-qcom.c	2026-09-30 20:14:44.711309430 +0200
++++ b/drivers/pci/controller/dwc/pcie-qcom.c	2026-09-30 20:14:44.781309865 +0200
+@@ -1119,17 +1119,22 @@
+ 
+ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ {
+-	/* iommu map structure */
+-	struct {
+-		u32 bdf;
+-		u32 phandle;
+-		u32 smmu_sid;
+-		u32 smmu_sid_len;
+-	} *map;
++	/*
++	 * iommu-map entries are <rid-base iommu-phandle specifier... length>,
++	 * with #iommu-cells words of specifier, the SID first. The PCIe SMMU
++	 * has #iommu-cells = <2> (SID, mask), and the device trees now spell
++	 * that out, so entries are 5 words. Reading them as fixed 4-word
++	 * entries programmed wrong SIDs for everything behind the root port
++	 * (SM8550 on 7.2.8: Wi-Fi never came up, nor the AYANEO Pockets'
++	 * PCIe USB controller that carries the gamepad).
++	 */
++	u32 *map;
+ 	void __iomem *bdf_to_sid_base = pcie->parf + PARF_BDF_TO_SID_TABLE_N;
+ 	struct device *dev = pcie->pci->dev;
+ 	u8 qcom_pcie_crc8_table[CRC8_TABLE_SIZE];
+-	int i, nr_map, size = 0;
++	struct device_node *iommu;
++	int i, nr_map, size = 0, stride;
++	u32 iommu_cells = 1;
+ 	u32 smmu_sid_base;
+ 	u32 val;
+ 
+@@ -1149,7 +1154,13 @@
+ 	of_property_read_u32_array(dev->of_node, "iommu-map", (u32 *)map,
+ 				   size / sizeof(u32));
+ 
+-	nr_map = size / (sizeof(*map));
++	iommu = of_find_node_by_phandle(map[1]);
++	if (iommu) {
++		of_property_read_u32(iommu, "#iommu-cells", &iommu_cells);
++		of_node_put(iommu);
++	}
++	stride = 3 + iommu_cells;
++	nr_map = size / sizeof(u32) / stride;
+ 
+ 	crc8_populate_msb(qcom_pcie_crc8_table, QCOM_PCIE_CRC8_POLYNOMIAL);
+ 
+@@ -1157,11 +1168,11 @@
+ 	memset_io(bdf_to_sid_base, 0, CRC8_TABLE_SIZE * sizeof(u32));
+ 
+ 	/* Extract the SMMU SID base from the first entry of iommu-map */
+-	smmu_sid_base = map[0].smmu_sid;
++	smmu_sid_base = map[2];
+ 
+ 	/* Look for an available entry to hold the mapping */
+ 	for (i = 0; i < nr_map; i++) {
+-		__be16 bdf_be = cpu_to_be16(map[i].bdf);
++		__be16 bdf_be = cpu_to_be16(map[i * stride]);
+ 		u32 val;
+ 		u8 hash;
+ 
+@@ -1184,7 +1195,7 @@
+ 		}
+ 
+ 		/* BDF [31:16] | SID [15:8] | NEXT [7:0] */
+-		val = map[i].bdf << 16 | (map[i].smmu_sid - smmu_sid_base) << 8 | 0;
++		val = map[i * stride] << 16 | (map[i * stride + 2] - smmu_sid_base) << 8 | 0;
+ 		writel(val, bdf_to_sid_base + hash * sizeof(u32));
+ 	}
+ 

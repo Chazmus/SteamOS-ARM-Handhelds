@@ -1,0 +1,48 @@
+
+/* --- SteamOS-ARM-SM8650 additions (Pocket FIT and Pocket S2) ------------- */
+
+/*
+ * Volume up is not a wake source: a press in a bag or while holding the
+ * device woke it from s2idle. The power key still wakes it.
+ */
+&{/gpio-keys/key-volume-up} {
+	/delete-property/ wakeup-source;
+};
+
+/*
+ * PCIe WAKE# is active low on both ports (Wi-Fi on pcie0, the USB host
+ * controller on pcie1). Read as active high it looks asserted all the time,
+ * which keeps the link from being treated as idle across suspend.
+ */
+&pcieport0 {
+	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+};
+
+&pcie1_port0 {
+	wake-gpios = <&tlmm 99 GPIO_ACTIVE_LOW>;
+};
+
+/*
+ * The audio codec keeps these rails on through s2idle. Let RPMh drop them to
+ * low-power mode while asleep instead of holding full drive for nothing.
+ */
+&vreg_l15b_1p8 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
+};
+
+&vreg_bob1 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
+};
+
+&vreg_l3c_1p2 {
+	regulator-state-mem {
+		regulator-on-in-suspend;
+		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+	};
+};

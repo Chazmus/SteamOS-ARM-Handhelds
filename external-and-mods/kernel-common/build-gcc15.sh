@@ -16,7 +16,7 @@ BUSYBOX="${BUSYBOX:-/bin/busybox}"
 PKGS="file gcc make bc bison flex python3 curl tar xz gzip cpio kmod patch perl rsync
       openssl-devel elfutils-libelf-devel dwarves diffutils findutils hostname which git"
 env_args=()
-for v in SM8550_RECIPE WORK ROCKNIX_DIR JOBS OUT_BASE LOCALVERSION DTBS_OVERRIDE; do
+for v in SM8550_RECIPE SM8650_RECIPE WORK ROCKNIX_DIR JOBS OUT_BASE LOCALVERSION DTBS_OVERRIDE; do
   [[ -n "${!v:-}" ]] && env_args+=(-e "$v=${!v}")
 done
 exec docker run --rm -v "$MOUNT:$MOUNT" -v "$BUSYBOX:/bin/busybox:ro" "${env_args[@]}" \
