@@ -112,6 +112,15 @@ function trimFrameRates(d) {
     if (out.length === 0 || out.length === fr.length) return null;
     return { ...d, active_display_info: { ...adi, supported_frame_rates: out } };
 }
+// What the short list holds on this screen, for the toggle's description.
+function shortFpsSteps() {
+    const qc = findQueryClient();
+    const adi = qc && qc.getQueryData(GS_STATE) && qc.getQueryData(GS_STATE).active_display_info;
+    const rr = adi && Array.isArray(adi.supported_refresh_rates) ? [...adi.supported_refresh_rates] : [];
+    if (rr.some((r) => r % 30 === 0) && !rr.includes(30)) rr.push(30);
+    rr.sort((a, b) => a - b);
+    return rr.length ? rr.join(" / ") : "30 / 60 / 90 / 120";
+}
 function applyShortFps(on) {
     if (shortFpsUnsub) { shortFpsUnsub(); shortFpsUnsub = null; }
     const qc = findQueryClient();
@@ -228,7 +237,7 @@ function Content() {
         jsxs(DFL.PanelSection, { title: "Display", children: [
             row(jsx(DFL.ToggleField, {
                 label: "Short frame limit list",
-                description: "Steam's Frame Limit offers 30 plus the screen's refresh rates instead of every fraction",
+                description: shortFpsSteps(),
                 checked: shortFps,
                 onChange: (v) => { try { localStorage.setItem(SHORT_FPS_KEY, v ? "1" : "0"); } catch (e) {} setShortFps(v); applyShortFps(v); },
             })),
