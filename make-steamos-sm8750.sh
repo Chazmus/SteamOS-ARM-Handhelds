@@ -6,6 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${ROOT}/versions.env" ]] && source "${ROOT}/versions.env"
 SCRIPTS="${ROOT}/scripts"
 WORKDIR="${STEAMOS_WORK:-${ROOT}/sm8750-work}"
 R="${STEAMOS_ROOTFS:-${WORKDIR}/rootfs}"
@@ -79,20 +80,20 @@ STEAMOS_BUILD="${STEAMOS_BUILD:-20260925.6175226}"
 STEAMOS_BUNDLE="deckard-${STEAMOS_BUILD}-0.5.0"
 STEAMOS_URL="https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}"
 
-# SM8750_KERNEL=prebuilt (default): ROCKNIX's binary release, no tracefs.
-# SM8750_KERNEL=source: build via kernel-sm8750/build.sh, has tracefs.
-# Needs a native aarch64 host (e.g. the Odin 3 itself).
+# SM8750_KERNEL=prebuilt: ROCKNIX binary release, no tracefs.
+# SM8750_KERNEL=source: build via kernel-sm8750/build.sh or use staged build, has tracefs.
+# Default: uses from-source/SteamOS kernel if staged in kernel-sm8750-src, else prebuilt.
 ensure_kernel() {
-  if [[ "${SM8750_KERNEL:-prebuilt}" == source ]]; then
-    local kwork="${SM8750_KERNEL_WORK:-${WORKDIR}/kernel-sm8750-src}"
-    local kcur="${kwork}/output/current"
-    if [[ -L "$kcur" && -f "$(readlink -f "$kcur")/boot/KERNEL" ]]; then
-      log "SM8750 from-source kernel already built in ${kwork}"
+  local ksrc_work="${SM8750_KERNEL_WORK:-${WORKDIR}/kernel-sm8750-src}"
+  local ksrc_cur="${ksrc_work}/output/current"
+  if [[ "${SM8750_KERNEL:-}" == source || ( -z "${SM8750_KERNEL:-}" && -L "$ksrc_cur" && -f "$(readlink -f "$ksrc_cur")/boot/KERNEL" ) ]]; then
+    if [[ -L "$ksrc_cur" && -f "$(readlink -f "$ksrc_cur")/boot/KERNEL" ]]; then
+      log "SM8750 from-source kernel found in ${ksrc_work}"
     else
       log "Building SM8750 kernel from source (kernel-sm8750/build.sh)"
-      WORK="$kwork" bash "${MOD}/kernel-sm8750/build.sh"
+      WORK="$ksrc_work" bash "${MOD}/kernel-sm8750/build.sh"
     fi
-    KOUT="$(readlink -f "$kcur")"
+    KOUT="$(readlink -f "$ksrc_cur")"
     return 0
   fi
   if [[ -f "${KOUT}/boot/KERNEL" && -d "${KOUT}/modules/7.2.0" ]]; then
@@ -137,12 +138,43 @@ ensure_official_rootfs() {
   [[ -x "${R}/usr/bin/bash" ]] || die "unpacked rootfs has no /usr/bin/bash"
 }
 
+ensure_steam_seed() {
+  [[ "$SKIP_APPLY" -eq 1 ]] && return 0
+  local seed="${WORKDIR}/steam-arm-seed"
+  if [[ -n "${STEAM_ARM_SEED:-}" && -d "${STEAM_ARM_SEED}" ]]; then
+    seed="${STEAM_ARM_SEED}"
+  fi
+
+  if "${SCRIPTS}/install-complete-steam-client.sh" --check "${seed}" 2>/dev/null; then
+    log "Steam ARM seed ready at ${seed}"
+    export STEAM_ARM_SEED="${seed}"
+    return 0
+  fi
+
+  if [[ "$(uname -m)" == "aarch64" ]]; then
+    log "No complete Steam seed found. Bootstrapping headlessly on aarch64..."
+    if [[ -f /etc/resolv.conf ]]; then
+      sudo_run cp -L /etc/resolv.conf "${R}/etc/resolv.conf" 2>/dev/null || true
+    fi
+    "${SCRIPTS}/bootstrap-steam-arm-seed.sh" "${R}" "${seed}" "${STEAM_ARM_CHANNEL:-steamdeck_publicbeta}"
+    export STEAM_ARM_SEED="${seed}"
+    return 0
+  fi
+
+  log "WARN: Not on aarch64 ($(uname -m)) and no complete seed available; skipping headless bootstrap"
+}
+
 apply_mods() {
   [[ "$SKIP_APPLY" -eq 1 ]] && { log "Skipping apply-overlays"; return 0; }
   [[ -x "${SCRIPTS}/apply-overlays-sm8750.sh" ]] || die "missing scripts/apply-overlays-sm8750.sh"
   log "Applying SM8750 Odin 3 kernel / Turnip Adreno 830 / overlays"
+  local mesa="${MESA_STACK:-}"
+  if [[ -z "${mesa}" && -d "${WORKDIR}/mesa-stack/aarch64" ]]; then
+    mesa="${WORKDIR}/mesa-stack"
+    log "Auto-detected Mesa stack at ${mesa}"
+  fi
   sudo_run env KERNEL_OUT="${KOUT}" STEAMOS_ROOTFS="${R}" STEAMOS_WORK="${WORKDIR}" \
-    MESA_STACK="${MESA_STACK:-}" ${STEAM_ARM_SEED:+STEAM_ARM_SEED="${STEAM_ARM_SEED}"} \
+    MESA_STACK="${mesa}" ${STEAM_ARM_SEED:+STEAM_ARM_SEED="${STEAM_ARM_SEED}"} \
     ${GAMESCOPE_BUILD:+GAMESCOPE_BUILD="${GAMESCOPE_BUILD}"} \
     "${SCRIPTS}/apply-overlays-sm8750.sh"
 }
@@ -353,5 +385,6 @@ EOF
 mkdir -p "${WORKDIR}"
 ensure_kernel
 ensure_official_rootfs
+ensure_steam_seed
 apply_mods
 build_image
