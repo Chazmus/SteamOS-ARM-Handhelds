@@ -1,0 +1,12 @@
+{
+  "name": "Lower Deck",
+  "author": "hashtagbasit",
+  "api_version": 1,
+  "flags": ["root"],
+  "version": "1.0.0",
+  "publish": {
+    "tags": ["dual-screen", "thor", "launcher", "bottom-screen"],
+    "description": "The bottom screen from Quick Access: its theme, the home screen's tiles, and apps that open with a game.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
+  }
+}

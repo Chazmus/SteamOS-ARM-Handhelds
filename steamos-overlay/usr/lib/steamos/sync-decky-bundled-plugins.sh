@@ -26,11 +26,21 @@ fi
 
 mkdir -p "$DEST"
 
+# A plugin with a "models" file is only for those devices (one device-tree
+# model per line); anywhere else it is left out, and taken out if it's there.
+MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+ONLY="${1:-}"                    # sync just this one plugin (the boot service)
+
 installed=0
 shopt -s nullglob
 for src in "${BUNDLE_ROOT}"/*; do
   [[ -d "$src" && -f "${src}/plugin.json" && -f "${src}/dist/index.js" ]] || continue
   name="$(basename "$src")"
+  [[ -z "$ONLY" || "$name" == "$ONLY" ]] || continue
+  if [[ -f "${src}/models" ]] && ! grep -qxF -- "$MODEL" "${src}/models"; then
+    [[ -d "${DEST}/${name}" ]] && { log "Removing ${name}: not for ${MODEL:-this device}"; rm -rf "${DEST:?}/${name}"; }
+    continue
+  fi
   log "Installing ${name} → ${DEST}/${name}"
   mkdir -p "${DEST}/${name}"
   if command -v rsync >/dev/null 2>&1; then

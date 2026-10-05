@@ -690,6 +690,17 @@ ln -sfn ../thor-backlightd.service \
 mkdir -p "$R/usr/lib/systemd/user/gamescope-session.target.wants"
 ln -sfn ../bottom-screen.service \
   "$R/usr/lib/systemd/user/gamescope-session.target.wants/bottom-screen.service"
+# Lower Deck: the bottom screen from Quick Access. Bundled for every image;
+# the boot service puts it in Decky only on a model in its "models" file.
+LD_SRC="${ROOT}/external-and-mods/Decky/dualscreen/lower-deck"
+LD_DST="$R/usr/share/steamos-odin/decky-plugins/lower-deck"
+rm -rf "$LD_DST"; install -d -m0755 "$LD_DST/dist"
+install -m0644 "$LD_SRC/plugin.json" "$LD_SRC/main.py" "$LD_SRC/package.json" "$LD_SRC/models" "$LD_DST/"
+install -m0644 "$LD_SRC/dist/index.js" "$LD_DST/dist/"
+install -D -m0644 "${ROOT}/steamos-overlay/usr/lib/systemd/system/steamos-arm-lower-deck.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-lower-deck.service"
+ln -sfn ../steamos-arm-lower-deck.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-lower-deck.service"
 
 # ---------------------------------------------------------------------------
 # SM8550 device overlay: AYANEO Pocket / Retroid Pocket pads (deck-uhid),
