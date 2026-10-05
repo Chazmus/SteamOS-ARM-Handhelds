@@ -75,9 +75,11 @@ next boot. **UNINSTALL CFW** in the ABL menu also removes the Linux partitions.
 
 ## Android stopped starting after an internal install
 
-Installs made before v1.3 gave the Linux boot partition a different type
-from the layout Android is known to keep working with (the Snapdragon logo,
-then off). Boot the SD card and run:
+Installs made before v1.3 gave the Linux boot partition the "basic data"
+type, and Android doesn't start with that next to it (the Snapdragon logo,
+then off). Retyping it as an EFI System Partition brought Android back on a
+Pocket FIT, with SteamOS still booting from internal. Boot the SD card and
+run:
 
 ```bash
 sudo ufs-partition.py fix-types --dry-run   # shows what it would change
