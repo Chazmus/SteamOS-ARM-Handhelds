@@ -76,9 +76,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-STEAMOS_BUILD="${STEAMOS_BUILD:-20260925.6175226}"
-STEAMOS_BUNDLE="deckard-${STEAMOS_BUILD}-0.5.0"
-STEAMOS_URL="https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}"
+STEAMOS_BUILD="${STEAMOS_BUILD:-20261002.6232440}"
+STEAMOS_BUNDLE="${STEAMOS_BUNDLE:-deckard-${STEAMOS_BUILD}-0.5.3}"
+STEAMOS_URL="${STEAMOS_URL:-https://steamdeck-images.steamos.cloud/vr/${STEAMOS_BUILD}}"
 
 # SM8750_KERNEL=prebuilt: ROCKNIX binary release, no tracefs.
 # SM8750_KERNEL=source: build via kernel-sm8750/build.sh or use staged build, has tracefs.
@@ -105,7 +105,17 @@ ensure_kernel() {
 }
 
 ensure_official_rootfs() {
-  if [[ -x "${R}/usr/bin/bash" ]]; then
+  if [[ -f "${R}/etc/os-release" ]]; then
+    local current_build
+    current_build="$(grep '^BUILD_ID=' "${R}/etc/os-release" | cut -d= -f2 | tr -d '"')"
+    if [[ "${current_build}" == "${STEAMOS_BUILD}" ]]; then
+      log "Official rootfs already extracted (build ${STEAMOS_BUILD})"
+      return 0
+    else
+      log "Existing rootfs is build ${current_build}, but requested build is ${STEAMOS_BUILD}. Re-extracting..."
+      sudo_run rm -rf "${R}"
+    fi
+  elif [[ -x "${R}/usr/bin/bash" ]]; then
     log "Official rootfs already extracted"
     return 0
   fi
