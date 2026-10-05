@@ -6,6 +6,7 @@
                            [--disk /dev/sda] [--storage-gib 20] [--dry-run]
   ufs-partition.py restore --backup FILE [--disk /dev/sda] [--dry-run]
   ufs-partition.py reset-android --yes [--disk /dev/sda] [--dry-run]
+  ufs-partition.py fix-types [--disk /dev/sda] [--dry-run]
 
 Layout after apply (everything before userdata is never touched):
 
@@ -44,10 +45,17 @@ DEFAULT_STORAGE_GIB = 20
 MIN_ANDROID_GIB = 8
 MIN_HOME_GIB = 16
 OURS = ("ROCKNIX", "STORAGE", "HOME")
-# ROCKNIX: FAT32 as "basic data", the type the ABL boots from on the
-# Pocket FIT install this layout was proven on.
-TYPE_FAT = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+# ROCKNIX: an EFI System Partition. The ABL boots Linux from it whatever
+# its type (our initramfs finds it by name), but Android only came up again
+# with an ESP there: with a "basic data" FAT after userdata, two Pocket FIT
+# and one Pocket S2 install lost Android, while Armada's layout (same ABL,
+# ESP first) keeps it.
+TYPE_ESP = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+TYPE_BASIC_DATA = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 TYPE_LINUX = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+# Qualcomm's type for userdata; a hand-made layout (parted mkpart) leaves
+# the generic Linux type in its place.
+TYPE_QC_USERDATA = "1B81E7E6-F50D-419B-A739-2AEEF8DA3335"
 
 
 def die(msg: str) -> None:
@@ -130,12 +138,14 @@ def plan(t: dict, ud: dict, android_gib: int, storage_gib: int) -> dict:
     st_start = boot_start + boot_size
     st_size = storage_gib * GIB // ss
     home_start = st_start + st_size
-    home_end = (last + 1) // mib * mib                       # exclusive, aligned
+    # Stop where Android's userdata ended (it normally runs to the last
+    # usable sector): never claim space Android didn't own.
+    home_end = min(last + 1, ud["start"] + ud["size"]) // mib * mib   # exclusive
     home_size = home_end - home_start
     return {
         "sector_size": ss, "userdata_start": ud["start"], "userdata_size": ud_size,
         "new": [
-            ("ROCKNIX", boot_start, boot_size, TYPE_FAT),
+            ("ROCKNIX", boot_start, boot_size, TYPE_ESP),
             ("STORAGE", st_start, st_size, TYPE_LINUX),
             ("HOME", home_start, home_size, TYPE_LINUX),
         ],
@@ -145,7 +155,7 @@ def plan(t: dict, ud: dict, android_gib: int, storage_gib: int) -> dict:
 
 def max_android_gib(t: dict, ud: dict, storage_gib: int) -> int:
     ss = t["sectorsize"]
-    room = (int(t["lastlba"]) + 1 - ud["start"]) * ss
+    room = (min(int(t["lastlba"]) + 1, ud["start"] + ud["size"]) - ud["start"]) * ss
     return int((room - (BOOT_GIB + storage_gib + MIN_HOME_GIB) * GIB - 2 * MIB) // GIB)
 
 
@@ -250,9 +260,24 @@ def new_dump(disk: str, t: dict, p: dict) -> str:
         out.append(line)
     if not seen_ud:
         die("userdata line not found in sfdisk dump")
-    for name, start, size, typ in p["new"]:
-        out.append(f"start={start}, size={size}, type={typ}, name=\"{name}\"")
+    for num, (name, start, size, typ) in zip(new_numbers(disk, t), p["new"]):
+        out.append(f"{partition_node(disk, num)} : start={start}, size={size}, type={typ}, name=\"{name}\"")
     return "\n".join(out) + "\n"
+
+
+def new_numbers(disk: str, t: dict) -> list[int]:
+    """GPT slots for our three: right after userdata when those are free (the
+    usual case, and what Armada does), otherwise the first free ones."""
+    stale = {q["node"] for q in leftovers(t)}
+    used = {part_num(disk, q["node"]) for q in t["partitions"] if q["node"] not in stale}
+    n = part_num(disk, userdata(t)["node"])
+    want = [n + 1, n + 2, n + 3]
+    if not used & set(want):
+        return want
+    free = [i for i in range(1, int(t.get("table-length", 128)) + 1) if i not in used]
+    if len(free) < 3:
+        die("not enough free GPT entries")
+    return free[:3]
 
 
 def reread(disk: str) -> None:
@@ -426,6 +451,38 @@ def cmd_reset_android(a) -> None:
     print("OK: Android sets itself up again on its next boot")
 
 
+def cmd_fix_types(a) -> None:
+    """For installs made before the ESP type: retype ROCKNIX to an ESP, and
+    give userdata Qualcomm's type back if a hand-made layout replaced it with
+    the generic Linux one. Only type GUIDs change; no data is touched."""
+    t = read_table(a.disk)
+    changes = []
+    for q in t["partitions"]:
+        num = part_num(a.disk, q["node"])
+        if q["name"] == "ROCKNIX" and q["type"].upper() != TYPE_ESP:
+            changes.append((num, q["name"], q["type"], TYPE_ESP))
+        if q["name"] == "userdata" and q["type"].upper() == TYPE_LINUX:
+            changes.append((num, q["name"], q["type"], TYPE_QC_USERDATA))
+    if not changes:
+        print("OK: types already right, nothing to change")
+        return
+    for num, name, old, new in changes:
+        print(f"{name} (partition {num}): type {old} -> {new}")
+    if a.dry_run:
+        return
+    if booted_disk() == a.disk:
+        die(f"the running system is on {a.disk}; boot from the microSD card")
+    for num, _, _, new in changes:
+        sh("sfdisk", "--no-reread", "--part-type", a.disk, str(num), new)
+    reread(a.disk)
+    t2 = read_table(a.disk)
+    for num, name, _, new in changes:
+        got = [q["type"].upper() for q in t2["partitions"] if part_num(a.disk, q["node"]) == num]
+        if got != [new]:
+            die(f"{name}: type is {got}, wanted {new}")
+    print("OK: partition types fixed; nothing else on the disk changed")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -433,9 +490,11 @@ def main() -> None:
     ap_ = sub.add_parser("apply")
     r = sub.add_parser("restore")
     ra = sub.add_parser("reset-android")
+    ft = sub.add_parser("fix-types")
+    ft.add_argument("--dry-run", action="store_true")
     ra.add_argument("--yes", action="store_true")
     ra.add_argument("--dry-run", action="store_true")
-    for s in (d, ap_, r, ra):
+    for s in (d, ap_, r, ra, ft):
         s.add_argument("--disk", default="/dev/sda")
     for s in (d, ap_):
         s.add_argument("--storage-gib", type=int, default=DEFAULT_STORAGE_GIB)
@@ -449,7 +508,7 @@ def main() -> None:
     if os.geteuid() != 0 and not getattr(a, "dry_run", False) and a.cmd != "detect":
         die("run as root")
     {"detect": cmd_detect, "apply": cmd_apply, "restore": cmd_restore,
-     "reset-android": cmd_reset_android}[a.cmd](a)
+     "reset-android": cmd_reset_android, "fix-types": cmd_fix_types}[a.cmd](a)
 
 
 if __name__ == "__main__":

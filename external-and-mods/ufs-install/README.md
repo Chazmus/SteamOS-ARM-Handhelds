@@ -73,6 +73,22 @@ sudo ufs-partition.py restore --backup /boot/ufs-backup/ufs-gpt-<date>.sfdisk
 `userdata` gets its full size back and Android sets itself up again on its
 next boot. **UNINSTALL CFW** in the ABL menu also removes the Linux partitions.
 
+## Android stopped starting after an internal install
+
+Installs made before v1.3 gave the Linux boot partition a different type
+from the layout Android is known to keep working with (the Snapdragon logo,
+then off). Boot the SD card and run:
+
+```bash
+sudo ufs-partition.py fix-types --dry-run   # shows what it would change
+sudo ufs-partition.py fix-types
+sudo ufs-partition.py reset-android --yes   # Android sets itself up fresh
+```
+
+`fix-types` only changes partition type IDs; SteamOS on internal storage
+keeps working and nothing is erased. `reset-android` clears Android's
+already-erased data area so its next boot starts like a reset device.
+
 ## If internal Linux doesn't boot
 
 Boot the SD card and run `sudo ufs-diagnose.sh`, then
