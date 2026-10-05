@@ -9,9 +9,16 @@ name: Build SM8750 (8 Elite) Kernel
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'ci/github-actions-mvp'
+      - 'bump/**'
+    paths:
+      - '.github/workflows/build-kernel-sm8750.yml'
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
     container:
       image: fedora:43

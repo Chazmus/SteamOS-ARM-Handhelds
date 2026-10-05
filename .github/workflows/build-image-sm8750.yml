@@ -24,9 +24,16 @@ on:
         description: >-
           Mesa build run ID (leave blank for latest successful)
         required: false
+  push:
+    branches:
+      - 'ci/github-actions-mvp'
+      - 'bump/**'
+    paths:
+      - '.github/workflows/build-image-sm8750.yml'
 
 jobs:
   build-image:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     permissions:

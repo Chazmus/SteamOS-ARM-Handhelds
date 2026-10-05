@@ -36,7 +36,8 @@ on:
         default: false
   push:
     branches:
-      - 'ci/github-actions-mvp'  # Registers workflow in GitHub Actions index
+      - 'ci/github-actions-mvp'
+      - 'bump/**'
     paths:
       - '.github/workflows/release-sm8750.yml'
 
