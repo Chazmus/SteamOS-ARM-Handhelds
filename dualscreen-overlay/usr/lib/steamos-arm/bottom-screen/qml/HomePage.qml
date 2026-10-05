@@ -54,6 +54,12 @@ Item {
             out.push({ id: "get:" + a.id, name: a.title, icon: "applications-internet", image: a.icon || "", kind: "app", get: a })
         })
         out = out.filter(function (o) { return hidden.indexOf(o.id) < 0 })
+        // the order set in Lower Deck; tiles it hasn't seen go after, as they were
+        var order = Ui.cfg.home_order || []
+        out = out.map(function (o, n) { return { o: o, n: n } }).sort(function (a, b) {
+            var x = order.indexOf(a.o.id), y = order.indexOf(b.o.id)
+            return (x < 0 ? 1000 + a.n : x) - (y < 0 ? 1000 + b.n : y)
+        }).map(function (e) { return e.o })
         out.push({ id: "page:apps", page: "apps", name: "Add", icon: "list-add-symbolic", mask: true, kind: "add" })
         return out
     }
@@ -63,7 +69,11 @@ Item {
     function activate(o) {
         if (o.page) home.open(o.page)
         else if (o.get) { if (!(o.get.job && o.get.job.state === "running")) Ui.post("/hub/install", { app: o.get.id, pin: true }) }
-        else Ui.post(home.runningIds.indexOf(o.id) >= 0 ? "/focus" : "/launch", { id: o.id })
+        else {
+            var running = home.runningIds.indexOf(o.id) >= 0
+            if (!running) Ui.launching = { name: o.name, icon: o.icon || "", image: o.image || "", web: !!o.web }
+            Ui.post(running ? "/focus" : "/launch", { id: o.id })
+        }
     }
     function hold(o) {
         if (home.runningIds.indexOf(o.id) >= 0) Ui.post("/close", { id: o.id })

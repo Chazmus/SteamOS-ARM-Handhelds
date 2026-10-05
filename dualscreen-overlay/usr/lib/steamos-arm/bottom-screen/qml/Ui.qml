@@ -45,6 +45,9 @@ QtObject {
     // A skin can bring its own colours (skin.json "colors"); they apply to
     // every page, not only the dashboard. shotColors stands in for screenshots.
     property var shotColors: null
+    // An app just started from the launcher ({name, icon, image}): Main
+    // covers the screen with it until its window is up.
+    property var launching: null
     readonly property var theme: shotColors || cfg.skin_colors || ({})
 
     function request(method, path, body, done) {

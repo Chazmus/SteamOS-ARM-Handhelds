@@ -79,7 +79,15 @@ DEFAULT_CONFIG = {
     "skin": "aura",             # the dashboard's stats look (skins/, or the user's own)
     "bricks_best": 0,           # the brick game's best score
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
+    "home_order": [],           # launcher tile ids in the order they show (Lower Deck)
+    "home_hidden": [],          # launcher tiles not shown
+    "companions": {},           # appid -> app ids opened on this screen with that game
+    "companions_close": True,   # and closed again when the game ends
 }
+# The launcher's own tiles, for Lower Deck's list (HomePage.qml draws them).
+LAUNCHER_TOOLS = [("page:dash", "Dashboard"), ("page:pad", "Trackpad"), ("page:keys", "Keyboard"),
+                  ("page:notes", "Notes"), ("page:hub", "Emulators"), ("page:bricks", "Bricks")]
+LIST_KEYS = ("pinned", "webapps", "per_game", "pin_after", "home_order", "home_hidden", "companions")
 LAYOUTS = ("qwerty", "qwertz", "azerty")
 
 # Which backlight is which panel (else: listed by name).
@@ -390,6 +398,36 @@ def _library_dirs() -> list[Path]:
     return out
 
 
+def launcher_items(cfg: dict) -> list[dict]:
+    """Every tile the launcher can show, in the user's order (new ones last)."""
+    items = [{"id": i, "name": n, "kind": "tool"} for i, n in LAUNCHER_TOOLS]
+    items += [{"id": w["id"], "name": "Guide" if w["id"] == "web:guide" else w["name"], "kind": "web"}
+              for w in web_entries(cfg)]
+    apps = {a["id"]: a for a in list_apps()}
+    items += [{"id": p, "name": apps[p]["name"], "kind": "app"} for p in cfg.get("pinned", []) if p in apps]
+    order = {k: n for n, k in enumerate(cfg.get("home_order") or [])}
+    items.sort(key=lambda i: order.get(i["id"], len(order)))
+    hidden = set(cfg.get("home_hidden") or [])
+    for i in items:
+        i["hidden"] = i["id"] in hidden
+    return items
+
+
+def known_games() -> list[dict]:
+    """Installed Steam games (manifests), plus anything played lately, by name."""
+    out: dict[int, str] = {}
+    for d in _library_dirs():
+        for f in glob.glob(str(d / "appmanifest_*.acf")):
+            text = rd(f)
+            m, n = re.search(r'"appid"\s+"(\d+)"', text), re.search(r'"name"\s+"([^"]+)"', text)
+            if m and n and not re.search(r"(?i)proton|steamworks|runtime|redistributable", n.group(1)):
+                out[int(m.group(1))] = n.group(1)
+    for e in sessions_get(50):
+        if e.get("appid") and e.get("name"):
+            out.setdefault(int(e["appid"]), e["name"])
+    return [{"appid": a, "name": n} for a, n in sorted(out.items(), key=lambda kv: kv[1].lower())]
+
+
 STEAM_DIR = Path.home() / ".local/share/Steam"
 _ART: dict[int, dict] = {}
 
@@ -433,6 +471,7 @@ class Games:
         self.appid = 0
         self.names: dict[int, str] = {}
         self.before: dict | None = None     # settings to restore after a game
+        self.opened: dict[int, list[str]] = {}  # companion apps we opened, per game
 
     def name(self, appid: int) -> str:
         if appid in self.names:
@@ -494,6 +533,24 @@ class Games:
         save_config(cfg)
         return True
 
+    def companions(self, left: int, appid: int) -> None:
+        """Open this game's companion apps here; close the last game's ones
+        (only those we opened for it) when it ends."""
+        cfg = load_config()
+        comp = cfg.get("companions") or {}
+        if left and cfg.get("companions_close", True):
+            for a in self.opened.pop(left, []):
+                APPS.close(a)
+        if appid and str(appid) in comp:
+            running = set(APPS.running())
+            mine = []
+            for a in comp[str(appid)]:
+                if a not in running and APPS.launch(a):
+                    mine.append(a)
+            if mine:
+                self.opened[appid] = mine
+                log(f"game {appid}: opened {', '.join(mine)}")
+
     def watch(self) -> None:
         while True:
             time.sleep(3)
@@ -505,6 +562,7 @@ class Games:
                 if appid == self.appid:
                     continue
                 left, self.appid = self.appid, appid
+            self.companions(left, appid)
             per = load_config().get("per_game", {})
             if appid and str(appid) in per:
                 if self.before is None:
@@ -2061,6 +2119,9 @@ class KeyboardOverlay:
         return {"shown": self.visible, "dock": "upper" if self.top else "lower"}
 
 
+HIDE_DELAY_MS = 300
+
+
 def watch_text_focus() -> None:
     """Show the keyboard when a text field in one of this screen's apps gets
     focus, hide it when something else does (AT-SPI). The apps are started
@@ -2080,8 +2141,34 @@ def watch_text_focus() -> None:
     except ValueError:
         pass
 
+    # Hiding waits a moment: focus often passes through something else on
+    # its way to the next field, and the keys shouldn't blink out and back.
+    hide_at = [0]
+
+    def hide_later() -> None:
+        if hide_at[0]:
+            return
+        def go() -> bool:
+            if hide_at[0]:
+                hide_at[0] = 0
+                KEYBOARD.set(False)
+            return False
+        hide_at[0] = GLib.timeout_add(HIDE_DELAY_MS, go)
+
+    def keep() -> None:
+        if hide_at[0]:
+            GLib.source_remove(hide_at[0])
+            hide_at[0] = 0
+
     def on_focus(event) -> None:
         if not event.detail1:
+            # a field let go of focus (to nothing, or to another app): hide
+            try:
+                st = event.source.get_state_set()
+                if st.contains(Atspi.StateType.EDITABLE):
+                    hide_later()
+            except Exception:
+                pass
             return
         try:
             src = event.source
@@ -2101,9 +2188,10 @@ def watch_text_focus() -> None:
                     top = ext.y + ext.height / 2 > screen_h / 2
                 except Exception:
                     pass
+                keep()
                 KEYBOARD.set(True, top)
             else:
-                KEYBOARD.set(False)
+                hide_later()
         except Exception as exc:  # an app going away mid-event
             log(f"keyboard focus: {exc}")
 
@@ -2204,6 +2292,16 @@ class Handler(BaseHTTPRequestHandler):
                 "desktop": DESKTOP,
                 "media": media(),
             })
+        elif self.path == "/launcher":
+            cfg = load_config()
+            self.reply({"items": launcher_items(cfg), "hidden": cfg.get("home_hidden", [])})
+        elif self.path == "/companions":
+            cfg = load_config()
+            # web apps first, then every installed app (pinned or not)
+            choices = [{"id": w["id"], "name": "Guide" if w["id"] == "web:guide" else w["name"]} for w in web_entries(cfg)]
+            choices += sorted(({"id": a["id"], "name": a["name"]} for a in list_apps()), key=lambda a: a["name"].lower())
+            self.reply({"games": known_games(), "apps": choices,
+                        "map": cfg.get("companions", {}), "close": cfg.get("companions_close", True)})
         elif self.path == "/nav":
             # Cheap: the UI polls this a few times a second (the AYN button).
             cfg = load_config()
@@ -2405,10 +2503,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path == ["settings"]:
             cfg = load_config()
             for k, default in DEFAULT_CONFIG.items():
-                if k in ("pinned", "webapps", "per_game", "pin_after") or k not in b:
+                if k in LIST_KEYS or k not in b:
                     continue
                 v = b[k]
-                if isinstance(default, bool):
+                if k == "skin":
+                    if isinstance(v, str) and any(x["id"] == v for x in skins()):
+                        cfg[k] = v
+                elif isinstance(default, bool):
                     cfg[k] = bool(v)
                 elif k == "layout":
                     if v in LAYOUTS:
@@ -2420,6 +2521,35 @@ class Handler(BaseHTTPRequestHandler):
                         continue
             cfg["dash_idle_s"] = max(0, min(600, int(cfg["dash_idle_s"])))
             cfg["pad_speed"] = max(0.4, min(5.0, float(cfg["pad_speed"])))
+            save_config(cfg)
+        elif path == ["launcher"]:
+            # Lower Deck: the tiles' order and which are hidden.
+            cfg = load_config()
+            known = {i["id"] for i in launcher_items(cfg)}
+            if isinstance(b.get("order"), list):
+                cfg["home_order"] = [str(x) for x in b["order"] if str(x) in known]
+            if isinstance(b.get("hidden"), list):
+                cfg["home_hidden"] = [str(x) for x in b["hidden"] if str(x) in known and not str(x).startswith(("page:pad", "page:keys"))]
+            save_config(cfg)
+        elif path == ["companions"]:
+            # Lower Deck: the apps that open here with a game ({"appid", "apps"}),
+            # or {"close": bool} for closing them when it ends.
+            cfg = load_config()
+            if "close" in b:
+                cfg["companions_close"] = bool(b["close"])
+            if "appid" in b:
+                try:
+                    appid = str(int(b["appid"]))
+                except (TypeError, ValueError):
+                    self.reply({"ok": False})
+                    return
+                apps = [str(a) for a in (b.get("apps") or []) if app_by_id(str(a)) or str(a).startswith("web:")]
+                comp = dict(cfg.get("companions") or {})
+                if apps:
+                    comp[appid] = apps[:6]
+                else:
+                    comp.pop(appid, None)
+                cfg["companions"] = comp
             save_config(cfg)
         else:
             self.reply({"error": "not found"}, 404)

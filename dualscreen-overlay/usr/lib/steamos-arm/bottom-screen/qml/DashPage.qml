@@ -292,8 +292,8 @@ Item {
                             id: sw
                             required property string modelData
                             readonly property bool current: dash.st.rgb && dash.st.rgb.mode !== "off" && dash.st.rgb.color === modelData
-                            Layout.preferredWidth: 54 * Ui.s
-                            Layout.preferredHeight: 54 * Ui.s
+                            Layout.preferredWidth: 50 * Ui.s
+                            Layout.preferredHeight: 50 * Ui.s
                             radius: width / 2
                             color: "#" + modelData
                             border.color: current ? Ui.text : "#33000000"
@@ -306,12 +306,20 @@ Item {
                         }
                     }
                     Item { Layout.fillWidth: true }
+                    // brightness, in the light's own colour
+                    Dimmer {
+                        visible: !!dash.st.rgb && dash.st.rgb.mode !== "off"
+                        Layout.preferredWidth: 200 * Ui.s
+                        value: dash.st.rgb ? Math.round(dash.st.rgb.brightness * 100 / 255) : 100
+                        tint: dash.st.rgb ? "#" + dash.st.rgb.color : Ui.accent
+                        onMoved: function (v) { Ui.post("/rgb", { brightness: Math.round(v * 255 / 100) }) }
+                    }
                     // The mode is one button that steps through them.
                     Btn {
                         readonly property var modes: [["static", "Steady"], ["breath", "Breathe"], ["battery", "Battery"], ["heat", "Heat"], ["off", "Off"]]
                         readonly property int at: Math.max(0, modes.findIndex(function (m) { return dash.st.rgb && m[0] === dash.st.rgb.mode }))
-                        Layout.preferredWidth: 220 * Ui.s
-                        Layout.preferredHeight: 58 * Ui.s
+                        Layout.preferredWidth: 180 * Ui.s
+                        Layout.preferredHeight: 54 * Ui.s
                         label: modes[at][1] + "  ›"
                         fontSize: 22
                         onClicked: Ui.post("/rgb", { mode: modes[(at + 1) % modes.length][0] })

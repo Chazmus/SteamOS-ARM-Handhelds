@@ -190,10 +190,10 @@ ColumnLayout {
             spacing: 0
             Repeater {
                 model: [
-                    { k: "CPU", tint: Ui.cpu, v: skin.st.cpu ? skin.st.cpu.ghz.toFixed(2) : "–", u: "GHz", f: skin.st.cpu ? skin.st.cpu.load / 100 : 0 },
-                    { k: "GPU", tint: Ui.gpu, v: skin.st.gpu ? "" + skin.st.gpu.mhz : "–", u: "MHz", f: skin.st.gpu && skin.st.gpu.max_mhz ? skin.st.gpu.mhz / skin.st.gpu.max_mhz : 0 },
-                    { k: "POWER", tint: Ui.power, v: skin.st.power_w !== undefined && skin.st.power_w !== null ? Math.abs(skin.st.power_w).toFixed(1) : "–", u: "W", f: skin.st.power_w ? Math.min(1, Math.abs(skin.st.power_w) / 15) : 0 },
-                    { k: "FAN", tint: Ui.mem, v: skin.st.fan !== undefined && skin.st.fan >= 0 ? "" + skin.st.fan : "–", u: "%", f: skin.st.fan > 0 ? skin.st.fan / 100 : 0 }
+                    { k: "CPU", tint: Ui.cpu, tint2: "#6366f1", v: skin.st.cpu ? skin.st.cpu.ghz.toFixed(2) : "–", u: "GHz", f: skin.st.cpu ? skin.st.cpu.load / 100 : 0 },
+                    { k: "GPU", tint: Ui.gpu, tint2: "#f472b6", v: skin.st.gpu ? "" + skin.st.gpu.mhz : "–", u: "MHz", f: skin.st.gpu && skin.st.gpu.max_mhz ? skin.st.gpu.mhz / skin.st.gpu.max_mhz : 0 },
+                    { k: "POWER", tint: Ui.power, tint2: "#f97316", v: skin.st.power_w !== undefined && skin.st.power_w !== null ? Math.abs(skin.st.power_w).toFixed(1) : "–", u: "W", f: skin.st.power_w ? Math.min(1, Math.abs(skin.st.power_w) / 15) : 0 },
+                    { k: "FAN", tint: Ui.mem, tint2: "#22d3ee", v: skin.st.fan !== undefined && skin.st.fan >= 0 ? "" + skin.st.fan : "–", u: "%", f: skin.st.fan > 0 ? skin.st.fan / 100 : 0 }
                 ]
                 Ring {
                     required property var modelData
@@ -202,6 +202,7 @@ ColumnLayout {
                     inside: true
                     label: modelData.k
                     tint: modelData.tint
+                    tint2: modelData.tint2
                     value: modelData.v
                     unit: modelData.u
                     fraction: modelData.f

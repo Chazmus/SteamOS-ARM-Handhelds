@@ -15,6 +15,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
 
 Window {
     id: root
@@ -158,6 +159,7 @@ Window {
             if (page.indexOf("@") > 0) { dashPage.shotSkin = page.split("@")[1]; page = page.split("@")[0] }
             if (page === "dashplay") { page = "dash"; demo = true }
             if (page === "homeplay") { page = "home"; demo = true }
+            if (page === "opening") { page = "home"; Ui.launching = { name: "YouTube", icon: "media-playback-start-symbolic", web: true } }
             if (page.indexOf("skin-") === 0) { dashPage.shotSkin = page.slice(5); page = "dash"; demo = true }
             for (var i = 0; i < 58; i++) {   // a minute of history for the picture
                 dashPage.pushFps(Math.round(55 + 5 * Math.sin(i / 4) - (i % 17 === 0 ? 14 : 0)))
@@ -330,5 +332,83 @@ Window {
         color: "black"
         z: 200
         TapHandler { onTapped: Ui.post("/brightness", { bottom_on: true }) }
+    }
+    // ------------------------------------------------------ app cover --
+    // While a launched app starts, its icon and name instead of a frozen
+    // launcher. The app's window comes up over this, so it simply ends up
+    // behind; it clears itself a few seconds later either way.
+    Rectangle {
+        id: cover
+        anchors.fill: parent
+        z: 150
+        visible: opacity > 0
+        opacity: Ui.launching ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        gradient: Gradient {
+            GradientStop { position: 0; color: Ui.bgTop }
+            GradientStop { position: 1; color: Ui.bg }
+        }
+        onOpacityChanged: if (opacity === 1) coverClear.restart()
+        Timer { id: coverClear; interval: 6000; onTriggered: Ui.launching = null }
+        TapHandler { onTapped: Ui.launching = null }
+        Column {
+            anchors.centerIn: parent
+            spacing: 26 * Ui.s
+            Rectangle {
+                id: badge
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 190 * Ui.s; height: width; radius: width * 0.27
+                color: Ui.cardHi
+                border.color: Ui.cardEdge
+                SequentialAnimation on scale {
+                    running: cover.visible; loops: Animation.Infinite
+                    NumberAnimation { to: 1.05; duration: 650; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutSine }
+                }
+                Image {
+                    id: coverPic
+                    anchors.centerIn: parent
+                    width: 120 * Ui.s; height: width
+                    source: Ui.launching && Ui.launching.image ? "file://" + Ui.launching.image : ""
+                    sourceSize: Qt.size(240, 240)
+                    fillMode: Image.PreserveAspectFit
+                    visible: status === Image.Ready
+                }
+                Kirigami.Icon {
+                    anchors.centerIn: parent
+                    width: 110 * Ui.s; height: width
+                    visible: !coverPic.visible
+                    source: Ui.launching ? Ui.launching.icon : ""
+                    fallback: "application-x-executable"
+                    isMask: !!(Ui.launching && (Ui.launching.web || (Ui.launching.icon || "").endsWith("-symbolic")))
+                    color: Ui.accent
+                }
+            }
+            Txt {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: Ui.launching ? Ui.launching.name : ""
+                font.pixelSize: 36 * Ui.s
+                font.weight: Font.Bold
+            }
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 12 * Ui.s
+                Repeater {
+                    model: 3
+                    Rectangle {
+                        required property int index
+                        width: 14 * Ui.s; height: width; radius: width / 2
+                        color: Ui.accent
+                        SequentialAnimation on opacity {
+                            running: cover.visible; loops: Animation.Infinite
+                            PauseAnimation { duration: index * 160 }
+                            NumberAnimation { from: 0.25; to: 1; duration: 320 }
+                            NumberAnimation { from: 1; to: 0.25; duration: 320 }
+                            PauseAnimation { duration: (2 - index) * 160 }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

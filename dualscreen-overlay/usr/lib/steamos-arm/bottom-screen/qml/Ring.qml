@@ -11,6 +11,8 @@ Item {
     property string unit
     property real fraction: 0
     property color tint: Ui.accent
+    property color tint2: tint           // the arc's far end; a second colour makes it a sweep
+    readonly property bool sweep: !Qt.colorEqual(tint, tint2)
     property bool inside: false
     property real shown: Math.max(0, Math.min(1, fraction))
     Behavior on shown { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
@@ -50,7 +52,7 @@ Item {
             }
         }
         ShapePath {
-            strokeColor: r.tint
+            strokeColor: r.sweep ? "transparent" : r.tint
             strokeWidth: r.thick
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
@@ -59,6 +61,36 @@ Item {
                 radiusX: (r.d - r.thick) / 2; radiusY: radiusX
                 startAngle: 135; sweepAngle: Math.max(1, 270 * r.shown)
             }
+        }
+    }
+    // Two colours: the lit arc on a Canvas, its colour sweeping from tint at
+    // the start to tint2 at the end (Shape strokes can't take a gradient).
+    Canvas {
+        id: arc
+        visible: r.sweep
+        anchors.fill: shape
+        renderTarget: Canvas.Image
+        property real at: r.shown
+        onAtChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var c = width / 2, rad = (width - r.thick) / 2
+            var from = 135 * Math.PI / 180, to = from + Math.max(0.01, 270 * at) * Math.PI / 180
+            // conical gradients turn from 0 = 3 o'clock anticlockwise; the arc
+            // starts at 135 deg clockwise, so start the colour stops there
+            var g = ctx.createConicalGradient(c, c, -from)
+            var span = (to - from) / (2 * Math.PI)
+            g.addColorStop(0, r.tint2)
+            g.addColorStop(Math.max(0.001, 1 - span), r.tint)
+            g.addColorStop(1, r.tint2)
+            ctx.lineWidth = r.thick
+            ctx.lineCap = "round"
+            ctx.strokeStyle = g
+            ctx.beginPath()
+            ctx.arc(c, c, rad, from, to, false)
+            ctx.stroke()
         }
     }
     Column {
