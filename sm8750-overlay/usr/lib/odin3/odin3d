@@ -267,6 +267,24 @@ class Hardware:
 
         raise RuntimeError("No valid thermal readings found")
 
+    def get_curve_temp(self) -> float:
+        """Mean of the three hottest CPU/GPU zones, °C: what the fan curve
+        follows. One core alone runs several degrees over the rest and
+        spikes with every burst; following it kept the fan hunting."""
+        vals = []
+        for path, _name in self.thermal_zones:
+            raw = rd(path)
+            try:
+                v = int(raw) / 1000.0 if raw else None
+            except ValueError:
+                v = None
+            if v is not None and -20.0 <= v <= 150.0:
+                vals.append(v)
+        if not vals:
+            raise RuntimeError("No valid thermal readings found")
+        top = sorted(vals, reverse=True)[:3]
+        return sum(top) / len(top)
+
     def get_pwm(self) -> int:
         if not self.fan_dir:
             return 0
@@ -336,13 +354,20 @@ class FanController:
             next_pwm = target_pwm
             self.set_temp = raw_temp
         else:
-            # Auto mode with profile curve
-            # Instant smoothing response if hot (>82°C) or uninitialized
-            if self.smooth_temp is None or raw_temp >= 82.0:
-                self.smooth_temp = raw_temp
+            # Auto mode with profile curve. The curve follows the three
+            # hottest zones' mean; it jumps straight there only when the chip
+            # is genuinely hot (that mean at 85 C, or one sensor at 95 C), not
+            # when a single hotspot touches 82 for a moment.
+            try:
+                follow = self.get_curve_temp()
+            except RuntimeError:
+                follow = raw_temp
+            hot = follow >= 85.0 or raw_temp >= 95.0
+            if self.smooth_temp is None or hot:
+                self.smooth_temp = follow
             else:
                 alpha = self.cfg.smoothing
-                self.smooth_temp = alpha * raw_temp + (1.0 - alpha) * self.smooth_temp
+                self.smooth_temp = alpha * follow + (1.0 - alpha) * self.smooth_temp
 
             curve = self.cfg.curves.get(profile, DEFAULT_CURVES["balanced"])
             target_pwm = curve_pwm(curve, self.smooth_temp)
@@ -355,8 +380,9 @@ class FanController:
                 next_pwm = target_pwm
                 self.set_temp = temp_ref
             elif target_pwm > self.cur_pwm:
-                # Ramping UP: react immediately to heat
-                next_pwm = target_pwm
+                # Ramping UP: at most 20 a tick (a burst no longer makes it
+                # surge), straight there when the chip is genuinely hot
+                next_pwm = target_pwm if hot else min(target_pwm, self.cur_pwm + 20)
                 self.set_temp = temp_ref
             elif target_pwm < self.cur_pwm:
                 # Ramping DOWN: check hysteresis or large delta (e.g. exiting boost/fixed)
