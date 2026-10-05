@@ -818,6 +818,8 @@ fi
 
 # Hardware video decode for VA-API apps (scripts/install-v4l2-vaapi.sh).
 "${SCRIPT_DIR}/install-v4l2-vaapi.sh" "$R" | tee -a "$LOG"
+# Hostname from the model, Desktop scale from the panel (scripts/install-device-defaults.sh).
+"${SCRIPT_DIR}/install-device-defaults.sh" "$R" | tee -a "$LOG"
 
 # ---------------------------------------------------------------------------
 # lsfg-vk

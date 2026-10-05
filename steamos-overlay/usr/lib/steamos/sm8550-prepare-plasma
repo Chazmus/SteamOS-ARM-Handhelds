@@ -42,3 +42,6 @@ if command -v dbus-update-activation-environment >/dev/null 2>&1; then
     QT_QPA_PLATFORM XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
     XDG_SESSION_DESKTOP DESKTOP_SESSION >/dev/null 2>&1 || true
 fi
+
+# First Desktop start: scale and touch mode for this panel (keeps user choices).
+[[ -x /usr/lib/steamos-arm/desktop-fit ]] && /usr/lib/steamos-arm/desktop-fit || true
