@@ -961,6 +961,9 @@ def run(app_id: str, args: list[str]) -> None:
             cmd += va.get("args", [])
     else:
         cmd = [rec["exec"]]
+    # Fixed arguments an app needs here (Electron apps: no Chromium sandbox,
+    # which needs a setuid helper the image doesn't have).
+    cmd += e.get("args", [])
     os.execvpe(cmd[0], cmd + args, env)
 
 
@@ -1276,7 +1279,29 @@ def setup_simple(subdir: str):
     return go
 
 
+def setup_heroic(e, rec, moved):
+    """Heroic's first-run defaults, only while it has no settings of its own:
+    none of its x86 Wine, DXVK, VKD3D or anti-cheat runtimes (they can't run
+    here), and Steam's ARM64 Proton for its own Play button. Games are meant
+    to be played from Steam, where Loadout adds them with Proton set."""
+    cfg = HOME / ".config/heroic/config.json"
+    if cfg.exists():
+        return
+    common = HOME / ".local/share/Steam/steamapps/common"
+    proton = next((common / n for n in ("Proton 11.0 (ARM64)", "Proton Experimental (ARM64)")
+                   if (common / n / "proton").exists()), None)
+    defaults = {"autoInstallDxvk": False, "autoInstallVkd3d": False, "autoInstallDxvkNvapi": False,
+                "eacRuntime": False, "battlEyeRuntime": False, "disableUMU": True,
+                "checkForUpdatesOnStartup": False, "addSteamShortcuts": False,
+                "defaultInstallPath": str(HOME / "Games/Heroic")}
+    if proton:
+        defaults["wineVersion"] = {"bin": str(proton / "proton"), "name": proton.name, "type": "proton"}
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({"defaultSettings": defaults, "version": "v0"}, indent=2) + "\n")
+
+
 SETUPS = {
+    "heroic": setup_heroic,
     "retroarch": setup_retroarch, "duckstation": setup_duckstation, "dolphin": setup_dolphin,
     "primehack": setup_primehack, "ppsspp": setup_ppsspp, "melonds": setup_melonds,
     "eden": setup_eden, "ryujinx": setup_ryujinx, "azahar": setup_azahar, "esde": setup_esde,

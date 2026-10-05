@@ -25,6 +25,12 @@ rm -rf "$W/src" "$W/helpers"
 # ---- Heroic's source -------------------------------------------------
 curl -fsSL "https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/archive/refs/tags/v$HEROIC.tar.gz" \
   | tar -xz -C "$W" && mv "$W/HeroicGamesLauncher-$HEROIC" "$W/src"
+# our changes for arm64 Linux (external-and-mods/heroic)
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+[[ -d "$REPO/external-and-mods/heroic" ]] || REPO=/work/src/SteamOS-ARM-SM8650
+for p in "$REPO"/external-and-mods/heroic/*.patch; do
+  patch -d "$W/src" -p1 --forward < "$p"
+done
 
 # ---- store helpers for Python 3.12 (the image's) ----------------------
 docker run --rm -v "$W:/w" python:3.12-bookworm bash -euc "
@@ -69,11 +75,15 @@ docker run --rm -v "$W/src:/src" -w /src node:22-bookworm bash -euc "
 "
 APP="$W/src/dist/linux-arm64-unpacked"
 [[ -x "$APP/heroic" ]] || { echo "build-heroic-arm64: no heroic binary" >&2; exit 1; }
+# electron-builder leaves the helpers' Python folder out of the package; the
+# wrappers it kept find it next to themselves, so it goes in afterwards.
+cp -a "$D/py" "$APP/resources/app.asar.unpacked/build/bin/arm64/linux/py"
 [[ -x "$APP/resources/app.asar.unpacked/build/bin/arm64/linux/legendary" ]] \
   || { echo "build-heroic-arm64: helpers missing from the package" >&2; exit 1; }
 
 # ---- check the helpers start on Python 3.12 ---------------------------
 docker run --rm -v "$APP:/app:ro" python:3.12-slim-bookworm sh -euc '
+  ln -sf /usr/local/bin/python3 /usr/bin/python3     # where SteamOS has it
   b=/app/resources/app.asar.unpacked/build/bin/arm64/linux
   $b/legendary --version; $b/gogdl --version; $b/nile --version'
 

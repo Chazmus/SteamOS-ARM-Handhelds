@@ -758,6 +758,10 @@
      "tag": "heroic-arm64",
      "file": "^Heroic-[0-9.]+-steamos-arm-aarch64\\.tar\\.xz$"
     }
+   ],
+   "setup": "heroic",
+   "args": [
+    "--no-sandbox"
    ]
   },
   {

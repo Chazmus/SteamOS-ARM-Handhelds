@@ -260,7 +260,8 @@ function Details({ app, chip, closeModal, refresh }) {
             jsx(DFL.DialogButton, { onClick: () => setNotes(!notes), style: { width: "auto" }, children: notes ? "Hide what's new" : `What's new in ${app.update}` }),
             notes ? jsx("div", { style: { marginTop: "8px", maxHeight: "200px", overflowY: "auto", whiteSpace: "pre-wrap", fontSize: "12px", color: C.dim, padding: "10px", background: C.panel, borderRadius: "8px" }, children: app.update_notes.slice(0, 3000) }) : null,
         ] }) : null,
-        buttons.length ? jsx("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" }, children: buttons }) : null,
+        buttons.length ? jsx(DFL.Focusable, { "flow-children": "horizontal", style: { display: "flex", gap: "10px", marginTop: "18px" },
+            children: buttons.map((btn) => jsx("div", { style: { flex: "1 1 0", minWidth: 0 }, children: btn }, btn.key)) }) : null,
     ] }) });
 }
 const openDetails = (app, chip, refresh) => DFL.showModal(jsx(Details, { app, chip, refresh }));

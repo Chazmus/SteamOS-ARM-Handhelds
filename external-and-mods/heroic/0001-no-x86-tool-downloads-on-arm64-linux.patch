@@ -1,0 +1,24 @@
+--- a/src/backend/main.ts
++++ b/src/backend/main.ts
+@@ -178,11 +178,17 @@
+       }
+     }
+ 
+-    void DXVK.getLatest()
++    // SteamOS ARM: DXVK, VKD3D, Winetricks and the default Wine are x86
++    // builds that can't run on an arm64 Linux handheld, where games play
++    // through Steam's own ARM64 Proton. Don't download them on start.
++    const armLinux = process.platform === 'linux' && process.arch === 'arm64'
++    if (!armLinux) {
++      void DXVK.getLatest()
+ 
+-    Winetricks.download()
+-    if (shouldDownloadWine) {
+-      downloadDefaultWine()
++      Winetricks.download()
++      if (shouldDownloadWine) {
++        downloadDefaultWine()
++      }
+     }
+ 
+     if (isMac) {
