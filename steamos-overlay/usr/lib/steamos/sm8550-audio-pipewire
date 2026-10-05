@@ -10,8 +10,17 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 # (53-konkr-audio.conf). The pro-audio + MI2S policy below is Odin 2 only and
 # breaks the SM8650-APS2 DSP graph. The REDMAGIC 6 (SM8350) also has its own
 # UCM (Nubia/NX669J) and no Odin 2 codec controls.
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2|REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
+if grep -qaE "REDMAGIC 6" /sys/firmware/devicetree/base/model 2>/dev/null; then
   exit 0
+fi
+# The Pocket FIT and Pocket S2 route everything through their UCM HiFi
+# profiles (speaker, headphones, DisplayPort), with no vendor I2S path: just
+# switch between their own profiles, no mixers and no pro-audio. WirePlumber
+# alone never left "HiFi (Headphones, Speaker)" for "HiFi (HDMI0, Speaker)"
+# (same priority, both "available"), so a TV or monitor got no sound.
+UCM_ONLY=0
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
+  UCM_ONLY=1
 fi
 
 MODE=once
@@ -69,6 +78,8 @@ set_default() {
   # The pro-audio outputs have no routes, so WirePlumber's
   # device.routes.default-sink-volume never reaches them. Once per output;
   # after that the user's own volume stays as it is.
+  # UCM_ONLY outputs have routes: WirePlumber keeps their volume itself.
+  [[ "$UCM_ONLY" == 1 ]] && return 0
   local mark="${XDG_STATE_HOME:-$HOME/.local/state}/steamos-arm/first-volume-${sink//[^A-Za-z0-9._-]/_}"
   if restore_volume "$sink"; then
     : >"$mark" 2>/dev/null
@@ -158,6 +169,18 @@ persist() {
   printf '[default-profile]\nalsa_card.platform-sound=%s\n' "$profile" >"$state/default-profile"
 }
 
+# The card's own HiFi profile without DisplayPort/HDMI (the device's local
+# outputs), for UCM_ONLY devices.
+local_profile() {
+  pactl_ok list cards | awk -v c="$1" '
+    /^Card #/ {incard=0}
+    $1=="Name:" && $2==c {incard=1}
+    incard && /^\tProfiles:/ {inprof=1; next}
+    incard && inprof && /^\t[A-Z]/ {inprof=0}
+    incard && inprof && /HiFi/ && !/(DisplayPort|HDMI)/ && !/available: no/ {
+      sub(/^\t+/, ""); sub(/: .*/, ""); print; exit }'
+}
+
 apply_policy() {
   local card sink
   card="$(card_name)"
@@ -173,11 +196,21 @@ apply_policy() {
       || set_profile "$card" 'HiFi (DisplayPort, Speaker)' \
       || set_profile "$card" 'HiFi (Speaker, DisplayPort)' \
       || set_profile "$card" HiFi
-    enable_dp_mixers
+    [[ "$UCM_ONLY" == 1 ]] || enable_dp_mixers
     wait_sink 'DisplayPort|HDMI' >/dev/null
     sink="$(find_sink 'DisplayPort|HDMI')"
     persist "${sink:-alsa_output.platform-sound.HiFi__DisplayPort__sink}" "${prof:-HiFi (DisplayPort, Speaker)}"
     set_default "$sink"
+  elif [[ "$UCM_ONLY" == 1 ]]; then
+    local prof
+    prof="$(local_profile "$card")"
+    log "no HDMI → ${prof:-HiFi}"
+    set_profile "$card" "${prof:-HiFi}"
+    wait_sink 'Speaker|Headphones' >/dev/null
+    sink="$(find_sink 'Speaker')"
+    [[ -n "$sink" ]] || sink="$(find_sink 'Headphones')"
+    persist "${sink:-alsa_output.platform-sound.HiFi__Speaker__sink}" "${prof:-HiFi}"
+    set_default "$sink" || log "no speaker sink"
   else
     log "no HDMI → pro-audio speakers (vendor/audio path)"
     set_profile "$card" pro-audio
