@@ -9,6 +9,7 @@ ColumnLayout {
     property var dash           // the dashboard (see skins/README.md)
     readonly property var st: dash ? dash.st : ({})
     readonly property bool playing: st.fps !== undefined && st.fps !== null
+    readonly property var art: st.game && st.game.art ? st.game.art : ({})
     spacing: 16 * Ui.s
 
     QtObject {
@@ -51,6 +52,13 @@ ColumnLayout {
             Layout.fillHeight: true
             Layout.preferredWidth: 800 * Ui.s
             clip: true
+            // the game's own banner behind the numbers
+            ArtFill {
+                id: heroArt
+                path: skin.playing && skin.art.hero ? skin.art.hero : ""
+                radius: hero.radius
+                dim: 0.82
+            }
             Spark {
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -62,19 +70,42 @@ ColumnLayout {
                 max: Math.max(30, Math.ceil(Math.max.apply(null, (skin.dash ? skin.dash.fpsHist : []).concat([1])) / 30) * 30)
                 tint: Ui.accent
             }
+            Image {
+                id: logo
+                visible: skin.playing && status === Image.Ready
+                source: skin.playing && skin.art.logo ? "file://" + skin.art.logo : ""
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.rightMargin: 30 * Ui.s
+                anchors.topMargin: 22 * Ui.s
+                width: 300 * Ui.s
+                height: 120 * Ui.s
+                sourceSize.height: 240
+                fillMode: Image.PreserveAspectFit
+                horizontalAlignment: Image.AlignRight
+                verticalAlignment: Image.AlignTop
+            }
             RowLayout {
                 x: 32 * Ui.s; y: 22 * Ui.s
                 width: hero.width - 64 * Ui.s
                 Txt {
+                    visible: skin.playing && logo.visible && !!skin.dash && skin.dash.sessionLine() !== ""
+                    text: skin.dash ? "▶ " + skin.dash.sessionLine() : ""
+                    color: Ui.accent
+                    font.pixelSize: 24 * Ui.s
+                    font.weight: Font.Bold
+                }
+                Txt {
+                    visible: !logo.visible || !skin.playing
                     Layout.fillWidth: true
-                    text: skin.playing ? (skin.st.game && skin.st.game.name ? skin.st.game.name : "Playing") : "Ready to play"
+                    text: skin.playing ? (skin.st.game && skin.st.game.name ? skin.st.game.name : "") : clock.date
                     elide: Text.ElideRight
                     color: Ui.dim
                     font.pixelSize: 26 * Ui.s
                     font.weight: Font.DemiBold
                 }
                 Txt {
-                    visible: skin.playing && !!skin.dash && skin.dash.sessionLine() !== ""
+                    visible: skin.playing && !logo.visible && !!skin.dash && skin.dash.sessionLine() !== ""
                     text: skin.dash ? "▶ " + skin.dash.sessionLine() : ""
                     color: Ui.accent
                     font.pixelSize: 24 * Ui.s
@@ -104,7 +135,6 @@ ColumnLayout {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 26 * Ui.s
                 spacing: 10 * Ui.s
-                Chip { visible: !skin.playing; k: ""; v: clock.date }
                 Chip { visible: !skin.playing; k: "profile"; v: skin.dash ? skin.dash.cap(skin.st.profile) : "–" }
                 Chip { visible: skin.playing && !!skin.dash && skin.dash.fpsHist.length > 0; k: "avg"; v: skin.dash ? skin.dash.fpsAvg : "" }
                 Chip { visible: skin.playing && !!skin.dash && skin.dash.fpsHist.length > 0; k: "low"; v: skin.dash ? skin.dash.fpsMin : "" }
@@ -153,11 +183,11 @@ ColumnLayout {
         Repeater {
             model: [
                 { k: "CPU", tint: Ui.cpu, v: skin.st.cpu ? skin.st.cpu.ghz.toFixed(1) : "–", u: "GHz", hist: skin.dash ? skin.dash.cpuHist : [], max: 100,
-                  sub: skin.st.cpu ? Math.round(skin.st.cpu.load) + "% busy" : "" },
+                  sub: skin.st.cpu ? "load " + Math.round(skin.st.cpu.load) + "%" : "" },
                 { k: "GPU", tint: Ui.gpu, v: skin.st.gpu ? skin.st.gpu.mhz : "–", u: "MHz", hist: skin.dash ? skin.dash.gpuHist : [], max: 100,
-                  sub: skin.st.gpu && skin.st.gpu.max_mhz ? Math.round(100 * skin.st.gpu.mhz / skin.st.gpu.max_mhz) + "% clock" : "" },
+                  sub: skin.st.gpu && skin.st.gpu.max_mhz ? "clock " + Math.round(100 * skin.st.gpu.mhz / skin.st.gpu.max_mhz) + "%" : "" },
                 { k: "POWER", tint: Ui.power, v: skin.st.power_w !== undefined && skin.st.power_w !== null ? Math.abs(skin.st.power_w).toFixed(1) : "–", u: "W",
-                  hist: skin.dash ? skin.dash.powHist : [], max: 15, sub: skin.st.power_w < 0 ? "from battery" : "from charger" },
+                  hist: skin.dash ? skin.dash.powHist : [], max: 15, sub: skin.st.power_w < 0 ? "battery" : "charger" },
                 { k: "HEAT", tint: Ui.hot, v: skin.st.temps && skin.st.temps.hot !== undefined ? Math.round(skin.st.temps.hot) : "–", u: "°C",
                   hist: skin.dash ? skin.dash.heatHist : [], max: 90, sub: skin.st.temps && skin.st.temps.gpu !== undefined ? "GPU " + Math.round(skin.st.temps.gpu) + "°" : "" }
             ]

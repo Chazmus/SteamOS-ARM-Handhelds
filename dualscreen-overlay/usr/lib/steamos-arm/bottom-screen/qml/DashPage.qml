@@ -105,7 +105,7 @@ Item {
         var avg = powHist.reduce(function (a, c) { return a + c }, 0) / powHist.length
         if (avg < 0.5 || !b.energy_full_wh) return ""
         var h = b.energy_full_wh * b.percent / 100 / avg
-        return Math.floor(h) + " h " + Math.round((h % 1) * 60) + " min at this draw"
+        return Math.floor(h) + " h " + Math.round((h % 1) * 60) + " min at " + avg.toFixed(1) + " W"
     }
     function batteryLine() {
         var b = st.battery
@@ -203,13 +203,13 @@ Item {
                 }
 
                 // This game's own settings: kept, they come back each launch.
-                Label { text: "THIS GAME"; visible: !!(dash.st.game && dash.st.game.name) }
+                Label { text: "GAME"; visible: !!(dash.st.game && dash.st.game.name) }
                 Btn {
                     visible: !!(dash.st.game && dash.st.game.name)
                     Layout.fillWidth: true
                     Layout.preferredHeight: 64 * Ui.s
                     active: !!(dash.st.game && dash.st.game.remembered)
-                    label: active ? "✓  Settings kept for " + dash.st.game.name : "Keep these settings for " + (dash.st.game ? dash.st.game.name : "")
+                    label: active ? "✓  Saved for this game" : "Save for this game"
                     fontSize: 22
                     onClicked: Ui.post("/remember", { on: !active })
                 }
@@ -303,15 +303,28 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 26 * Ui.s
                 spacing: 6 * Ui.s
-                Txt { text: "PLAY LOG"; color: Ui.dim; font.pixelSize: 21 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
+                Txt { text: "RECENT"; color: Ui.dim; font.pixelSize: 21 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
                 Repeater {
                     model: log.rows
                     RowLayout {
                         id: entry
                         required property var modelData
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 50 * Ui.s
+                        Layout.preferredHeight: 58 * Ui.s
                         spacing: 18 * Ui.s
+                        Rectangle {
+                            Layout.preferredWidth: 36 * Ui.s
+                            Layout.preferredHeight: 50 * Ui.s
+                            radius: 6 * Ui.s
+                            color: Ui.line
+                            clip: true
+                            Image {
+                                anchors.fill: parent
+                                source: entry.modelData.cover ? "file://" + entry.modelData.cover : ""
+                                sourceSize: Qt.size(72, 100)
+                                fillMode: Image.PreserveAspectCrop
+                            }
+                        }
                         Txt { Layout.fillWidth: true; text: entry.modelData.name || ("App " + entry.modelData.appid); elide: Text.ElideRight; font.pixelSize: 25 * Ui.s; font.weight: Font.DemiBold }
                         Txt { text: dash.minutesText(entry.modelData.minutes); color: Ui.accent; font.pixelSize: 23 * Ui.s; font.weight: Font.Bold }
                         Txt { Layout.preferredWidth: 110 * Ui.s; horizontalAlignment: Text.AlignRight; text: entry.modelData.wh.toFixed(1) + " Wh"; color: Ui.power; font.pixelSize: 23 * Ui.s }

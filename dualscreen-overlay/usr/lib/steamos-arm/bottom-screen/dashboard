@@ -390,6 +390,36 @@ def _library_dirs() -> list[Path]:
     return out
 
 
+STEAM_DIR = Path.home() / ".local/share/Steam"
+_ART: dict[int, dict] = {}
+
+
+def game_art(appid: int) -> dict:
+    """Steam's own pictures of a game: hero (the wide banner), logo and cover.
+    Steam keeps them in its library cache; artwork set by hand on a non-Steam
+    game sits in userdata/*/config/grid. Empty for anything without art."""
+    if not appid:
+        return {}
+    if appid in _ART and all(_ART[appid].values()):
+        return _ART[appid]
+    art = {"hero": "", "logo": "", "cover": ""}
+    cache = STEAM_DIR / "appcache/librarycache" / str(appid)
+    for key, names in (("hero", ("library_hero.jpg", "library_hero.png")), ("logo", ("logo.png",)),
+                       ("cover", ("library_600x900.jpg", "library_capsule.jpg"))):
+        for n in names:
+            if (cache / n).is_file():
+                art[key] = str(cache / n)
+                break
+    if not all(art.values()):
+        for grid in glob.glob(str(STEAM_DIR / "userdata/*/config/grid")):
+            for key, stem in (("hero", f"{appid}_hero"), ("logo", f"{appid}_logo"), ("cover", f"{appid}p")):
+                for ext in (".png", ".jpg"):
+                    if not art[key] and os.path.isfile(f"{grid}/{stem}{ext}"):
+                        art[key] = f"{grid}/{stem}{ext}"
+    _ART[appid] = art
+    return art
+
+
 class Games:
     """The game in front on the top screen (gamescope's GAMESCOPE_FOCUSED_APP
     on Steam's display) and its name from Steam's app manifests. Also applies
@@ -425,7 +455,7 @@ class Games:
         with self.lock:
             appid = self.appid
         return {"appid": appid, "name": self.name(appid) if appid else "",
-                "remembered": str(appid) in cfg.get("per_game", {})}
+                "remembered": str(appid) in cfg.get("per_game", {}), "art": game_art(appid)}
 
     @staticmethod
     def current_settings() -> dict:
@@ -595,9 +625,12 @@ SESSIONS = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) 
 
 def sessions_get(count: int = 20) -> list:
     try:
-        return json.loads(SESSIONS.read_text())[-count:][::-1]
+        log = json.loads(SESSIONS.read_text())[-count:][::-1]
     except (OSError, ValueError):
         return []
+    for e in log:
+        e["cover"] = game_art(e.get("appid", 0)).get("cover", "")
+    return log
 
 
 def session_add(b: dict) -> bool:
@@ -607,7 +640,7 @@ def session_add(b: dict) -> bool:
                  "wh": round(float(b.get("wh", 0)), 2), "fps": int(b.get("fps") or 0)}
     except (KeyError, TypeError, ValueError):
         return False
-    log = sessions_get(200)[::-1] + [entry]
+    log = [{k: v for k, v in e.items() if k != "cover"} for e in sessions_get(200)[::-1]] + [entry]
     SESSIONS.parent.mkdir(parents=True, exist_ok=True)
     tmp = SESSIONS.with_name(".sessions.json.tmp")
     tmp.write_text(json.dumps(log[-200:]))

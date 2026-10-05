@@ -62,7 +62,7 @@ ColumnLayout {
             }
             Txt {
                 x: 34 * Ui.s; y: 24 * Ui.s
-                text: skin.playing ? (skin.st.game && skin.st.game.name ? skin.st.game.name : "Playing") : "Ready to play"
+                text: skin.playing ? (skin.st.game && skin.st.game.name ? skin.st.game.name : "Playing") : ""
                 width: hero.width - 68 * Ui.s
                 elide: Text.ElideRight
                 color: Ui.dim

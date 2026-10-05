@@ -46,19 +46,30 @@ Item {
         // An app with its own picture sits on a quiet face so its colours
         // show; the rest get their kind's colour.
         gradient: Gradient {
-            GradientStop { position: 0; color: t.quiet ? "#243041" : t.hue[0] }
-            GradientStop { position: 1; color: t.quiet ? "#182230" : t.hue[1] }
+            GradientStop { position: 0; color: "#222d3c" }
+            GradientStop { position: 1; color: "#151d28" }
         }
         border.color: t.selected ? Ui.text : "#26ffffff"
         border.width: t.selected ? 4 * Ui.s : Math.max(1, 1.5 * Ui.s)
-        // a soft top light
+        // the kind's colour as a glow from below, under the glyph
         Rectangle {
             anchors.fill: parent
             radius: parent.radius
+            visible: !t.quiet
             gradient: Gradient {
-                GradientStop { position: 0; color: "#22ffffff" }
-                GradientStop { position: 0.45; color: "#00ffffff" }
+                GradientStop { position: 0.35; color: "#00000000" }
+                GradientStop { position: 1; color: Qt.rgba(Qt.color(t.hue[0]).r, Qt.color(t.hue[0]).g, Qt.color(t.hue[0]).b, 0.28) }
             }
+        }
+        // a thin lit edge along the top
+        Rectangle {
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.topMargin: 1
+            width: parent.width * 0.6
+            height: Math.max(1, 2 * Ui.s)
+            radius: height
+            color: t.quiet ? "#30ffffff" : Qt.rgba(Qt.color(t.hue[0]).r, Qt.color(t.hue[0]).g, Qt.color(t.hue[0]).b, 0.7)
         }
         Image {
             id: pic
@@ -80,7 +91,7 @@ Item {
             source: t.icon
             fallback: "application-x-executable"
             isMask: t.mask
-            color: "#ffffff"
+            color: t.kind === "add" ? Ui.dim : Qt.lighter(t.hue[0], 1.25)
         }
         Rectangle {
             visible: t.progress >= 0

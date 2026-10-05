@@ -127,13 +127,14 @@ Item {
         id: strip
         readonly property bool on: !!home.game.name && !Ui.st.desktop
         readonly property var fg: Ui.st.fg
+        readonly property var art: home.game.art || ({})
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: header.bottom
         anchors.leftMargin: 36 * Ui.s
         anchors.rightMargin: 36 * Ui.s
         anchors.topMargin: on ? 10 * Ui.s : 0
-        height: on ? 86 * Ui.s : 0
+        height: on ? 96 * Ui.s : 0
         visible: on
         radius: height / 2
         gradient: Gradient {
@@ -142,19 +143,33 @@ Item {
             GradientStop { position: 1; color: Ui.card }
         }
         border.color: Ui.cardEdge
+        ArtFill { path: strip.art.hero || ""; radius: strip.radius; dim: 0.75 }
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 34 * Ui.s
             anchors.rightMargin: 14 * Ui.s
             spacing: 12 * Ui.s
-            Column {
+            Item {
                 Layout.fillWidth: true
-                Txt { text: "NOW PLAYING"; color: Ui.accent; font.pixelSize: 17 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
+                Layout.fillHeight: true
+                Image {
+                    id: stripLogo
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 70 * Ui.s
+                    width: Math.min(parent.width, implicitWidth * height / Math.max(1, implicitHeight))
+                    source: strip.art.logo ? "file://" + strip.art.logo : ""
+                    sourceSize.height: 116
+                    fillMode: Image.PreserveAspectFit
+                    horizontalAlignment: Image.AlignLeft
+                    visible: status === Image.Ready
+                }
                 Txt {
+                    anchors.verticalCenter: parent.verticalCenter
                     width: parent.width
+                    visible: !stripLogo.visible
                     text: home.game.name || ""
                     elide: Text.ElideRight
-                    font.pixelSize: 27 * Ui.s
+                    font.pixelSize: 28 * Ui.s
                     font.weight: Font.Bold
                 }
             }
@@ -232,8 +247,8 @@ Item {
     Row {
         id: dots
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: hint.top
-        anchors.bottomMargin: 14 * Ui.s
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 22 * Ui.s
         spacing: 14 * Ui.s
         height: 14 * Ui.s
         visible: home.pages > 1
@@ -248,14 +263,5 @@ Item {
                 Behavior on width { NumberAnimation { duration: 160 } }
             }
         }
-    }
-    Txt {
-        id: hint
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 6 * Ui.s
-        text: "AYN  dashboard     ·     hold AYN  home     ·     hold a tile  close it"
-        color: Ui.faint
-        font.pixelSize: 22 * Ui.s
     }
 }

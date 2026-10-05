@@ -82,14 +82,17 @@ Window {
                 return
             if (root.shotFile !== "" && !(n.sessions && n.sessions.length)) {   // screenshots: a play log
                 var e = Date.now() / 1000
-                n.sessions = [{ appid: 1546970, name: "Grand Theft Auto III", minutes: 47, wh: 5.4, fps: 55, end: e - 2400 },
-                              { appid: 271590, name: "Hollow Knight", minutes: 82, wh: 7.9, fps: 60, end: e - 26000 },
-                              { appid: 0, name: "Dolphin: Metroid Prime", minutes: 35, wh: 4.6, fps: 30, end: e - 95000 }]
+                var lc = "/home/steamos/.local/share/Steam/appcache/librarycache/"
+                n.sessions = [{ appid: 1546970, name: "Grand Theft Auto III", minutes: 47, wh: 5.4, fps: 55, end: e - 2400, cover: lc + "1546970/library_600x900.jpg" },
+                              { appid: 631510, name: "Devil May Cry HD Collection", minutes: 82, wh: 7.9, fps: 60, end: e - 26000, cover: lc + "631510/library_600x900.jpg" },
+                              { appid: 1546990, name: "Grand Theft Auto: Vice City", minutes: 35, wh: 4.6, fps: 58, end: e - 95000, cover: lc + "1546990/library_600x900.jpg" }]
             }
             if (root.demo) {               // screenshots of a game in progress
                 var t = Date.now() / 1000
                 n.fps = Math.round(58 + 3 * Math.sin(t / 3))
-                n.game = { appid: 1546970, name: "Grand Theft Auto III", remembered: true }
+                var gl = "/home/steamos/.local/share/Steam/appcache/librarycache/1546970/"
+                n.game = { appid: 1546970, name: "Grand Theft Auto III", remembered: true,
+                           art: { hero: gl + "library_hero.jpg", logo: gl + "logo.png", cover: gl + "library_600x900.jpg" } }
                 n.fg = { multiplier: 2, flow: 0.5, profile: true }
                 n.power_w = -(7.2 + 0.8 * Math.sin(t / 5))
                 n.cpu = { ghz: 2.4, load: 46 }; n.gpu = { mhz: 680, max_mhz: 1050 }
