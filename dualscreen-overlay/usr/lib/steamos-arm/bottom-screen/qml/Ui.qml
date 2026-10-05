@@ -85,8 +85,8 @@ QtObject {
                 return
             try {
                 var c = JSON.parse(x.responseText)
+                token = c.token          // first: setting api wakes pages that call it
                 api = c.url
-                token = c.token
             } catch (e) {}
             if (done)
                 done()

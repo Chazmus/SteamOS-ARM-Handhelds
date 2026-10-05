@@ -54,13 +54,14 @@ ColumnLayout {
 
     Card {
         Layout.fillWidth: true
-        Layout.preferredHeight: 440 * Ui.s
+        Layout.preferredHeight: 290 * Ui.s
         RowLayout {
             anchors.fill: parent
             anchors.margins: 20 * Ui.s
             spacing: 10 * Ui.s
             Dial {
                 Layout.alignment: Qt.AlignVCenter
+                Layout.fillHeight: true
                 implicitWidth: 280 * Ui.s
                 readonly property var b: skin.st.battery || ({})
                 value: b.percent >= 0 ? b.percent + "%" : "–"
@@ -85,6 +86,7 @@ ColumnLayout {
             }
             Dial {
                 Layout.alignment: Qt.AlignVCenter
+                Layout.fillHeight: true
                 implicitWidth: 280 * Ui.s
                 readonly property var t: skin.st.temps || ({})
                 value: t.hot !== undefined ? t.hot + "°" : "–"
@@ -98,10 +100,10 @@ ColumnLayout {
     }
     Card {
         Layout.fillWidth: true
-        Layout.preferredHeight: 250 * Ui.s
+        Layout.preferredHeight: 176 * Ui.s
         RowLayout {
             anchors.fill: parent
-            anchors.margins: 14 * Ui.s
+            anchors.margins: 8 * Ui.s
             Repeater {
                 model: [
                     { label: "CPU", value: skin.st.cpu ? Ui.num(skin.st.cpu.ghz, 1) + "G" : "–", sub: skin.st.cpu ? skin.st.cpu.load + "% load" : "", f: skin.st.cpu ? skin.st.cpu.load / 100 : 0 },
@@ -113,10 +115,11 @@ ColumnLayout {
                 Dial {
                     required property var modelData
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
                     Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 210 * Ui.s
+                    implicitWidth: 160 * Ui.s
                     thick: 12 * Ui.s
-                    big: 36
+                    big: 30
                     value: modelData.value
                     label: modelData.label
                     sub: modelData.sub

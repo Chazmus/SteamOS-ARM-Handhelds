@@ -157,6 +157,7 @@ Window {
                 page = args[si + 3]
             if (page === "dashplay") { page = "dash"; demo = true }
             if (page === "homeplay") { page = "home"; demo = true }
+            if (page.indexOf("skin-") === 0) { dashPage.shotSkin = page.slice(5); page = "dash"; demo = true }
             for (var i = 0; i < 58; i++) {   // a minute of history for the picture
                 dashPage.pushFps(Math.round(55 + 5 * Math.sin(i / 4) - (i % 17 === 0 ? 14 : 0)))
                 dashPage.pushStats({ cpu: { load: 40 + 15 * Math.sin(i / 6) }, gpu: { mhz: 600 + 120 * Math.sin(i / 5), max_mhz: 1050 },

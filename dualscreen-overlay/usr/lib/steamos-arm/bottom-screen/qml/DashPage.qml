@@ -125,7 +125,9 @@ Item {
     readonly property url classicUrl: Qt.resolvedUrl("skins/classic/Skin.qml")
     readonly property url defaultUrl: Qt.resolvedUrl("skins/pulse/Skin.qml")
     property bool skinFailed: false
-    readonly property url skinUrl: skinFailed ? classicUrl : (Ui.cfg.skin_url || defaultUrl)
+    property string shotSkin: ""          // screenshots of one skin
+    readonly property url skinUrl: skinFailed ? classicUrl
+        : shotSkin ? Qt.resolvedUrl("skins/" + shotSkin + "/Skin.qml") : (Ui.cfg.skin_url || defaultUrl)
     onSkinUrlChanged: skinFailed = false
 
     ColumnLayout {
@@ -160,13 +162,25 @@ Item {
         }
 
         // ------------------------------------------------ controls --
+        // Scrolls when a tall skin leaves it less room than it needs.
         Card {
+            id: controlsCard
             Layout.fillWidth: true
+            Layout.fillHeight: true
             Layout.preferredHeight: controls.implicitHeight + 44 * Ui.s
-            GridLayout {
-                id: controls
+            Layout.maximumHeight: controls.implicitHeight + 44 * Ui.s
+            Layout.minimumHeight: 180 * Ui.s
+            clip: true
+            Flickable {
+                id: controlsFlick
                 anchors.fill: parent
                 anchors.margins: 22 * Ui.s
+                contentHeight: controls.implicitHeight
+                interactive: contentHeight > height
+                boundsBehavior: Flickable.StopAtBounds
+            GridLayout {
+                id: controls
+                width: controlsFlick.width
                 columns: 2
                 columnSpacing: 18 * Ui.s
                 rowSpacing: 14 * Ui.s
@@ -289,16 +303,21 @@ Item {
                     }
                 }
             }
+            }
         }
+
+        Item { Layout.fillHeight: true; visible: !log.shown }
 
         // -------------------------------------------------- play log --
         // Between games: the last few sessions, what each took.
         Card {
             id: log
             readonly property var rows: dash.st.sessions || []
+            readonly property bool shown: rows.length > 0 && (dash.st.fps === undefined || dash.st.fps === null)
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            opacity: rows.length && (dash.st.fps === undefined || dash.st.fps === null) ? 1 : 0
+            Layout.fillHeight: shown
+            Layout.preferredHeight: shown ? 100 * Ui.s : 0
+            visible: shown
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 26 * Ui.s

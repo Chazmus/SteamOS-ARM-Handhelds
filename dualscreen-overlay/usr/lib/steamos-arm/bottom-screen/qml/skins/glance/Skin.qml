@@ -25,7 +25,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: 330 * Ui.s
+        Layout.preferredHeight: 286 * Ui.s
         spacing: 18 * Ui.s
 
         // ------------------------------------------------- the hero card --
@@ -75,7 +75,7 @@ ColumnLayout {
                 Txt {
                     id: big
                     text: skin.playing ? skin.st.fps : clock.time
-                    font.pixelSize: 150 * Ui.s
+                    font.pixelSize: 120 * Ui.s
                     font.weight: Font.Black
                 }
                 Txt {
@@ -133,7 +133,7 @@ ColumnLayout {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4 * Ui.s
                     Txt { text: parent.parent.b.status === "Charging" ? "CHARGING" : "BATTERY"; color: Ui.good; font.pixelSize: 22 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
-                    Txt { text: parent.parent.b.percent >= 0 ? parent.parent.b.percent + "%" : "–"; font.pixelSize: 58 * Ui.s; font.weight: Font.Bold }
+                    Txt { text: parent.parent.b.percent >= 0 ? parent.parent.b.percent + "%" : "–"; font.pixelSize: 48 * Ui.s; font.weight: Font.Bold }
                     Txt { text: skin.dash ? skin.dash.batteryLine() : ""; color: Ui.dim; font.pixelSize: 22 * Ui.s }
                 }
             }
@@ -146,7 +146,7 @@ ColumnLayout {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4 * Ui.s
                     Txt { text: "HEAT"; color: Ui.hot; font.pixelSize: 22 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
-                    Txt { text: parent.parent.t.hot !== undefined ? Math.round(parent.parent.t.hot) + "°" : "–"; font.pixelSize: 58 * Ui.s; font.weight: Font.Bold }
+                    Txt { text: parent.parent.t.hot !== undefined ? Math.round(parent.parent.t.hot) + "°" : "–"; font.pixelSize: 48 * Ui.s; font.weight: Font.Bold }
                     Txt {
                         text: (parent.parent.t.cpu !== undefined ? "CPU " + Math.round(parent.parent.t.cpu) + "°" : "")
                               + (parent.parent.t.gpu !== undefined ? "   GPU " + Math.round(parent.parent.t.gpu) + "°" : "")
@@ -160,7 +160,7 @@ ColumnLayout {
     // ------------------------------------------------------------ rings --
     Card {
         Layout.fillWidth: true
-        Layout.preferredHeight: 236 * Ui.s
+        Layout.preferredHeight: 176 * Ui.s
         RowLayout {
             anchors.fill: parent
             anchors.margins: 22 * Ui.s

@@ -8,7 +8,7 @@ Item {
     property string sub
     property real fraction: 0
     property color tint: Ui.accent
-    implicitHeight: 112 * Ui.s
+    implicitHeight: 92 * Ui.s
     Txt {
         id: ml
         anchors.left: parent.left

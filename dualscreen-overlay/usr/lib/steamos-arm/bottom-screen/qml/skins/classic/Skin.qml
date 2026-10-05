@@ -12,7 +12,7 @@ ColumnLayout {
     spacing: 20 * Ui.s
     RowLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: 420 * Ui.s
+        Layout.preferredHeight: 250 * Ui.s
         spacing: 20 * Ui.s
         Card {
             Layout.fillWidth: true
@@ -23,7 +23,7 @@ ColumnLayout {
                 id: fpsBig
                 x: 32 * Ui.s; y: 10 * Ui.s
                 text: dash.st.fps !== undefined && dash.st.fps !== null ? dash.st.fps : "–"
-                font.pixelSize: 140 * Ui.s
+                font.pixelSize: 110 * Ui.s
                 font.weight: Font.Black
             }
             Txt {
@@ -67,7 +67,7 @@ ColumnLayout {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: 24 * Ui.s
-                height: parent.height * 0.42
+                height: parent.height * 0.36
                 Repeater {
                     model: 3
                     Rectangle {
@@ -154,8 +154,8 @@ ColumnLayout {
             anchors.leftMargin: 32 * Ui.s
             anchors.rightMargin: 32 * Ui.s
             anchors.topMargin: 18 * Ui.s
-            columns: 2
-            columnSpacing: 48 * Ui.s
+            columns: 3
+            columnSpacing: 36 * Ui.s
             rowSpacing: 0
             Meter {
                 Layout.fillWidth: true

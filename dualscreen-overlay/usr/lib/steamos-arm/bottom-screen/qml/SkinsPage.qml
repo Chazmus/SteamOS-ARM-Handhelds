@@ -46,7 +46,7 @@ Item {
             delegate: Item {
                 id: cell
                 required property var modelData
-                readonly property bool current: (Ui.cfg.skin || "classic") === modelData.id
+                readonly property bool current: (Ui.cfg.skin || "pulse") === modelData.id
                 width: grid.cellWidth
                 height: grid.cellHeight
                 Rectangle {
