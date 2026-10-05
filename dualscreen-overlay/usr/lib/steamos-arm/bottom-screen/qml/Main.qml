@@ -151,7 +151,14 @@ Window {
     })
 
     // ------------------------------------------------------------- frame --
-    Rectangle { anchors.fill: parent; color: Ui.bg }
+    // A soft light from the top so the cards sit in a space, not on black.
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0; color: Ui.bgTop }
+            GradientStop { position: 0.55; color: Ui.bg }
+        }
+    }
     Item {
         anchors.fill: parent
         anchors.margins: 24 * Ui.s
@@ -180,6 +187,21 @@ Window {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
+            // Steam's buttons, on the dashboard (Game Mode only).
+            Repeater {
+                model: root.page === "dash" && !Ui.st.desktop ? [
+                    ["steam", "go-home-symbolic"], ["qam", "view-more-horizontal-symbolic"],
+                    ["keyboard", "input-keyboard-virtual-symbolic"], ["screenshot", "camera-photo-symbolic"]] : []
+                Btn {
+                    required property var modelData
+                    Layout.preferredWidth: 68 * Ui.s
+                    Layout.preferredHeight: 68 * Ui.s
+                    icon: modelData[1]
+                    iconSize: 34
+                    onClicked: Ui.post("/steam/" + modelData[0])
+                }
+            }
+            Item { Layout.preferredWidth: 6 * Ui.s; visible: root.page === "dash" }
             Txt { text: Qt.formatTime(clock.now, "hh:mm"); font.pixelSize: 36 * Ui.s; font.weight: Font.Bold }
             Txt {
                 readonly property var b: Ui.st.battery

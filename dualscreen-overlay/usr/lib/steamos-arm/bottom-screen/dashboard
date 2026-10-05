@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     "momentum": True,           # two-finger scrolls keep gliding after a flick
     "webapps": [],              # your own: [{"id", "name", "url"}]
     "pin_after": [],            # hub apps to pin on the home screen once installed
-    "skin": "classic",          # the dashboard's stats look (skins/, or the user's own)
+    "skin": "glance",           # the dashboard's stats look (skins/, or the user's own)
     "bricks_best": 0,           # the brick game's best score
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
@@ -490,10 +490,10 @@ GAMES = Games()
 # Ready-made tiles that open in WebApp.qml (QtWebEngine), each with its own
 # cookies. Game Guide's page depends on the game in front.
 BUILTIN_WEB = {
-    "guide": {"name": "Game Guide", "icon": "help-contents"},
-    "youtube": {"name": "YouTube", "icon": "video-television", "url": "https://www.youtube.com/tv"},
-    "music": {"name": "YouTube Music", "icon": "audio-headphones", "url": "https://music.youtube.com"},
-    "chat": {"name": "Steam Chat", "icon": "dialog-messages", "url": "https://steamcommunity.com/chat"},
+    "guide": {"name": "Game Guide", "icon": "help-contents-symbolic"},
+    "youtube": {"name": "YouTube", "icon": "media-playback-start-symbolic", "url": "https://www.youtube.com/tv"},
+    "music": {"name": "YouTube Music", "icon": "audio-headphones-symbolic", "url": "https://music.youtube.com"},
+    "chat": {"name": "Steam Chat", "icon": "dialog-messages-symbolic", "url": "https://steamcommunity.com/chat"},
 }
 
 
@@ -508,7 +508,7 @@ def web_entries(cfg: dict) -> list[dict]:
     out = [{"id": f"web:{k}", "name": v["name"], "icon": v["icon"], "web": True}
            for k, v in BUILTIN_WEB.items()]
     for w in cfg.get("webapps", []):
-        out.append({"id": f"web:u-{w['id']}", "name": w["name"], "icon": "applications-internet", "web": True})
+        out.append({"id": f"web:u-{w['id']}", "name": w["name"], "icon": "internet-web-browser-symbolic", "web": True})
     return out
 
 
@@ -2069,7 +2069,7 @@ class Handler(BaseHTTPRequestHandler):
                 "nav": rows["nav"],
                 "config": {**{k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
                               if k not in ("pinned", "per_game", "pin_after")},
-                           "skin_url": skin_url(cfg.get("skin", "classic"))},
+                           "skin_url": skin_url(cfg.get("skin", "glance"))},
                 "game": GAMES.state(cfg),
                 "toggles": toggles(),
                 "desktop": DESKTOP,

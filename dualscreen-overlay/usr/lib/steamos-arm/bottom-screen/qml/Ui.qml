@@ -11,17 +11,30 @@ QtObject {
     id: ui
     property real s: 1
 
-    readonly property color bg: "#0b0f14"
-    readonly property color card: "#161d26"
-    readonly property color cardHi: "#2a3a4e"
+    // Slate with one accent (Steam's blue), and a colour per reading so a
+    // glance tells them apart: CPU sky, GPU violet, power amber, memory mint.
+    readonly property color bg: "#080c12"
+    readonly property color bgTop: "#0f1622"
+    readonly property color card: "#121a25"
+    readonly property color cardTop: "#172131"
+    readonly property color cardEdge: "#1fffffff"
+    readonly property color cardHi: "#24344a"
     // Buttons sit on cards too, so they get their own shade.
-    readonly property color button: "#1f2a37"
-    readonly property color line: "#2a3644"
+    readonly property color button: "#1a2433"
+    readonly property color line: "#243042"
     readonly property color accent: "#1a9fff"
-    readonly property color text: "#e8eef5"
-    readonly property color dim: "#8e9bab"
+    readonly property color accentSoft: "#331a9fff"
+    readonly property color text: "#eef3f8"
+    readonly property color dim: "#8a98aa"
+    readonly property color faint: "#5b6878"
     readonly property color warn: "#ff6b6b"
     readonly property color good: "#40d080"
+    readonly property color cpu: "#38bdf8"
+    readonly property color gpu: "#a78bfa"
+    readonly property color power: "#fbbf24"
+    readonly property color mem: "#34d399"
+    readonly property color hot: "#fb7185"
+    readonly property real radius: 28
     readonly property string font: "Noto Sans"
 
     property string api: ""

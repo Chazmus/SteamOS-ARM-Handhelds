@@ -1,14 +1,8 @@
-// The bottom screen's start page.
-//
-//   quick toggles   Wi-Fi, Bluetooth, stick lights, bottom screen off
-//   open now        every running app: tap to bring it up, ✕ to quit it
-//   now playing     music or video playing anywhere, with its controls
-//   jump back in    the last games played, started on the top screen
-//   tools           dashboard, touchpad, keyboard, notes for the game
-//   web             Game Guide (follows the game on the top screen), YouTube,
-//                   YouTube Music, Steam Chat and your own web apps
-//   apps            the desktop apps you added, apps you can get in one tap
-//                   (download badge), then New web app, Add apps, Settings
+// The bottom screen's home: a launcher, nothing else. Games are on the top
+// screen and Steam's own Quick Access has the toggles, so this is the tools
+// (dashboard, trackpad, keyboard, notes...), web apps and apps, as pages of
+// tiles to swipe through. A running app has a lit dot; holding it closes it.
+// What's playing sits in the corner while something plays.
 //
 // Holding the AYN button or swiping up from the bottom edge always lands here.
 pragma ComponentBehavior: Bound
@@ -22,303 +16,185 @@ Item {
     property var pinned: []
     property var web: []
     property var hub: []               // Emulator Hub apps (from /hub)
-    property var recent: []            // last played games (from /recent)
+    property var recent: []            // not shown here any more (the top screen has them)
     readonly property var media: st.media || ({})
-    // Apps worth having here that aren't installed yet: one tap gets them,
-    // and they pin themselves when done.
+    readonly property var st: Ui.st
+    readonly property var game: st.game || ({})
+    // Apps worth having that aren't installed yet: one tap gets them, and
+    // they pin themselves when done.
     readonly property var suggested: hub.filter(function (a) {
         return a.kind === "app" && !a.installed && a.available && ["vesktop", "signal", "moonlight", "chiaki"].indexOf(a.id) >= 0
     }).slice(0, 3)
     signal open(string page)
 
-    readonly property var st: Ui.st
-    readonly property var game: st.game || ({})
-    readonly property var tg: st.toggles || ({})
-    readonly property var tools: [
-        { page: "dash", name: "Dashboard", icon: "speedometer" },
-        { page: "pad", name: "Touchpad", icon: "input-touchpad-symbolic" },
-        { page: "keys", name: "Keyboard", icon: "input-keyboard-symbolic" },
-        { page: "notes", name: "Game Notes", icon: "document-edit" },
-        { page: "hub", name: "Get emulators", icon: "download-symbolic" },
-        { page: "bricks", name: "Bricks", icon: "games-config-board-symbolic" }
-    ]
     readonly property var runningIds: running.map(function (a) { return a.id })
+    readonly property var hidden: Ui.cfg.home_hidden || []
 
-    component Toggle: Rectangle {
-        id: tgl
-        property string label
-        property string icon
-        property var on                     // true / false / undefined (n/a)
-        signal flipped()
-        visible: on !== undefined && on !== null
-        Layout.fillWidth: true
-        Layout.preferredHeight: 92 * Ui.s
-        radius: height / 2
-        color: on ? Qt.darker(Ui.accent, 1.9) : Ui.button
-        border.color: on ? Ui.accent : "transparent"
-        border.width: 3 * Ui.s
-        RowLayout {
-            anchors.centerIn: parent
-            spacing: 14 * Ui.s
-            Kirigami.Icon { source: tgl.icon; implicitWidth: 40 * Ui.s; implicitHeight: 40 * Ui.s; isMask: true; color: Ui.text }
-            Txt { text: tgl.label; font.pixelSize: 26 * Ui.s; font.weight: Font.DemiBold }
-        }
-        TapHandler { onTapped: tgl.flipped() }
+    // Every tile in order: tools, web apps, apps, apps to get, then Add.
+    readonly property var items: {
+        var out = []
+        var tools = [
+            { id: "page:dash", page: "dash", name: "Dashboard", icon: "speedometer", mask: true },
+            { id: "page:pad", page: "pad", name: "Trackpad", icon: "input-touchpad-symbolic", mask: true },
+            { id: "page:keys", page: "keys", name: "Keyboard", icon: "input-keyboard-symbolic", mask: true },
+            { id: "page:notes", page: "notes", name: game.name ? "Notes" : "Game Notes", icon: "document-edit-symbolic", mask: true },
+            { id: "page:hub", page: "hub", name: "Emulators", icon: "download-symbolic", mask: true },
+            { id: "page:bricks", page: "bricks", name: "Bricks", icon: "games-config-board-symbolic", mask: true }
+        ]
+        tools.forEach(function (t) { t.kind = "tool"; out.push(t) })
+        web.forEach(function (w) {
+            out.push({ id: w.id, name: w.id === "web:guide" ? "Guide" : w.name, icon: w.icon, kind: "web", web: true, mask: true })
+        })
+        pinned.forEach(function (p) { out.push({ id: p.id, name: p.name, icon: p.icon, kind: "app" }) })
+        running.forEach(function (r) {
+            if (!out.some(function (o) { return o.id === r.id }))
+                out.push({ id: r.id, name: r.name, icon: r.icon, kind: "app" })
+        })
+        suggested.forEach(function (a) {
+            out.push({ id: "get:" + a.id, name: a.title, icon: "applications-internet", image: a.icon || "", kind: "app", get: a })
+        })
+        out = out.filter(function (o) { return hidden.indexOf(o.id) < 0 })
+        out.push({ id: "page:apps", page: "apps", name: "Add", icon: "list-add-symbolic", mask: true, kind: "add" })
+        return out
+    }
+    readonly property int perPage: 12
+    readonly property int pages: Math.max(1, Math.ceil(items.length / perPage))
+
+    function activate(o) {
+        if (o.page) home.open(o.page)
+        else if (o.get) { if (!(o.get.job && o.get.job.state === "running")) Ui.post("/hub/install", { app: o.get.id, pin: true }) }
+        else Ui.post(home.runningIds.indexOf(o.id) >= 0 ? "/focus" : "/launch", { id: o.id })
+    }
+    function hold(o) {
+        if (home.runningIds.indexOf(o.id) >= 0) Ui.post("/close", { id: o.id })
+        else if (o.id.indexOf("web:u-") === 0) home.open("newweb")
+        else if (o.get) home.open("hub")
+        else if (!o.page) home.open("apps")
     }
 
-    Flickable {
-        anchors.fill: parent
-        contentHeight: col.implicitHeight + 20 * Ui.s
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        ColumnLayout {
-            id: col
-            width: parent.width
-            spacing: 22 * Ui.s
-
-            // ---------------------------------------------------- toggles --
+    // ----------------------------------------------------------- header --
+    RowLayout {
+        id: header
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 36 * Ui.s
+        anchors.topMargin: 0
+        // Takes room only while something plays.
+        height: home.media.title ? 64 * Ui.s : 0
+        spacing: 16 * Ui.s
+        // Now playing, while something plays anywhere.
+        Rectangle {
+            visible: !!home.media.title
+            Layout.preferredHeight: 64 * Ui.s
+            Layout.preferredWidth: Math.min(640 * Ui.s, playRow.implicitWidth + 40 * Ui.s)
+            radius: height / 2
+            color: Ui.button
+            border.color: Ui.cardEdge
             RowLayout {
-                Layout.fillWidth: true
-                spacing: 14 * Ui.s
-                Toggle {
-                    label: "Wi-Fi"; icon: "network-wireless-symbolic"; on: home.tg.wifi
-                    onFlipped: Ui.post("/toggle", { name: "wifi", on: !home.tg.wifi })
+                id: playRow
+                anchors.fill: parent
+                anchors.leftMargin: 10 * Ui.s
+                anchors.rightMargin: 14 * Ui.s
+                spacing: 12 * Ui.s
+                Rectangle {
+                    Layout.preferredWidth: 46 * Ui.s; Layout.preferredHeight: 46 * Ui.s
+                    radius: width / 2; color: Ui.accent
+                    Txt { anchors.centerIn: parent; text: home.media.status === "Playing" ? "⏸" : "▶"; font.pixelSize: 22 * Ui.s }
+                    TapHandler { onTapped: Ui.post("/media", { action: "playpause" }) }
                 }
-                Toggle {
-                    label: "Bluetooth"; icon: "network-bluetooth-symbolic"; on: home.tg.bluetooth
-                    onFlipped: Ui.post("/toggle", { name: "bluetooth", on: !home.tg.bluetooth })
-                }
-                Toggle {
-                    label: "Lights"; icon: "flashlight-on-symbolic"
-                    on: home.st.rgb ? home.st.rgb.mode !== "off" : undefined
-                    onFlipped: Ui.post("/konkrd/sticks-toggle")
-                }
-                Toggle {
-                    label: "Bypass"; icon: "battery-full-charging-symbolic"; on: home.tg.bypass
-                    onFlipped: Ui.post("/toggle", { name: "bypass", on: !home.tg.bypass })
-                }
-                Toggle {
-                    label: "Screen off"; icon: "video-display-symbolic"; on: false
-                    onFlipped: Ui.post("/brightness", { bottom_on: false })
-                }
-            }
-
-            // ------------------------------------------------- open now --
-            ColumnLayout {
-                Layout.fillWidth: true
-                visible: home.running.length > 0
-                spacing: 10 * Ui.s
-                Txt { text: "Open now"; color: Ui.dim; font.pixelSize: 24 * Ui.s }
-                Flickable {
+                Txt {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 110 * Ui.s
-                    contentWidth: strip.implicitWidth
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    RowLayout {
-                        id: strip
-                        height: parent.height
-                        spacing: 14 * Ui.s
-                        Repeater {
-                            model: home.running
-                            Rectangle {
-                                id: chip
-                                required property var modelData
-                                Layout.preferredWidth: 330 * Ui.s
-                                Layout.fillHeight: true
-                                radius: 26 * Ui.s
-                                color: chipTap.pressed ? Ui.cardHi : Ui.card
-                                border.color: Ui.accent
-                                border.width: 3 * Ui.s
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 18 * Ui.s
-                                    anchors.rightMargin: 10 * Ui.s
-                                    spacing: 14 * Ui.s
-                                    Kirigami.Icon {
-                                        source: chip.modelData.icon
-                                        fallback: "application-x-executable"
-                                        implicitWidth: 56 * Ui.s; implicitHeight: 56 * Ui.s
-                                        isMask: String(chip.modelData.icon).endsWith("-symbolic")
-                                        color: Ui.text
-                                    }
-                                    Txt { Layout.fillWidth: true; text: chip.modelData.name; elide: Text.ElideRight; font.pixelSize: 26 * Ui.s }
-                                    Rectangle {
-                                        Layout.preferredWidth: 72 * Ui.s
-                                        Layout.preferredHeight: 72 * Ui.s
-                                        radius: width / 2
-                                        color: quitTap.pressed ? "#7a2626" : Ui.button
-                                        Txt { anchors.centerIn: parent; text: "✕"; font.pixelSize: 30 * Ui.s; font.weight: Font.Bold }
-                                        TapHandler { id: quitTap; onTapped: Ui.post("/close", { id: chip.modelData.id }) }
-                                    }
-                                }
-                                TapHandler { id: chipTap; onTapped: Ui.post("/focus", { id: chip.modelData.id }) }
-                            }
-                        }
-                    }
+                    text: (home.media.title || "") + (home.media.artist ? "  ·  " + home.media.artist : "")
+                    elide: Text.ElideRight
+                    font.pixelSize: 24 * Ui.s
+                    font.weight: Font.DemiBold
                 }
-            }
-
-            // ---------------------------------------------- now playing --
-            Card {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 130 * Ui.s
-                visible: !!home.media.title
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 16 * Ui.s
-                    spacing: 18 * Ui.s
-                    Rectangle {
-                        Layout.preferredWidth: 98 * Ui.s
-                        Layout.preferredHeight: 98 * Ui.s
-                        radius: 16 * Ui.s
-                        color: Ui.button
-                        clip: true
-                        Image {
-                            id: albumArt
-                            anchors.fill: parent
-                            source: home.media.art || ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                        }
-                        Txt { anchors.centerIn: parent; visible: albumArt.status !== Image.Ready; text: "♪"; color: Ui.dim; font.pixelSize: 48 * Ui.s }
-                    }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2 * Ui.s
-                        Txt { Layout.fillWidth: true; text: home.media.title || ""; font.weight: Font.DemiBold; font.pixelSize: 28 * Ui.s; elide: Text.ElideRight }
-                        Txt { Layout.fillWidth: true; text: home.media.artist || home.media.app || ""; color: Ui.dim; font.pixelSize: 22 * Ui.s; elide: Text.ElideRight }
-                    }
-                    Repeater {
-                        model: [["previous", "⏮"], ["playpause", home.media.status === "Playing" ? "⏸" : "▶"], ["next", "⏭"]]
-                        Btn {
-                            required property var modelData
-                            Layout.preferredWidth: 96 * Ui.s
-                            Layout.preferredHeight: 96 * Ui.s
-                            label: modelData[1]
-                            fontSize: 34
-                            active: modelData[0] === "playpause"
-                            onClicked: Ui.post("/media", { action: modelData[0] })
-                        }
-                    }
+                Txt {
+                    text: "⏭"; color: Ui.dim; font.pixelSize: 26 * Ui.s
+                    TapHandler { onTapped: Ui.post("/media", { action: "next" }) }
                 }
-            }
-
-            // ------------------------------------------- jump back in --
-            ColumnLayout {
-                Layout.fillWidth: true
-                visible: home.recent.length > 0 && !Ui.st.desktop
-                spacing: 10 * Ui.s
-                Txt { text: "Jump back in"; color: Ui.dim; font.pixelSize: 24 * Ui.s }
-                Flickable {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 250 * Ui.s
-                    contentWidth: covers.implicitWidth
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    Row {
-                        id: covers
-                        spacing: 16 * Ui.s
-                        Repeater {
-                            model: home.recent
-                            Rectangle {
-                                id: cover
-                                required property var modelData
-                                width: 166 * Ui.s
-                                height: 250 * Ui.s
-                                radius: 18 * Ui.s
-                                color: coverTap.pressed ? Ui.cardHi : Ui.card
-                                clip: true
-                                Image {
-                                    id: art
-                                    anchors.fill: parent
-                                    source: cover.modelData.art ? "file://" + cover.modelData.art : ""
-                                    sourceSize: Qt.size(332, 500)
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                }
-                                Txt {
-                                    anchors.fill: parent
-                                    anchors.margins: 12 * Ui.s
-                                    visible: art.status !== Image.Ready
-                                    text: cover.modelData.name
-                                    wrapMode: Text.WordWrap
-                                    verticalAlignment: Text.AlignBottom
-                                    font.pixelSize: 22 * Ui.s
-                                    font.weight: Font.DemiBold
-                                }
-                                TapHandler { id: coverTap; onTapped: Ui.post("/play", { gameid: cover.modelData.gameid }) }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // -------------------------------------------- tiles (all kinds) --
-            Flow {
-                Layout.fillWidth: true
-                spacing: 18 * Ui.s
-                Repeater {
-                    model: home.tools
-                    Tile {
-                        required property var modelData
-                        name: modelData.page === "notes" && home.game.name ? "Notes · " + home.game.name : modelData.name
-                        icon: modelData.icon
-                        mask: modelData.icon.endsWith("-symbolic") || modelData.page === "dash"
-                        closable: false
-                        onTapped: home.open(modelData.page)
-                    }
-                }
-                Repeater {
-                    model: home.web
-                    Tile {
-                        required property var modelData
-                        name: modelData.id === "web:guide" && home.game.name ? "Guide · " + home.game.name : modelData.name
-                        icon: modelData.icon
-                        running: home.runningIds.indexOf(modelData.id) >= 0
-                        closable: false
-                        onTapped: Ui.post(running ? "/focus" : "/launch", { id: modelData.id })
-                        onHeld: if (modelData.id.indexOf("web:u-") === 0) home.open("newweb")
-                    }
-                }
-                Repeater {
-                    model: home.pinned
-                    Tile {
-                        required property var modelData
-                        name: modelData.name
-                        icon: modelData.icon
-                        closable: false
-                        onTapped: Ui.post("/launch", { id: modelData.id })
-                        onHeld: home.open("apps")
-                    }
-                }
-                Repeater {
-                    model: home.suggested
-                    Tile {
-                        required property var modelData
-                        readonly property var job: modelData.job && modelData.job.state === "running" ? modelData.job : null
-                        name: job ? Math.round(job.pct) + "%" : modelData.title
-                        icon: "applications-internet"
-                        image: modelData.icon || ""
-                        download: true
-                        progress: job ? job.pct : -1
-                        closable: false
-                        onTapped: if (!job) Ui.post("/hub/install", { app: modelData.id, pin: true })
-                        onHeld: home.open("hub")
-                    }
-                }
-                Tile { name: "Web app"; icon: "list-add-symbolic"; mask: true; closable: false; onTapped: home.open("newweb") }
-                Tile { name: "Add apps"; icon: "view-app-grid-symbolic"; mask: true; closable: false; onTapped: home.open("apps") }
-                Tile { name: "Settings"; icon: "configure"; mask: true; closable: false; onTapped: home.open("settings") }
-            }
-            Txt {
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                text: "Hold the AYN button or swipe up from the bottom edge to come back here"
-                color: Ui.dim
-                font.pixelSize: 22 * Ui.s
-                wrapMode: Text.WordWrap
             }
         }
+        Item { Layout.fillWidth: true }
+        // (time and battery: Main.qml's corner, as on every page)
+        Item { Layout.preferredWidth: 300 * Ui.s }
+    }
+
+    // ------------------------------------------------------------ tiles --
+    ListView {
+        id: pager
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.topMargin: 10 * Ui.s
+        anchors.bottom: dots.top
+        anchors.bottomMargin: 18 * Ui.s
+        orientation: ListView.Horizontal
+        snapMode: ListView.SnapOneItem
+        highlightRangeMode: ListView.StrictlyEnforceRange
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+        model: home.pages
+        delegate: Item {
+            id: pageItem
+            required property int index
+            width: pager.width
+            height: pager.height
+            Grid {
+                anchors.centerIn: parent
+                columns: 4
+                columnSpacing: 34 * Ui.s
+                rowSpacing: 16 * Ui.s
+                Repeater {
+                    model: home.items.slice(pageItem.index * home.perPage, (pageItem.index + 1) * home.perPage)
+                    Tile {
+                        required property var modelData
+                        readonly property var job: modelData.get && modelData.get.job && modelData.get.job.state === "running" ? modelData.get.job : null
+                        name: job ? Math.round(job.pct) + "%" : modelData.name
+                        icon: modelData.icon || "application-x-executable"
+                        image: modelData.image || ""
+                        kind: modelData.kind
+                        mask: !!modelData.mask || (modelData.icon || "").endsWith("-symbolic")
+                        running: home.runningIds.indexOf(modelData.id) >= 0
+                        download: !!modelData.get
+                        progress: job ? job.pct : -1
+                        onTapped: home.activate(modelData)
+                        onHeld: home.hold(modelData)
+                    }
+                }
+            }
+        }
+    }
+
+    // A dot per page, when there's more than one.
+    Row {
+        id: dots
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: hint.top
+        anchors.bottomMargin: 14 * Ui.s
+        spacing: 14 * Ui.s
+        height: 14 * Ui.s
+        visible: home.pages > 1
+        Repeater {
+            model: home.pages
+            Rectangle {
+                required property int index
+                width: index === pager.currentIndex ? 40 * Ui.s : 14 * Ui.s
+                height: 14 * Ui.s
+                radius: height / 2
+                color: index === pager.currentIndex ? Ui.accent : Ui.line
+                Behavior on width { NumberAnimation { duration: 160 } }
+            }
+        }
+    }
+    Txt {
+        id: hint
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 6 * Ui.s
+        text: "AYN  dashboard     ·     hold AYN  home     ·     hold a tile  close it"
+        color: Ui.faint
+        font.pixelSize: 22 * Ui.s
     }
 }

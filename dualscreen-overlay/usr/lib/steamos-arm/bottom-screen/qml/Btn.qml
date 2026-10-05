@@ -12,20 +12,24 @@ Rectangle {
     property real iconSize: 56
     property real fontSize: 28
     property color tint: Ui.accent
+    property bool horizontal: false          // icon beside the label instead of above
     signal clicked()
     signal held()
     implicitHeight: 96 * Ui.s
     implicitWidth: 200 * Ui.s
-    radius: 20 * Ui.s
-    color: tap.pressed ? Ui.cardHi : (active ? Qt.darker(tint, 1.9) : Ui.button)
-    border.color: active ? tint : "transparent"
-    border.width: 3 * Ui.s
-    ColumnLayout {
+    radius: 22 * Ui.s
+    color: tap.pressed ? Ui.cardHi : (active ? Ui.accent : Ui.button)
+    Behavior on color { ColorAnimation { duration: 140 } }
+    border.color: active ? "transparent" : Ui.cardEdge
+    border.width: Math.max(1, 1.5 * Ui.s)
+    GridLayout {
         anchors.centerIn: parent
-        width: parent.width - 16 * Ui.s
-        spacing: 8 * Ui.s
+        width: Math.min(implicitWidth, parent.width - 16 * Ui.s)
+        flow: b.horizontal ? GridLayout.LeftToRight : GridLayout.TopToBottom
+        columnSpacing: 14 * Ui.s
+        rowSpacing: 8 * Ui.s
         Kirigami.Icon {
-            Layout.alignment: Qt.AlignHCenter
+            Layout.alignment: Qt.AlignCenter
             visible: b.icon !== ""
             source: b.icon
             implicitWidth: b.iconSize * Ui.s
@@ -34,8 +38,8 @@ Rectangle {
             isMask: true
         }
         Txt {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.maximumWidth: parent.width
+            Layout.alignment: Qt.AlignCenter
+            Layout.maximumWidth: b.width - 16 * Ui.s - (b.horizontal && b.icon !== "" ? (b.iconSize + 14) * Ui.s : 0)
             visible: b.label !== ""
             text: b.label
             elide: Text.ElideRight
