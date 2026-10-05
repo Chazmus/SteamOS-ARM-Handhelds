@@ -51,7 +51,7 @@ Item {
         Txt {
             anchors.horizontalCenter: parent.horizontalCenter
             text: r.value
-            font.pixelSize: 40 * Ui.s
+            font.pixelSize: Math.min(40 * Ui.s, r.d * 0.27)
             font.weight: Font.Bold
         }
         Txt {

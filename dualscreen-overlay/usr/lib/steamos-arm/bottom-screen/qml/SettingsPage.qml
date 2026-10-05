@@ -53,8 +53,8 @@ Flickable {
         Txt { text: "Settings"; font.pixelSize: 40 * Ui.s; font.weight: Font.Bold }
 
         Row {
-            title: "Dashboard look"
-            help: "Pulse, Glance, Classic, Gauges, Pure Black or your own skin."
+            title: "Theme"
+            help: "Pulse, Aura, Glance, Classic, Gauges, Pure Black or your own."
             Btn {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 84 * Ui.s

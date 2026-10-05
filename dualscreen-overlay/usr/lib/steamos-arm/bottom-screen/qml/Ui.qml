@@ -13,20 +13,20 @@ QtObject {
 
     // Slate with one accent (Steam's blue), and a colour per reading so a
     // glance tells them apart: CPU sky, GPU violet, power amber, memory mint.
-    readonly property color bg: "#080c12"
-    readonly property color bgTop: "#0f1622"
-    readonly property color card: "#121a25"
-    readonly property color cardTop: "#172131"
-    readonly property color cardEdge: "#1fffffff"
-    readonly property color cardHi: "#24344a"
+    readonly property color bg: theme.bg || "#080c12"
+    readonly property color bgTop: theme.bgTop || "#0f1622"
+    readonly property color card: theme.card || "#121a25"
+    readonly property color cardTop: theme.cardTop || "#172131"
+    readonly property color cardEdge: theme.cardEdge || "#1fffffff"
+    readonly property color cardHi: theme.cardHi || "#24344a"
     // Buttons sit on cards too, so they get their own shade.
-    readonly property color button: "#1a2433"
-    readonly property color line: "#243042"
-    readonly property color accent: "#1a9fff"
-    readonly property color accentSoft: "#331a9fff"
-    readonly property color text: "#eef3f8"
-    readonly property color dim: "#8a98aa"
-    readonly property color faint: "#5b6878"
+    readonly property color button: theme.button || "#1a2433"
+    readonly property color line: theme.line || "#243042"
+    readonly property color accent: theme.accent || "#1a9fff"
+    readonly property color accentSoft: theme.accentSoft || "#331a9fff"
+    readonly property color text: theme.text || "#eef3f8"
+    readonly property color dim: theme.dim || "#8a98aa"
+    readonly property color faint: theme.faint || "#5b6878"
     readonly property color warn: "#ff6b6b"
     readonly property color good: "#40d080"
     readonly property color cpu: "#38bdf8"
@@ -42,6 +42,10 @@ QtObject {
     // Last /state reply (stats are kept while an app covers the dashboard).
     property var st: ({})
     readonly property var cfg: st.config || ({})
+    // A skin can bring its own colours (skin.json "colors"); they apply to
+    // every page, not only the dashboard. shotColors stands in for screenshots.
+    property var shotColors: null
+    readonly property var theme: shotColors || cfg.skin_colors || ({})
 
     function request(method, path, body, done) {
         if (!api)

@@ -92,7 +92,7 @@ Window {
                 n.fps = Math.round(58 + 3 * Math.sin(t / 3))
                 var gl = "/home/steamos/.local/share/Steam/appcache/librarycache/1546970/"
                 n.game = { appid: 1546970, name: "Grand Theft Auto III", remembered: true,
-                           art: { hero: gl + "library_hero.jpg", logo: gl + "logo.png", cover: gl + "library_600x900.jpg" } }
+                           art: { hero: gl + "library_hero.jpg", logo: gl + "logo.png", cover: gl + "library_600x900.jpg", blur: gl + "library_hero_blur.jpg" } }
                 n.fg = { multiplier: 2, flow: 0.5, profile: true }
                 n.power_w = -(7.2 + 0.8 * Math.sin(t / 5))
                 n.cpu = { ghz: 2.4, load: 46 }; n.gpu = { mhz: 680, max_mhz: 1050 }
@@ -155,6 +155,7 @@ Window {
             root.height = parseInt(wh[1])
             if (args[si + 3] && args[si + 3].indexOf("/") < 0)
                 page = args[si + 3]
+            if (page.indexOf("@") > 0) { dashPage.shotSkin = page.split("@")[1]; page = page.split("@")[0] }
             if (page === "dashplay") { page = "dash"; demo = true }
             if (page === "homeplay") { page = "home"; demo = true }
             if (page.indexOf("skin-") === 0) { dashPage.shotSkin = page.slice(5); page = "dash"; demo = true }
@@ -166,6 +167,11 @@ Window {
             shotTimer.start()
         }
         Ui.loadApi(args[args.length - 1], function () {
+            if (dashPage.shotSkin)
+                Ui.request("GET", "/skins", undefined, function (r) {
+                    var k = (r && r.skins || []).filter(function (x) { return x.id === dashPage.shotSkin })[0]
+                    Ui.shotColors = k && Object.keys(k.colors || {}).length ? k.colors : null
+                })
             root.pollNav()
             root.pollState()
             root.pollHub()
@@ -175,7 +181,7 @@ Window {
 
     readonly property var titles: ({
         home: "", dash: "Dashboard", pad: "Trackpad and keyboard", keys: "Trackpad and keyboard",
-        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub", skins: "Dashboard look", bricks: "Bricks"
+        settings: "Settings", apps: "Apps", notes: "Game Notes", newweb: "Web apps", hub: "Emulator Hub", skins: "Theme", bricks: "Bricks"
     })
 
     // ------------------------------------------------------------- frame --

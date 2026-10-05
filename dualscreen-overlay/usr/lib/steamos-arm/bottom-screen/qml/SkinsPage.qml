@@ -25,7 +25,7 @@ Item {
         spacing: 16 * Ui.s
         RowLayout {
             Layout.fillWidth: true
-            Txt { Layout.fillWidth: true; text: "Dashboard look"; font.pixelSize: 36 * Ui.s; font.weight: Font.Bold }
+            Txt { Layout.fillWidth: true; text: "Theme"; font.pixelSize: 36 * Ui.s; font.weight: Font.Bold }
             Btn {
                 Layout.preferredWidth: 200 * Ui.s
                 Layout.preferredHeight: 72 * Ui.s

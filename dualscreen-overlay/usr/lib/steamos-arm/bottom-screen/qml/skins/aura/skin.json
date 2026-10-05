@@ -1,0 +1,4 @@
+{ "title": "Aura", "about": "Frosted panels, violet, big centre number",
+  "colors": { "bg": "#14151c", "bgTop": "#232536", "card": "#2a2d3b", "cardTop": "#353948", "cardEdge": "#30ffffff",
+              "cardHi": "#3d4256", "button": "#363a4b", "line": "#464b5f", "accent": "#a347ff", "accentSoft": "#33a347ff",
+              "dim": "#aab0c2", "faint": "#7a8094" } }

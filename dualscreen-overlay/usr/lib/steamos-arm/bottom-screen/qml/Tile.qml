@@ -24,7 +24,7 @@ Item {
     height: 238 * Ui.s
 
     readonly property var hues: ({
-        tool: ["#2b8cff", "#1559d6"],
+        tool: [Ui.accent, Qt.darker(Ui.accent, 1.4)],
         web: ["#22c3b4", "#0e8a94"],
         app: ["#8b6cff", "#5a3ad9"],
         add: ["#2a3547", "#1d2735"]
@@ -46,8 +46,8 @@ Item {
         // An app with its own picture sits on a quiet face so its colours
         // show; the rest get their kind's colour.
         gradient: Gradient {
-            GradientStop { position: 0; color: "#222d3c" }
-            GradientStop { position: 1; color: "#151d28" }
+            GradientStop { position: 0; color: Ui.cardHi }
+            GradientStop { position: 1; color: Ui.card }
         }
         border.color: t.selected ? Ui.text : "#26ffffff"
         border.width: t.selected ? 4 * Ui.s : Math.max(1, 1.5 * Ui.s)

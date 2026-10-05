@@ -400,17 +400,18 @@ def game_art(appid: int) -> dict:
     game sits in userdata/*/config/grid. Empty for anything without art."""
     if not appid:
         return {}
-    if appid in _ART and all(_ART[appid].values()):
+    if appid in _ART and all(_ART[appid][k] for k in ("hero", "logo", "cover")):
         return _ART[appid]
-    art = {"hero": "", "logo": "", "cover": ""}
+    art = {"hero": "", "logo": "", "cover": "", "blur": ""}
     cache = STEAM_DIR / "appcache/librarycache" / str(appid)
     for key, names in (("hero", ("library_hero.jpg", "library_hero.png")), ("logo", ("logo.png",)),
-                       ("cover", ("library_600x900.jpg", "library_capsule.jpg"))):
+                       ("cover", ("library_600x900.jpg", "library_capsule.jpg")),
+                       ("blur", ("library_hero_blur.jpg",))):
         for n in names:
             if (cache / n).is_file():
                 art[key] = str(cache / n)
                 break
-    if not all(art.values()):
+    if not all(art[k] for k in ("hero", "logo", "cover")):
         for grid in glob.glob(str(STEAM_DIR / "userdata/*/config/grid")):
             for key, stem in (("hero", f"{appid}_hero"), ("logo", f"{appid}_logo"), ("cover", f"{appid}p")):
                 for ext in (".png", ".jpg"):
@@ -1135,12 +1136,18 @@ def skins() -> list[dict]:
                 meta = {}
             found[d.name] = {"id": d.name, "title": str(meta.get("title") or d.name),
                              "about": str(meta.get("about") or ""), "builtin": builtin,
-                             "url": (d / "Skin.qml").as_uri(), "folder": str(d)}
+                             "url": (d / "Skin.qml").as_uri(), "folder": str(d),
+                             "colors": {k: str(v) for k, v in (meta.get("colors") or {}).items()
+                                        if re.fullmatch(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", str(v))}}
     return list(found.values())
 
 
 def skin_url(name: str) -> str:
     return next((k["url"] for k in skins() if k["id"] == name), "")
+
+
+def skin_colors(name: str) -> dict:
+    return next((k["colors"] for k in skins() if k["id"] == name), {})
 
 
 def hub(*args: str, timeout: int = 60) -> dict:
@@ -2187,7 +2194,8 @@ class Handler(BaseHTTPRequestHandler):
                 "nav": rows["nav"],
                 "config": {**{k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
                               if k not in ("pinned", "per_game", "pin_after")},
-                           "skin_url": skin_url(cfg.get("skin", "pulse"))},
+                           "skin_url": skin_url(cfg.get("skin", "pulse")),
+                           "skin_colors": skin_colors(cfg.get("skin", "pulse"))},
                 "game": GAMES.state(cfg),
                 "fg": fg_state(GAMES.state(cfg)["appid"]),
                 "sessions": sessions_get(4),
