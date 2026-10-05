@@ -356,6 +356,11 @@ install_file "$OVL/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" \
 install_file "$OVL/usr/lib/steamos-arm/update-agent" "$R/usr/lib/steamos-arm/update-agent" 0755
 install_file "$OVL/usr/lib/systemd/system/steamos-arm-update.service" \
   "$R/usr/lib/systemd/system/steamos-arm-update.service" 0644
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-update-cleanup.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-update-cleanup.service" 0644
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../steamos-arm-update-cleanup.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-update-cleanup.service"
 install_file "$OVL/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" \
   "$R/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" 0644
 install_file "$OVL/usr/share/steamos-arm/update/signing.pub" \

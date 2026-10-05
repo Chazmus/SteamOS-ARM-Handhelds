@@ -798,6 +798,42 @@ def recover2(root, boot, home, work, pending, current):
     raise ValueError(f'cannot recover state: {current}')
 
 
+# What a finished transaction keeps: enough to tell what happened.
+KEEP = {'transaction.json', 'state.json', 'failure.txt'}
+FINISHED = {'committed', 'rolled-back', 'aborted'}
+
+
+def cleanup():
+    """Free HOME from finished updates. Each transaction keeps its download's
+    contents, a backup, a recovery runtime and two boot images (gigabytes for
+    a full package) that nothing needs once it has committed or rolled back.
+    Keep only the records of those; drop transactions that never got as far
+    as being staged. The pending one, and anything with a mount inside, stay."""
+    base = Path('/home/.konkr-updates')
+    if base.is_symlink() or not base.is_dir() or base.stat().st_uid != 0: return 0
+    pending = Path('/' + PENDING)
+    keep_id = pending.read_text().strip() if pending.exists() else None
+    mounts = [l.split()[4] for l in Path('/proc/self/mountinfo').read_text().splitlines()]
+    freed = 0
+    for work in base.iterdir():
+        if work.is_symlink() or not work.is_dir() or work.name == keep_id: continue
+        if any(m == str(work) or m.startswith(str(work) + '/') for m in mounts): continue
+        try: current = json.loads((work / 'state.json').read_text())['state']
+        except (OSError, ValueError, KeyError): current = None
+        if current in FINISHED:
+            gone = [x for x in work.iterdir() if x.name not in KEEP and not x.name.endswith('.log')]
+        elif current is None:
+            gone = [work]                       # staging stopped before it was recorded
+        else:
+            continue                            # mid-update without a pending marker: leave it
+        for x in gone:
+            freed += int(run('du', '-sxB1', str(x), capture_output=True, text=True).stdout.split()[0] or 0)
+            if x.is_dir() and not x.is_symlink(): shutil.rmtree(x)
+            else: x.unlink()
+    if freed: print(f'freed {freed >> 20} MiB of finished updates')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest='command', required=True)
@@ -807,6 +843,7 @@ def main():
     p.add_argument('--version', default='')
     p.add_argument('--soc', default='')
     sub.add_parser('status', help='installed release and whether an update is staged (JSON)')
+    sub.add_parser('cleanup', help='remove what finished updates left on HOME')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
@@ -814,7 +851,11 @@ def main():
     try:
         if a.command == 'stage':
             with open('/run/konkr-update.lock', 'w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); stage(a)
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); cleanup(); stage(a)
+        elif a.command == 'cleanup':
+            if os.geteuid() != 0: raise ValueError('cleanup needs administrator access')
+            with open('/run/konkr-update.lock', 'w') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); return cleanup()
         elif a.command == 'recover': return recover(a)
         elif a.command == 'record-inventory':
             root = Path(a.root)
