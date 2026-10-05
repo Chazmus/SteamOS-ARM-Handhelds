@@ -345,6 +345,13 @@ install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
   "$R/usr/lib/systemd/system/steamos-arm-vpower.service" 0644
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-vpower.service"
+# Store plugins that break on the Steam client we ship, fixed where Decky
+# installs them (SteamGridDB 1.7.1's footer glyph lookup for now).
+install_file "$OVL/usr/lib/steamos-arm/decky-plugin-fixes" "$R/usr/lib/steamos-arm/decky-plugin-fixes" 0755
+for u in steamos-arm-decky-plugin-fixes.service steamos-arm-decky-plugin-fixes.path; do
+  install_file "$OVL/usr/lib/systemd/system/$u" "$R/usr/lib/systemd/system/$u" 0644
+  ln -sfn "../$u" "$R/usr/lib/systemd/system/multi-user.target.wants/$u"
+done
 install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
   "$R/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" 0644
 install_file "$OVL/usr/lib/steamos/sm8550-audio-pipewire" \
