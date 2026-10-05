@@ -544,6 +544,19 @@ install_file "$OVL/usr/lib/udev/rules.d/70-steamos-arm-devcoredump.rules" \
 
 # Return to Gaming Mode on the desktop, as on the 8 Gen 2 / 8 Gen 3 images.
 # This image never had it, so Desktop Mode had no way back but a restart.
+# Desktop Mode touch keyboard (GitHub #36): the same plasma-keyboard the
+# other images build, and KWin told to show it for a tapped text field.
+if [[ ! -x "$R/usr/bin/plasma-keyboard" ]]; then
+  log "== plasma-keyboard 0.1.0 (desktop touch keyboard)"
+  "${SCRIPT_DIR}/build-plasma-keyboard.sh" "$R" \
+    || die "plasma-keyboard is required (Desktop Mode touch keyboard)"
+fi
+KWIN_IM='/usr/share/applications/org.kde.plasma.keyboard.desktop'
+if ! grep -q '^\[Wayland\]' "$R/etc/xdg/kwinrc" 2>/dev/null; then
+  mkdir -p "$R/etc/xdg"
+  printf '\n[Wayland]\nInputMethod[$e]=%s\nVirtualKeyboardEnabled=true\n' "$KWIN_IM" >>"$R/etc/xdg/kwinrc"
+fi
+
 log "== Return to Gaming Mode desktop icon"
 install_file "$OVL/etc/skel/Desktop/Return.desktop" "$R/etc/skel/Desktop/Return.desktop" 0644
 install_file "$OVL/etc/xdg/plasma-workspace/env/set-return-icon.sh" \
