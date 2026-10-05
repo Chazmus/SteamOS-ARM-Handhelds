@@ -46,3 +46,8 @@
 		/delete-property/ touchscreen-inverted-x;
 	};
 };
+
+/* 8bpc panel: dither the 10-bit output instead of truncating it (banding) */
+&display_panel {
+	steamos-arm,dither-8bpc;
+};

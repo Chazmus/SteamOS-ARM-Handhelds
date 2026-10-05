@@ -28,3 +28,11 @@
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
 };
+
+/*
+ * Only the power key wakes the device: the volume key pressed in a bag or
+ * while holding it woke it out of s2idle and drained the battery.
+ */
+&{/gpio-keys/key-volume-up} {
+	/delete-property/ wakeup-source;
+};

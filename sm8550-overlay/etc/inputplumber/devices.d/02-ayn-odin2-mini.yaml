@@ -34,6 +34,15 @@ source_devices:
       handler: event*
     capability_map_id: ayn_mini_mcu
     passthrough: false
+  # Portal only: M1 / M2 on the back (gpio-keys-paddles in our device tree
+  # append) send BTN_Z / BTN_C, which the same map makes the back paddles.
+  - group: gamepad
+    evdev:
+      name: gpio-keys-paddles
+      phys_path: gpio-keys/input0
+      handler: event*
+    capability_map_id: ayn_mini_mcu
+    passthrough: false
 
 options:
   auto_manage: true

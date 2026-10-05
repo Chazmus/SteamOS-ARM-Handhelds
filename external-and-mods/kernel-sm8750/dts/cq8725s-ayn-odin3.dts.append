@@ -38,3 +38,21 @@
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
 };
+
+/*
+ * The Wi-Fi WAKE# line is active low; read as active high it can wake the
+ * SoC straight back out of s2idle (same as the Odin 2 and Pocket FIT Elite).
+ */
+&pcieport0 {
+	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+};
+
+/* Only the power key wakes the device, not volume up pressed in a bag. */
+&{/gpio-keys/key-volume-up} {
+	/delete-property/ wakeup-source;
+};
+
+/* 8bpc panel: dither the 10-bit output instead of truncating it (banding) */
+&display_panel {
+	steamos-arm,dither-8bpc;
+};

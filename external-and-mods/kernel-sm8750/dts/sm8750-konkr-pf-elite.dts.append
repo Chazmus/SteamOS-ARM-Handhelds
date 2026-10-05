@@ -44,3 +44,8 @@
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
 };
+
+/* Only the power key wakes the device, not volume up pressed in a bag. */
+&{/gpio-keys/key-volume-up} {
+	/delete-property/ wakeup-source;
+};
