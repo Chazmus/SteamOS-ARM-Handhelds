@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     "momentum": True,           # two-finger scrolls keep gliding after a flick
     "webapps": [],              # your own: [{"id", "name", "url"}]
     "pin_after": [],            # hub apps to pin on the home screen once installed
-    "skin": "pulse",            # the dashboard's stats look (skins/, or the user's own)
+    "skin": "aura",             # the dashboard's stats look (skins/, or the user's own)
     "bricks_best": 0,           # the brick game's best score
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
@@ -1139,7 +1139,7 @@ def skins() -> list[dict]:
                              "url": (d / "Skin.qml").as_uri(), "folder": str(d),
                              "colors": {k: str(v) for k, v in (meta.get("colors") or {}).items()
                                         if re.fullmatch(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", str(v))}}
-    first = ["pulse", "aura", "gauges", "black"]
+    first = ["aura", "pulse", "gauges", "black"]
     return sorted(found.values(), key=lambda k: (first.index(k["id"]) if k["id"] in first else len(first), k["id"]))
 
 
@@ -2195,8 +2195,8 @@ class Handler(BaseHTTPRequestHandler):
                 "nav": rows["nav"],
                 "config": {**{k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
                               if k not in ("pinned", "per_game", "pin_after")},
-                           "skin_url": skin_url(cfg.get("skin", "pulse")),
-                           "skin_colors": skin_colors(cfg.get("skin", "pulse"))},
+                           "skin_url": skin_url(cfg.get("skin", "aura")),
+                           "skin_colors": skin_colors(cfg.get("skin", "aura"))},
                 "game": GAMES.state(cfg),
                 "fg": fg_state(GAMES.state(cfg)["appid"]),
                 "sessions": sessions_get(4),

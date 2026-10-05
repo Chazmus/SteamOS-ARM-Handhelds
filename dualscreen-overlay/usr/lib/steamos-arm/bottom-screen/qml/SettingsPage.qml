@@ -50,11 +50,10 @@ Flickable {
         id: col
         width: parent.width
         spacing: 16 * Ui.s
-        Txt { text: "Settings"; font.pixelSize: 40 * Ui.s; font.weight: Font.Bold }
 
         Row {
             title: "Theme"
-            help: "Pulse, Aura, Gauges, Pure Black or your own."
+            help: "Aura, Pulse, Gauges, Pure Black or your own."
             Btn {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 84 * Ui.s

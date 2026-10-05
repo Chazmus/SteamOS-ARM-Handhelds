@@ -11,6 +11,7 @@ Rectangle {
     id: skin
     property var dash
     readonly property var st: dash ? dash.st : ({})
+    readonly property bool playing: st.fps !== undefined && st.fps !== null
     color: "black"
     radius: 24 * Ui.s
     implicitHeight: col.implicitHeight + 40 * Ui.s
@@ -34,12 +35,14 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Txt {
-                text: skin.st.fps !== undefined && skin.st.fps !== null ? skin.st.fps : "–"
-                font.pixelSize: 230 * Ui.s
+                // no game: the time takes the big number's place
+                text: skin.playing ? skin.st.fps : (skin.st.time || "")
+                font.pixelSize: (skin.playing ? 230 : 180) * Ui.s
                 font.weight: Font.Black
                 color: "white"
             }
             ColumnLayout {
+                visible: skin.playing
                 Layout.alignment: Qt.AlignBottom
                 Layout.bottomMargin: 44 * Ui.s
                 spacing: 2 * Ui.s
@@ -52,6 +55,7 @@ Rectangle {
             }
             Item { Layout.fillWidth: true }
             Txt {
+                visible: skin.playing
                 Layout.alignment: Qt.AlignTop
                 text: skin.st.time || ""
                 color: "#6b7280"

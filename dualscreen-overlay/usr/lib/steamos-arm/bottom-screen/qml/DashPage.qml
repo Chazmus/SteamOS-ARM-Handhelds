@@ -123,7 +123,7 @@ Item {
     // The skin for the stats: from Settings, falling back to Pulse if a
     // skin of the user's doesn't load.
     readonly property url classicUrl: Qt.resolvedUrl("skins/pulse/Skin.qml")      // the fallback
-    readonly property url defaultUrl: Qt.resolvedUrl("skins/pulse/Skin.qml")
+    readonly property url defaultUrl: Qt.resolvedUrl("skins/aura/Skin.qml")
     property bool skinFailed: false
     property string shotSkin: ""          // screenshots of one skin
     readonly property url skinUrl: skinFailed ? classicUrl

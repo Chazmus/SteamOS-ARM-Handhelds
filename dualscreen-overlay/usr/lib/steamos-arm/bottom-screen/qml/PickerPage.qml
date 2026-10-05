@@ -9,6 +9,7 @@ Item {
     signal done()
     function load() { Ui.request("GET", "/apps", undefined, function (a) { if (a) pk.apps = a }) }
     onVisibleChanged: if (visible) load()
+    Connections { target: Ui; function onApiChanged() { if (pk.visible) pk.load() } }
 
     RowLayout {
         id: bar

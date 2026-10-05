@@ -25,7 +25,7 @@ Item {
         spacing: 16 * Ui.s
         RowLayout {
             Layout.fillWidth: true
-            Txt { Layout.fillWidth: true; text: "Theme"; font.pixelSize: 36 * Ui.s; font.weight: Font.Bold }
+            Txt { Layout.fillWidth: true; text: "Tap one to use it"; color: Ui.dim; font.pixelSize: 26 * Ui.s }
             Btn {
                 Layout.preferredWidth: 200 * Ui.s
                 Layout.preferredHeight: 72 * Ui.s
@@ -46,7 +46,7 @@ Item {
             delegate: Item {
                 id: cell
                 required property var modelData
-                readonly property bool current: (Ui.cfg.skin || "pulse") === modelData.id
+                readonly property bool current: (Ui.cfg.skin || "aura") === modelData.id
                 width: grid.cellWidth
                 height: grid.cellHeight
                 Rectangle {
