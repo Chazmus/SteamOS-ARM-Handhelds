@@ -211,7 +211,7 @@ def make_library(systems: list[str]) -> None:
             "  bios/           BIOS and firmware files (bios/switch for Switch keys and firmware)\n"
             "  saves/, states/ kept here where an emulator lets us\n\n"
             "Move the whole library between the internal drive and an SD card from the\n"
-            "Emulator Hub's settings; the emulators follow.\n")
+            "Loadout's Mine tab; the emulators follow.\n")
 
 
 def set_library(where: str) -> dict:
@@ -292,19 +292,21 @@ def releases(src: dict) -> list[dict]:
                               "sha256": digest[7:] if digest.startswith("sha256:") else "",
                               "size": a.get("size", 0), "date": a.get("updated_at") or ""})
             out.append({"tag": r.get("tag_name", ""), "date": r.get("published_at") or "",
-                        "pre": bool(r.get("prerelease")), "files": files})
+                        "pre": bool(r.get("prerelease")), "files": files, "notes": r.get("body") or ""})
         return out
     if kind == "forgejo":
         raw = http_json(f"{src['base']}/api/v1/repos/{repo}/releases?limit=10")
         return [{"tag": r.get("tag_name", ""), "date": r.get("published_at") or "", "pre": bool(r.get("prerelease")),
                  "files": [{"name": a["name"], "url": a["browser_download_url"], "sha256": "",
-                            "size": a.get("size", 0), "date": a.get("created_at") or ""} for a in r.get("assets", [])]}
+                            "size": a.get("size", 0), "date": a.get("created_at") or ""} for a in r.get("assets", [])],
+                 "notes": r.get("body") or ""}
                 for r in raw if not r.get("draft")]
     if kind == "gitlab":
         raw = http_json(f"{src['base']}/api/v4/projects/{urllib.parse.quote(repo, safe='')}/releases?per_page=10")
         return [{"tag": r.get("tag_name", ""), "date": r.get("released_at") or "", "pre": bool(r.get("upcoming_release")),
                  "files": [{"name": l["name"], "url": l.get("direct_asset_url") or l["url"], "sha256": "",
-                            "size": 0, "date": r.get("released_at") or ""} for l in r.get("assets", {}).get("links", [])]}
+                            "size": 0, "date": r.get("released_at") or ""} for l in r.get("assets", {}).get("links", [])],
+                 "notes": r.get("description") or ""}
                 for r in raw]
     raise ValueError(kind)
 
@@ -329,7 +331,8 @@ def pick_file(src: dict) -> dict:
     if src.get("tag"):
         version = f"{version} {fdate[:10]}"
     return {"how": "file", "url": f["url"], "name": f["name"], "sha256": f["sha256"],
-            "size": f["size"], "version": version, "stamp": fdate or date}
+            "size": f["size"], "version": version, "stamp": fdate or date,
+            "notes": (r.get("notes") or "")[:6000]}
 
 
 def nice_version(tag: str, name: str) -> str:
@@ -659,7 +662,34 @@ def do_install(job: Job, update: bool = False) -> None:
         record.update(how="plugin", dir=top)
         update_json(STATE / "installed.json", lambda d: d.__setitem__(app_id, record))
         return
-    if pick["how"] == "file":
+    if pick["how"] == "file" and e.get("unpack"):
+        # An app that ships as a folder (Heroic): a .tar.* unpacked into
+        # ~/Applications/<unpack>, started through its "start" file.
+        APPS.mkdir(parents=True, exist_ok=True)
+        folder = e["unpack"]
+        staging = APPS / f".{folder}.hub.tar"
+        download(pick["url"], staging, job, pick.get("size", 0), pick.get("sha256", ""))
+        job.step("Unpacking", 92, force=True)
+        work = APPS / f".{folder}.hub.new"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir()
+        r = subprocess.run(["tar", "-xf", str(staging), "-C", str(work), "--no-same-owner"],
+                           capture_output=True, text=True)
+        staging.unlink(missing_ok=True)
+        tops = [p_ for p_ in work.iterdir()]
+        if r.returncode or len(tops) != 1 or not tops[0].is_dir():
+            shutil.rmtree(work, ignore_errors=True)
+            raise RuntimeError("the download didn't unpack as one app folder")
+        if not (tops[0] / e["start"]).is_file():
+            shutil.rmtree(work, ignore_errors=True)
+            raise RuntimeError(f"the app folder has no {e['start']}")
+        old_dir = APPS / folder
+        if old_dir.exists():
+            shutil.rmtree(old_dir)
+        os.replace(tops[0], old_dir)
+        shutil.rmtree(work, ignore_errors=True)
+        record.update(file=folder, start=e["start"])
+    elif pick["how"] == "file":
         APPS.mkdir(parents=True, exist_ok=True)
         name = e.get("save_as") or pick["name"]
         staging = APPS / f".{name}.hub"
@@ -714,8 +744,12 @@ def do_remove(job: Job) -> None:
         shutil.rmtree(PLUGINS / rec["dir"], ignore_errors=True)
         update_json(STATE / "installed.json", lambda d: d.pop(app_id, None))
         return
-    if rec.get("file"):
-        (APPS / rec["file"]).unlink(missing_ok=True)
+    if rec.get("file") and "/" not in rec["file"]:
+        target = APPS / rec["file"]
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
     if rec.get("ref"):
         flatpak_remove(rec["ref"])
         if job.data.get("extra", {}).get("wipe"):
@@ -903,7 +937,7 @@ def run(app_id: str, args: list[str]) -> None:
     e = entry(app_id)
     rec = installed_db().get(app_id)
     if not rec:
-        raise SystemExit(f"{e['title']} isn't installed; install it from the Emulator Hub")
+        raise SystemExit(f"{e['title']} isn't installed; install it from Loadout")
     env = dict(os.environ)
     env.update(e.get("env", {}))
     if rec.get("lease"):
@@ -912,7 +946,9 @@ def run(app_id: str, args: list[str]) -> None:
         touch = bottom_touch_name()
         if touch:
             env.setdefault("MELONDS_DRM_LEASE_TOUCH", touch)
-    if rec["how"] == "file":
+    if rec["how"] == "file" and rec.get("start"):
+        cmd = [str(APPS / rec["file"] / rec["start"])]
+    elif rec["how"] == "file":
         cmd = [str(APPS / rec["file"])]
         # Without FUSE an AppImage can still unpack itself and run.
         if not os.path.exists("/dev/fuse") or not shutil.which("fusermount"):
@@ -976,7 +1012,7 @@ def write_desktop(e: dict) -> None:
 def write_esde_rules() -> None:
     """ES-DE finds every hub emulator through its launcher, whatever the
     file is called or wherever it came from."""
-    rules = ['<?xml version="1.0"?>', "<!-- Written by the Emulator Hub: your installs, by launcher. -->", "<ruleList>"]
+    rules = ['<?xml version="1.0"?>', "<!-- Written by Loadout: your installs, by launcher. -->", "<ruleList>"]
     for app_id in sorted(installed_db()):
         try:
             name = entry(app_id).get("esde")
@@ -992,7 +1028,9 @@ def write_esde_rules() -> None:
     # ES-DE has no ARMSX2 command. A custom system replaces the bundled one,
     # so this is ES-DE's own ps2 entry with ARMSX2 put first.
     systems = d / "es_systems.xml"
-    ours = not systems.exists() or "Emulator Hub" in systems.read_text(errors="replace")
+    # ours: written by Loadout, or by the Emulator Hub it used to be
+    ours = not systems.exists() or any(m in systems.read_text(errors="replace")
+                                       for m in ("Written by Loadout", "Emulator Hub"))
     if ours and "armsx2" in installed_db():
         systems.write_text(ESDE_PS2)
     elif ours and systems.exists():
@@ -1000,7 +1038,7 @@ def write_esde_rules() -> None:
 
 
 ESDE_PS2 = """<?xml version="1.0"?>
-<!-- Written by the Emulator Hub: ES-DE's ps2 system with ARMSX2 added. -->
+<!-- Written by Loadout: ES-DE's ps2 system with ARMSX2 added. -->
 <systemList>
     <system>
         <name>ps2</name>
@@ -1295,9 +1333,17 @@ def steam_pending() -> dict:
     custom = s.get("custom", {})
     adds = [shortcut_spec(a) for a in s.get("owed", []) if a in installed_db()]
     adds += [{"app": a, "name": custom[a[7:]]["name"], "exe": custom[a[7:]]["exe"],
-              "dir": str(Path(custom[a[7:]]["exe"]).parent), "icon": "", "options": "", "tag": "Apps"}
+              "dir": custom[a[7:]].get("dir") or str(Path(custom[a[7:]]["exe"].strip('"')).parent),
+              "icon": "", "options": custom[a[7:]].get("options", ""),
+              "compat": custom[a[7:]].get("compat", ""), "art": custom[a[7:]].get("art", ""),
+              "tag": custom[a[7:]].get("tag", "Apps")}
              for a in s.get("owed", []) if a.startswith("custom:") and a[7:] in custom]
-    return {"add": adds,
+    # Proton picked for shortcuts already made (e.g. written while Steam was
+    # closed, where only Steam itself can set it): the panel applies these.
+    compat = [{"app": a, "appid": s["made"][a], "tool": custom[a[7:]]["compat"]}
+              for a in s.get("made", {}) if a.startswith("custom:") and a[7:] in custom
+              and custom[a[7:]].get("compat") and not custom[a[7:]].get("compat_done")]
+    return {"add": adds, "compat": compat,
             "remove": [{"app": a, "appid": s["made"][a]} for a in s.get("drop", []) if a in s.get("made", {})]}
 
 
@@ -1314,6 +1360,8 @@ def steam_gone(app_id: str) -> None:
         s.get("made", {}).pop(app_id, None)
         if app_id in s.get("drop", []):
             s["drop"].remove(app_id)
+            if app_id.startswith("custom:"):        # taken out on purpose: forget it
+                s.get("custom", {}).pop(app_id[7:], None)
     update_json(STEAM_FILE, change)
 
 
@@ -1544,6 +1592,7 @@ def status() -> dict:
             "installed": bool(rec) or builtin, "builtin": builtin, "elsewhere": adopt,
             "version": (rec or {}).get("version", ""), "label": (rec or {}).get("label") or (best or {}).get("label", ""),
             "update": (rec or {}).get("update", ""),
+            "update_notes": (rec or {}).get("update_notes", "") if (rec or {}).get("update") else "",
             "job": running.get(e["id"]),
             "steam_appid": made.get(e["id"]) if rec else None,
             "icon": str(ICON_DIR / f"steamos-arm-hub-{e['id']}.png") if (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists() else "",
@@ -1567,16 +1616,17 @@ def check_updates() -> dict:
         except Exception:
             continue
         if pick.get("how") == "file":
-            latest[app_id] = (idx, pick.get("version", ""))
+            latest[app_id] = (idx, pick.get("version", ""), pick.get("notes", ""))
     found = {}
 
     def change(d):
-        for app_id, (idx, version) in latest.items():
+        for app_id, (idx, version, notes) in latest.items():
             rec = d.get(app_id)
             if not rec or rec.get("how") != "file":
                 continue
             newer = version != rec.get("version") or idx != rec.get("source")
             rec["update"] = version if newer else ""
+            rec["update_notes"] = notes if newer else ""
             if newer:
                 found[app_id] = version
     update_json(STATE / "installed.json", change)

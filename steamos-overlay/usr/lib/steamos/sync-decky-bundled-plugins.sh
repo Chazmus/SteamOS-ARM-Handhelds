@@ -41,6 +41,14 @@ for src in "${BUNDLE_ROOT}"/*; do
     [[ -d "${DEST}/${name}" ]] && { log "Removing ${name}: not for ${MODEL:-this device}"; rm -rf "${DEST:?}/${name}"; }
     continue
   fi
+  # A plugin that took over from an older one (Emulator Hub -> Loadout) lists
+  # the old folder names in "replaces": those go, so Decky shows one panel.
+  if [[ -f "${src}/replaces" ]]; then
+    while read -r old; do
+      [[ -n "$old" && "$old" != */* && -d "${DEST}/${old}" ]] || continue
+      log "Removing ${old}: replaced by ${name}"; rm -rf "${DEST:?}/${old}"
+    done < "${src}/replaces"
+  fi
   log "Installing ${name} → ${DEST}/${name}"
   mkdir -p "${DEST}/${name}"
   if command -v rsync >/dev/null 2>&1; then

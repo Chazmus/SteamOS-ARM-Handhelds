@@ -1,0 +1,12 @@
+{
+  "name": "Loadout",
+  "author": "hashtagbasit",
+  "api_version": 1,
+  "flags": [],
+  "version": "2.0.0",
+  "publish": {
+    "tags": ["emulators", "store", "installer", "arm64", "steamos-arm"],
+    "description": "Emulators, PC game stores and apps for this device, sized to its chip, straight into the Steam library. Reads your game library and tells you what to get for it.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/decky-loader"
+  }
+}

@@ -167,7 +167,7 @@ fi
 install -m0755 "$OVL/usr/lib/steamos/sm8550-bluetooth-setup" \
   "$R/usr/lib/steamos/sm8550-bluetooth-setup"
 
-# Emulator Hub (also in the shared rootfs; older release rootfs lack it).
+# Loadout (also in the shared rootfs; older release rootfs lack it).
 # Hardware video decode for VA-API apps (scripts/install-v4l2-vaapi.sh).
 "${SCRIPT_DIR}/install-v4l2-vaapi.sh" "$R" | tee -a "$LOG"
 # Hostname from the model, Desktop scale from the panel (scripts/install-device-defaults.sh).

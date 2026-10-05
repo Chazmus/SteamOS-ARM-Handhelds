@@ -549,7 +549,7 @@ install -m0644 "$HC_SRC/plugin.json" "$HC_SRC/main.py" "$HC_DST/"
 [[ -f "$HC_SRC/package.json" ]] && install -m0644 "$HC_SRC/package.json" "$HC_DST/"
 install -m0644 "$HC_SRC/dist/index.js" "$HC_DST/dist/"
 chown -R 1000:1000 "$HOME_DST/homebrew"
-# Emulator Hub: one-tap emulators and apps (engine + Decky panel).
+# Loadout: emulators, PC game stores and apps (engine + Decky plugin).
 "${SCRIPT_DIR}/install-hub.sh" "$R" "$HOME_DST"
 
 # GPU/GMU hang dumps kept past the kernel's five minutes (debug-logs copies them).
