@@ -75,12 +75,19 @@ jobs:
               --repo "${{ github.repository }}" \
               --workflow=build-image-sm8750.yml \
               --status=success --limit=1 \
-              --json databaseId -q '.[0].databaseId')
+              --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              RUN_ID=$(gh run list \
+                --repo "${{ github.repository }}" \
+                --workflow=build-image.yml \
+                --status=success --limit=1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            fi
             echo "Latest successful image run ID: $RUN_ID"
           fi
 
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::No successful build-image-sm8750.yml run found. Run build-image-sm8750.yml first."
+            echo "::error::No successful build-image-sm8750.yml (or build-image.yml) run found. Run build-image-sm8750.yml first."
             exit 1
           fi
 

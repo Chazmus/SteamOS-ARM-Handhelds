@@ -82,10 +82,17 @@ jobs:
               --repo "${{ github.repository }}" \
               --workflow=build-kernel-sm8750.yml \
               --status=success --limit=1 \
-              --json databaseId -q '.[0].databaseId')
+              --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              RUN_ID=$(gh run list \
+                --repo "${{ github.repository }}" \
+                --workflow=build-kernel.yml \
+                --status=success --limit=1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            fi
           fi
-          if [ -z "$RUN_ID" ]; then
-            echo "::error::No successful build-kernel-sm8750.yml run found. Run the kernel workflow first."
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No successful build-kernel-sm8750.yml (or build-kernel.yml) run found. Run the kernel workflow first."
             exit 1
           fi
           echo "Downloading kernel from run $RUN_ID"
@@ -128,10 +135,17 @@ jobs:
               --repo "${{ github.repository }}" \
               --workflow=build-mesa-sm8750.yml \
               --status=success --limit=1 \
-              --json databaseId -q '.[0].databaseId')
+              --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              RUN_ID=$(gh run list \
+                --repo "${{ github.repository }}" \
+                --workflow=build-mesa.yml \
+                --status=success --limit=1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            fi
           fi
-          if [ -z "$RUN_ID" ]; then
-            echo "::error::No successful build-mesa-sm8750.yml run found. Run the Mesa workflow first."
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No successful build-mesa-sm8750.yml (or build-mesa.yml) run found. Run the Mesa workflow first."
             exit 1
           fi
 
