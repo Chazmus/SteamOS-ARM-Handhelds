@@ -3,7 +3,7 @@
 // that only the top screen's session sees.
 //
 // Touchpad gestures (counted by fingers down at once):
-//   1 finger      move; faster strokes travel further. Holding "Fine" moves
+//   1 finger      move; faster strokes travel further. Holding "Precise" moves
 //                 at a third of the speed for small targets
 //   tap           left click; tap, then touch and move = drag (button held
 //                 until that finger lifts); tap tap = double click
@@ -257,7 +257,7 @@ Item {
             Layout.maximumHeight: 140 * Ui.s
             spacing: 18 * Ui.s
             Repeater {
-                model: [["left", "Left"], ["fine", "Fine"], ["right", "Right"]]
+                model: [["left", "Left"], ["fine", "Precise"], ["right", "Right"]]
                 Rectangle {
                     id: pb
                     required property var modelData

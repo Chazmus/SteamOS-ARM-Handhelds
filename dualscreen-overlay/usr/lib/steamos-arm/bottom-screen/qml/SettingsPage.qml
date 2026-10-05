@@ -54,7 +54,7 @@ Flickable {
 
         Row {
             title: "Dashboard look"
-            help: "Classic, Gauges, Pure Black or a skin of your own, previewed live."
+            help: "Pulse, Glance, Classic, Gauges, Pure Black or your own skin."
             Btn {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 84 * Ui.s
