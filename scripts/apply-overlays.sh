@@ -345,6 +345,11 @@ install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
   "$R/usr/lib/systemd/system/steamos-arm-vpower.service" 0644
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
 ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-vpower.service"
+# Desktop Mode: restart the portal if it came up before the Desktop's
+# environment (Steam's right-stick mouse needs its KDE back end).
+install_file "$OVL/usr/lib/steamos-arm/desktop-portal-fix" "$R/usr/lib/steamos-arm/desktop-portal-fix" 0755
+install_file "$OVL/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" \
+  "$R/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" 0644
 # Store plugins that break on the Steam client we ship, fixed where Decky
 # installs them (SteamGridDB 1.7.1's footer glyph lookup for now).
 install_file "$OVL/usr/lib/steamos-arm/decky-plugin-fixes" "$R/usr/lib/steamos-arm/decky-plugin-fixes" 0755
