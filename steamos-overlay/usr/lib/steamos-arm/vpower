@@ -42,7 +42,10 @@ def ac_online():
 def estimates(b, status):
     """(secs to full, secs to empty), -1 when unknown."""
     full = empty = -1
-    t_full, t_empty = num(f"{b}/time_to_full_now"), num(f"{b}/time_to_empty_now")
+    # The kernel's own estimate first: qcom_battmgr's _avg values know the
+    # charge limit (our patch 0050); other drivers have _now.
+    t_full = next((v for v in (num(f"{b}/time_to_full_avg"), num(f"{b}/time_to_full_now")) if v and v > 0), None)
+    t_empty = next((v for v in (num(f"{b}/time_to_empty_avg"), num(f"{b}/time_to_empty_now")) if v and v > 0), None)
     if status == "Charging" and t_full and t_full > 0:
         full = t_full
     if status == "Discharging" and t_empty and t_empty > 0:
