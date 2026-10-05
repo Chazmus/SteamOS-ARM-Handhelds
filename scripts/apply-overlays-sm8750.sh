@@ -443,6 +443,25 @@ printf '[Service]\nExecStartPre=-/bin/mount -o remount,rw /boot\n' \
 
 install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" \
   "$R/usr/share/pipewire/pipewire-pulse.conf.d/60-games-keep-device-volume.conf" 0644
+# Same audio buffer floor as the other chips: games asking for tiny buffers
+# made the DSP path underrun (crackles).
+install_file "$OVL/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" \
+  "$R/usr/share/pipewire/pipewire.conf.d/99-sm8550-buffers.conf" 0644
+install_file "$OVL/usr/share/pipewire/pipewire-pulse.conf.d/99-sm8550-buffers.conf" \
+  "$R/usr/share/pipewire/pipewire-pulse.conf.d/99-sm8550-buffers.conf" 0644
+
+# Shared tuning from the 8 Gen 3 overlay (the 8 Gen 2 image gets it with the
+# whole overlay): ntsync usable by Proton, BFQ and read-ahead for the microSD,
+# dirty limits that keep a Steam install from freezing the UI, and realtime
+# audio threads that don't pin the CPU clock.
+install_file "${ROOT}/sm8650-overlay/usr/lib/udev/rules.d/60-konkr-performance.rules" \
+  "$R/usr/lib/udev/rules.d/60-konkr-performance.rules" 0644
+install_file "${ROOT}/sm8650-overlay/usr/lib/modules-load.d/ntsync.conf" \
+  "$R/usr/lib/modules-load.d/ntsync.conf" 0644
+install_file "${ROOT}/sm8650-overlay/usr/lib/sysctl.d/60-konkr-io.conf" \
+  "$R/usr/lib/sysctl.d/60-konkr-io.conf" 0644
+install_file "${ROOT}/sm8650-overlay/usr/lib/sysctl.d/21-konkr-sched-rt.conf" \
+  "$R/usr/lib/sysctl.d/21-konkr-sched-rt.conf" 0644
 
 # Audio setup service
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
@@ -655,6 +674,13 @@ fi
 if [[ -f "$R/etc/xdg/kdeglobals" ]]; then
   sed -i 's/^LookAndFeelPackage=.*/LookAndFeelPackage=com.valve.vapor.deck.desktop/' "$R/etc/xdg/kdeglobals"
 fi
+
+# The whole home belongs to the user, as in apply-overlays.sh: ~/.cache and
+# ~/.config are made above as root when the base has none, and the hub and
+# Steam steps also write here as root. A root-owned ~/.config breaks Decky
+# plugins, lsfg-vk's conf.toml and KDE settings.
+chown -R 1000:1000 "$HOME_DST"
+chmod 0755 "$HOME_DST"
 
 # Ensure correct root and user permissions across /usr and /etc
 find "$R/usr" "$R/etc" -xdev \( -uid +999 -o -gid +999 \) -exec chown -h root:root {} + 2>/dev/null || true
