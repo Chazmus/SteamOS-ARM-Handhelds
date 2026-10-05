@@ -1139,7 +1139,8 @@ def skins() -> list[dict]:
                              "url": (d / "Skin.qml").as_uri(), "folder": str(d),
                              "colors": {k: str(v) for k, v in (meta.get("colors") or {}).items()
                                         if re.fullmatch(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", str(v))}}
-    return list(found.values())
+    first = ["pulse", "aura", "gauges", "black"]
+    return sorted(found.values(), key=lambda k: (first.index(k["id"]) if k["id"] in first else len(first), k["id"]))
 
 
 def skin_url(name: str) -> str:

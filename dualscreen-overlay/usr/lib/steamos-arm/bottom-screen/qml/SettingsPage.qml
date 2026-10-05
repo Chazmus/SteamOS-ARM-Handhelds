@@ -54,7 +54,7 @@ Flickable {
 
         Row {
             title: "Theme"
-            help: "Pulse, Aura, Glance, Classic, Gauges, Pure Black or your own."
+            help: "Pulse, Aura, Gauges, Pure Black or your own."
             Btn {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 84 * Ui.s

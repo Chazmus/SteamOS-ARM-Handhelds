@@ -54,7 +54,7 @@ ColumnLayout {
 
     Card {
         Layout.fillWidth: true
-        Layout.preferredHeight: 290 * Ui.s
+        Layout.preferredHeight: 396 * Ui.s
         RowLayout {
             anchors.fill: parent
             anchors.margins: 20 * Ui.s
@@ -100,7 +100,7 @@ ColumnLayout {
     }
     Card {
         Layout.fillWidth: true
-        Layout.preferredHeight: 176 * Ui.s
+        Layout.preferredHeight: 232 * Ui.s
         RowLayout {
             anchors.fill: parent
             anchors.margins: 8 * Ui.s
@@ -117,9 +117,9 @@ ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 160 * Ui.s
+                    implicitWidth: 210 * Ui.s
                     thick: 12 * Ui.s
-                    big: 30
+                    big: 36
                     value: modelData.value
                     label: modelData.label
                     sub: modelData.sub

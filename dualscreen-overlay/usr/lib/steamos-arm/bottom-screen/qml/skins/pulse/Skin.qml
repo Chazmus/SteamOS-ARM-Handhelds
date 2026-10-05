@@ -7,6 +7,8 @@ import "../.."
 ColumnLayout {
     id: skin
     property var dash           // the dashboard (see skins/README.md)
+    readonly property bool stretch: true
+    readonly property real maxHeight: (380 + 16 + 210) * Ui.s
     readonly property var st: dash ? dash.st : ({})
     readonly property bool playing: st.fps !== undefined && st.fps !== null
     readonly property var art: st.game && st.game.art ? st.game.art : ({})
@@ -42,7 +44,9 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
+        Layout.fillHeight: true
         Layout.preferredHeight: 282 * Ui.s
+        Layout.maximumHeight: 380 * Ui.s
         spacing: 16 * Ui.s
 
         // ----------------------------------------------------- session --
@@ -65,7 +69,7 @@ ColumnLayout {
                 anchors.bottom: parent.bottom
                 anchors.leftMargin: 2 * Ui.s
                 anchors.rightMargin: 2 * Ui.s
-                height: parent.height * 0.42
+                height: parent.height * 0.3
                 values: skin.dash ? skin.dash.fpsHist : []
                 max: Math.max(30, Math.ceil(Math.max.apply(null, (skin.dash ? skin.dash.fpsHist : []).concat([1])) / 30) * 30)
                 tint: Ui.accent
@@ -113,7 +117,8 @@ ColumnLayout {
                 }
             }
             Row {
-                x: 28 * Ui.s; y: 50 * Ui.s
+                x: 28 * Ui.s
+                y: 172 * Ui.s - big.baselineOffset
                 spacing: 12 * Ui.s
                 Txt {
                     id: big
@@ -178,7 +183,9 @@ ColumnLayout {
     // ------------------------------------------------- stat sparklines --
     RowLayout {
         Layout.fillWidth: true
+        Layout.fillHeight: true
         Layout.preferredHeight: 168 * Ui.s
+        Layout.maximumHeight: 210 * Ui.s
         spacing: 16 * Ui.s
         Repeater {
             model: [

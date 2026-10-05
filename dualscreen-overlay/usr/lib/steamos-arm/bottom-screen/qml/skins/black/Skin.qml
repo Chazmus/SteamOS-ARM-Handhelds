@@ -35,13 +35,13 @@ Rectangle {
             Layout.fillWidth: true
             Txt {
                 text: skin.st.fps !== undefined && skin.st.fps !== null ? skin.st.fps : "–"
-                font.pixelSize: 170 * Ui.s
+                font.pixelSize: 230 * Ui.s
                 font.weight: Font.Black
                 color: "white"
             }
             ColumnLayout {
                 Layout.alignment: Qt.AlignBottom
-                Layout.bottomMargin: 30 * Ui.s
+                Layout.bottomMargin: 44 * Ui.s
                 spacing: 2 * Ui.s
                 Txt { text: "FPS"; color: Ui.accent; font.pixelSize: 44 * Ui.s; font.weight: Font.Bold }
                 Txt {
@@ -61,7 +61,7 @@ Rectangle {
         Item {
             id: trace
             Layout.fillWidth: true
-            Layout.preferredHeight: 64 * Ui.s
+            Layout.preferredHeight: 96 * Ui.s
             Shape {
                 anchors.fill: parent
                 visible: skin.dash && skin.dash.fpsHist.length > 1

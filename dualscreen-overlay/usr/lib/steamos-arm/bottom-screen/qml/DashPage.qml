@@ -120,9 +120,9 @@ Item {
     }
     function cap(t) { return t ? t.charAt(0).toUpperCase() + t.slice(1) : "–" }
 
-    // The skin for the stats: from Settings, falling back to Classic if a
+    // The skin for the stats: from Settings, falling back to Pulse if a
     // skin of the user's doesn't load.
-    readonly property url classicUrl: Qt.resolvedUrl("skins/classic/Skin.qml")
+    readonly property url classicUrl: Qt.resolvedUrl("skins/pulse/Skin.qml")      // the fallback
     readonly property url defaultUrl: Qt.resolvedUrl("skins/pulse/Skin.qml")
     property bool skinFailed: false
     property string shotSkin: ""          // screenshots of one skin
@@ -155,6 +155,10 @@ Item {
         Loader {
             id: skinLoader
             Layout.fillWidth: true
+            // a skin with stretch: true takes the room the controls leave
+            Layout.fillHeight: !!(item && item.stretch) && !log.shown
+            Layout.maximumHeight: item && item.maxHeight ? item.maxHeight : Number.POSITIVE_INFINITY
+            Layout.verticalStretchFactor: 20
             Layout.preferredHeight: item ? item.implicitHeight : 0
             source: dash.skinUrl
             onLoaded: item.dash = dash
@@ -167,14 +171,14 @@ Item {
             id: controlsCard
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: controls.implicitHeight + 44 * Ui.s
-            Layout.maximumHeight: controls.implicitHeight + 44 * Ui.s
+            Layout.preferredHeight: controls.implicitHeight + 36 * Ui.s
+            Layout.maximumHeight: controls.implicitHeight + 36 * Ui.s
             Layout.minimumHeight: 180 * Ui.s
             clip: true
             Flickable {
                 id: controlsFlick
                 anchors.fill: parent
-                anchors.margins: 22 * Ui.s
+                anchors.margins: 18 * Ui.s
                 contentHeight: controls.implicitHeight
                 interactive: contentHeight > height
                 boundsBehavior: Flickable.StopAtBounds
@@ -183,9 +187,11 @@ Item {
                 width: controlsFlick.width
                 columns: 2
                 columnSpacing: 18 * Ui.s
-                rowSpacing: 14 * Ui.s
+                rowSpacing: 10 * Ui.s
 
                 component Label: Txt {
+                    Layout.preferredHeight: 60 * Ui.s
+                    verticalAlignment: Text.AlignVCenter
                     color: Ui.dim
                     font.pixelSize: 22 * Ui.s
                     font.weight: Font.Bold
@@ -198,6 +204,7 @@ Item {
                     Layout.fillWidth: true
                     spacing: 18 * Ui.s
                     Seg {
+                        implicitHeight: 60 * Ui.s
                         Layout.fillWidth: true
                         Layout.preferredWidth: 3
                         options: [["silent", "Silent"], ["balanced", "Balanced"], ["turbo", "Turbo"]]
@@ -206,6 +213,7 @@ Item {
                         onPicked: function (v) { Ui.post("/konkrd/profile-" + v) }
                     }
                     Seg {
+                        implicitHeight: 60 * Ui.s
                         Layout.fillWidth: true
                         Layout.preferredWidth: 2
                         visible: dash.st.fan !== undefined && dash.st.fan >= 0
@@ -216,31 +224,38 @@ Item {
                     }
                 }
 
-                // This game's own settings: kept, they come back each launch.
-                Label { text: "GAME"; visible: !!(dash.st.game && dash.st.game.name) }
-                Btn {
-                    visible: !!(dash.st.game && dash.st.game.name)
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 64 * Ui.s
-                    active: !!(dash.st.game && dash.st.game.remembered)
-                    label: active ? "✓  Saved for this game" : "Save for this game"
-                    fontSize: 22
-                    onClicked: Ui.post("/remember", { on: !active })
-                }
-
                 // Frame generation for the game in front (lsfg-vk), changed live.
-                Label { text: "FRAME GEN"; visible: !!dash.st.fg }
-                Seg {
+                // and Keep: this game's profile, fan and refresh come back each launch.
+                readonly property bool inGame: !!(dash.st.game && dash.st.game.name)
+                Label { text: "GAME"; visible: controls.inGame }
+                RowLayout {
                     Layout.fillWidth: true
-                    visible: !!dash.st.fg
-                    options: [[1, "Off"], [2, "2×"], [3, "3×"], [4, "4×"]]
-                    current: dash.st.fg ? dash.st.fg.multiplier : 1
-                    fontSize: 24
-                    onPicked: function (v) { Ui.post("/fg", { multiplier: v }) }
+                    visible: controls.inGame
+                    spacing: 14 * Ui.s
+                    Txt { visible: !!dash.st.fg; text: "Frame gen"; color: Ui.dim; font.pixelSize: 22 * Ui.s; font.weight: Font.DemiBold }
+                    Seg {
+                        implicitHeight: 60 * Ui.s
+                        Layout.fillWidth: true
+                        visible: !!dash.st.fg
+                        options: [[1, "Off"], [2, "2×"], [3, "3×"], [4, "4×"]]
+                        current: dash.st.fg ? dash.st.fg.multiplier : 1
+                        fontSize: 22
+                        onPicked: function (v) { Ui.post("/fg", { multiplier: v }) }
+                    }
+                    Btn {
+                        Layout.preferredWidth: 200 * Ui.s
+                        Layout.fillWidth: !dash.st.fg
+                        Layout.preferredHeight: 60 * Ui.s
+                        active: !!(dash.st.game && dash.st.game.remembered)
+                        label: active ? "★  Kept" : "☆  Keep"
+                        fontSize: 22
+                        onClicked: Ui.post("/remember", { on: !active })
+                    }
                 }
 
                 Label { text: "REFRESH"; visible: dash.st.refresh !== undefined && dash.st.refresh !== null }
                 Seg {
+                    implicitHeight: 60 * Ui.s
                     Layout.fillWidth: true
                     visible: dash.st.refresh !== undefined && dash.st.refresh !== null
                     options: {
@@ -259,7 +274,7 @@ Item {
                 Level {
                     Layout.fillWidth: true
                     visible: dash.st.dual !== undefined && dash.st.dual !== null
-                    implicitHeight: 64 * Ui.s
+                    implicitHeight: 60 * Ui.s
                     label: "Bottom"
                     minimum: 10
                     value: dash.st.dual ? dash.st.dual.bottom_share : 100
@@ -306,7 +321,7 @@ Item {
             }
         }
 
-        Item { Layout.fillHeight: true; visible: !log.shown }
+        Item { Layout.fillHeight: true; Layout.verticalStretchFactor: 1; visible: !log.shown }
 
         // -------------------------------------------------- play log --
         // Between games: the last few sessions, what each took.
@@ -318,13 +333,15 @@ Item {
             Layout.fillHeight: shown
             Layout.preferredHeight: shown ? 100 * Ui.s : 0
             visible: shown
+            clip: true
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 26 * Ui.s
                 spacing: 6 * Ui.s
                 Txt { text: "RECENT"; color: Ui.dim; font.pixelSize: 21 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
                 Repeater {
-                    model: log.rows
+                    // as many as fit
+                    model: log.rows.slice(0, Math.max(1, Math.floor((log.height - 84 * Ui.s) / (64 * Ui.s))))
                     RowLayout {
                         id: entry
                         required property var modelData

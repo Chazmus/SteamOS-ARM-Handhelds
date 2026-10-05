@@ -198,22 +198,28 @@ Window {
         anchors.margins: 24 * Ui.s
 
         // Status bar: home button (off the home screen), title, clock, battery.
+        // On the dashboard it is a slim strip so the readings get the room:
+        // small home and Steam buttons on the left, time and battery right.
+        readonly property bool slim: root.page === "dash"
         RowLayout {
             id: status
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 72 * Ui.s
-            spacing: 24 * Ui.s
+            height: (parent.slim ? 52 : 72) * Ui.s
+            spacing: (parent.slim ? 12 : 24) * Ui.s
             Btn {
                 visible: root.page !== "home"
-                Layout.preferredWidth: 160 * Ui.s
-                Layout.preferredHeight: 68 * Ui.s
-                label: "⌂ Home"
+                Layout.preferredWidth: (status.parent.slim ? 52 : 160) * Ui.s
+                Layout.preferredHeight: (status.parent.slim ? 52 : 68) * Ui.s
+                label: status.parent.slim ? "" : "⌂ Home"
+                icon: status.parent.slim ? "go-home-symbolic" : ""
+                iconSize: 26
                 fontSize: 26
                 onClicked: root.go("home")
             }
             Txt {
+                visible: !status.parent.slim
                 text: root.titles[root.page] || ""
                 font.pixelSize: 32 * Ui.s
                 font.weight: Font.DemiBold
@@ -224,25 +230,25 @@ Window {
             // Steam's buttons, on the dashboard (Game Mode only).
             Repeater {
                 model: root.page === "dash" && !Ui.st.desktop ? [
-                    ["steam", "go-home-symbolic"], ["qam", "view-more-horizontal-symbolic"],
+                    ["steam", "applications-games-symbolic"], ["qam", "view-more-horizontal-symbolic"],
                     ["keyboard", "input-keyboard-virtual-symbolic"], ["screenshot", "camera-photo-symbolic"]] : []
                 Btn {
                     required property var modelData
-                    Layout.preferredWidth: 68 * Ui.s
-                    Layout.preferredHeight: 68 * Ui.s
+                    Layout.preferredWidth: 52 * Ui.s
+                    Layout.preferredHeight: 52 * Ui.s
                     icon: modelData[1]
-                    iconSize: 34
+                    iconSize: 26
                     onClicked: Ui.post("/steam/" + modelData[0])
                 }
             }
-            Item { Layout.preferredWidth: 6 * Ui.s; visible: root.page === "dash" }
-            Txt { text: Qt.formatTime(clock.now, "hh:mm"); font.pixelSize: 36 * Ui.s; font.weight: Font.Bold }
+            Item { Layout.fillWidth: true; visible: status.parent.slim }
+            Txt { text: Qt.formatTime(clock.now, "hh:mm"); font.pixelSize: (status.parent.slim ? 28 : 36) * Ui.s; font.weight: Font.Bold }
             Txt {
                 readonly property var b: Ui.st.battery
                 visible: b !== undefined && b.percent >= 0
                 text: b ? (b.status === "Charging" ? "⚡ " : "") + b.percent + "%" : ""
-                color: b && b.percent < 15 ? Ui.warn : Ui.text
-                font.pixelSize: 34 * Ui.s
+                color: b && b.percent < 15 ? Ui.warn : (status.parent.slim ? Ui.dim : Ui.text)
+                font.pixelSize: (status.parent.slim ? 26 : 34) * Ui.s
                 font.weight: Font.Bold
             }
         }
@@ -257,7 +263,7 @@ Window {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: status.bottom
-            anchors.topMargin: 18 * Ui.s
+            anchors.topMargin: (status.parent.slim ? 14 : 18) * Ui.s
             anchors.bottom: parent.bottom
 
             HomePage {

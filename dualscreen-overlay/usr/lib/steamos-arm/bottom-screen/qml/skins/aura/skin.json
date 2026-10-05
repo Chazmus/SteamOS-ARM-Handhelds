@@ -1,4 +1,18 @@
-{ "title": "Aura", "about": "Frosted panels, violet, big centre number",
-  "colors": { "bg": "#14151c", "bgTop": "#232536", "card": "#2a2d3b", "cardTop": "#353948", "cardEdge": "#30ffffff",
-              "cardHi": "#3d4256", "button": "#363a4b", "line": "#464b5f", "accent": "#a347ff", "accentSoft": "#33a347ff",
-              "dim": "#aab0c2", "faint": "#7a8094" } }
+{
+ "title": "Aura",
+ "about": "Frosted panels, violet, big centre number",
+ "colors": {
+  "bg": "#16171e",
+  "bgTop": "#26283a",
+  "card": "#2d303e",
+  "cardTop": "#3a3e4f",
+  "cardEdge": "#26ffffff",
+  "cardHi": "#4a4f63",
+  "button": "#3c4054",
+  "line": "#4d5266",
+  "accent": "#a347ff",
+  "accentSoft": "#33a347ff",
+  "dim": "#aab0c2",
+  "faint": "#7a8094"
+ }
+}
