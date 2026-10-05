@@ -261,7 +261,6 @@ build_image() {
   command -v sfdisk >/dev/null || die "sfdisk missing"
   command -v mkfs.vfat >/dev/null || die "mkfs.vfat missing"
   command -v mkfs.ext4 >/dev/null || die "mkfs.ext4 missing"
-  command -v uuidgen >/dev/null || die "uuidgen missing"
   [[ -x "${R}/usr/bin/bash" ]] || die "rootfs not ready"
   [[ -f "${KOUT}/boot/KERNEL" ]] || die "missing ${KOUT}/boot/KERNEL"
 
@@ -283,9 +282,11 @@ build_image() {
   fi
 
   total_mib=$((BOOT_MIB + ROOT_MIB + HOME_MIB + 2))
-  disk_id="$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
-  root_uuid="$(uuidgen)"
-  home_uuid="$(uuidgen)"
+  # Deterministic disk and filesystem UUIDs for predictable partition tables and fstab.
+  # Can be overridden via environment variables DISK_ID, ROOT_UUID, HOME_UUID.
+  disk_id="${DISK_ID:-${DEFAULT_DISK_ID:-53544541}}"
+  root_uuid="${ROOT_UUID:-${DEFAULT_ROOT_UUID:-e8992e59-b131-41b3-a9d0-fa52e1e3b5e4}}"
+  home_uuid="${HOME_UUID:-${DEFAULT_HOME_UUID:-4b2452c9-d2b4-4e78-9588-e0ce26d8ee1c}}"
 
   log "Creating ${IMG} (${total_mib} MiB sparse)"
   log "  p1 BOOT ${BOOT_MIB}M vfat"
@@ -326,9 +327,11 @@ EOF
   log "Formatting filesystems"
   # Fixed FAT serial so the cmdline can find this BOOT by UUID.
   local boot_serial="${disk_id:0:8}"
+  local root_hash_seed="${ROOT_HASH_SEED:-${DEFAULT_ROOT_HASH_SEED:-a1b2c3d4-e5f6-7890-abcd-ef1234567890}}"
+  local home_hash_seed="${HOME_HASH_SEED:-${DEFAULT_HOME_HASH_SEED:-b2c3d4e5-f6a7-8901-bcde-f12345678901}}"
   sudo_run mkfs.vfat -F 32 -n BOOT -i "${boot_serial}" "${boot_dev}"
-  sudo_run mkfs.ext4 -q -F -L root -U "${root_uuid}" -m 1 "${root_dev}"
-  sudo_run mkfs.ext4 -q -F -L home -U "${home_uuid}" -m 0 "${home_dev}"
+  sudo_run mkfs.ext4 -q -F -L root -U "${root_uuid}" -E "hash_seed=${root_hash_seed}" -m 1 "${root_dev}"
+  sudo_run mkfs.ext4 -q -F -L home -U "${home_uuid}" -E "hash_seed=${home_hash_seed}" -m 0 "${home_dev}"
 
   mkdir -p "${MNT}/boot" "${MNT}/root" "${MNT}/home"
   sudo_run mount "${boot_dev}" "${MNT}/boot"
@@ -352,6 +355,8 @@ EOF
     --exclude='/home/*' \
     "${R}/" "${MNT}/root/"
   restore_image_suid "${MNT}/root"
+  # Each new installation must generate its own D-Bus/network identity on first boot.
+  sudo_run truncate -s 0 "${MNT}/root/etc/machine-id" 2>/dev/null || true
 
   log "Writing fstab for 3-partition layout"
   sudo_run tee "${MNT}/root/etc/fstab" >/dev/null <<EOF
@@ -373,6 +378,7 @@ EOF
   log "Syncing and unmounting"
   cleanup_image
   trap - EXIT INT TERM
+
 
   log "================================================================="
   log "SUCCESS: SteamOS ARM for AYN Odin 3 built:"

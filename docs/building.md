@@ -52,9 +52,9 @@ bash external-and-mods/kernel-common/build-gcc15.sh sm8750
 The output kernel, modules, and firmware are staged into `kernel-work/output/<release>/` (or `$WORK/output/<release>/`), with a `current` symlink pointing to the latest build.
 
 ### Building in GitHub Actions CI
-- `.github/workflows/build-kernel.yml` runs inside the official `fedora:43` container on an ARM64 runner (`ubuntu-24.04-arm`).
+- `.github/workflows/build-kernel-sm8750.yml` runs inside the official `fedora:43` container on an ARM64 runner (`ubuntu-24.04-arm`).
 - It produces the `kernel-sm8750` artifact containing `boot/KERNEL`, `modules/`, and firmware.
-- `.github/workflows/build-image.yml` can consume this artifact directly by setting `kernel_source: source`.
+- `.github/workflows/build-image-sm8750.yml` can consume this artifact directly by setting `kernel_source: source`.
 
 ---
 

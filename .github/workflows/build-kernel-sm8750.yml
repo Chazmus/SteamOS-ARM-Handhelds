@@ -1,11 +1,11 @@
-# Build the SM8750 kernel from source with tracefs enabled.
+# Build the SM8750 / Snapdragon 8 Elite kernel from source with tracefs enabled.
 #
 # Produces: kernel-sm8750.tar.gz containing boot/KERNEL, modules/, firmware/,
 #           dtbs/, config, System.map.
 #
 # Requires native aarch64 — the kernel build.sh enforces uname -m == aarch64.
 # The ROCKNIX/distribution checkout is sparse-cloned to save bandwidth.
-name: Build SM8750 Kernel
+name: Build SM8750 (8 Elite) Kernel
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-# Build the Mesa 26.2.3 graphics stack for Adreno 830 (Odin 3 / SM8750).
+# Build the Mesa 26.2.3 graphics stack for Adreno 830 (Odin 3 / SM8750 / Snapdragon 8 Elite).
 #
 # Produces: mesa-sm8750.tar.zst containing 4 slices:
 #   aarch64/  — on-device Turnip Vulkan + Zink OpenGL
@@ -9,7 +9,7 @@
 # The aarch64 slice is built inside the SteamOS rootfs via bwrap, so
 # this workflow must download and extract the rootfs first.
 # Manual dispatch only — Mesa changes are infrequent.
-name: Build Mesa Stack
+name: Build SM8750 (8 Elite) Mesa Stack
 
 on:
   workflow_dispatch:

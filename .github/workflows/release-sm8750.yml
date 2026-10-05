@@ -1,10 +1,10 @@
-# Promote and publish a tested SteamOS Odin 3 image artifact to a GitHub Release.
+# Promote and publish a tested SteamOS Odin 3 (Snapdragon 8 Elite / SM8750) image artifact to a GitHub Release.
 #
-# Decoupled from build-image.yml so images can be downloaded, flashed to hardware,
+# Decoupled from build-image-sm8750.yml so images can be downloaded, flashed to hardware,
 # and verified before being published to the public.
 #
 # Release tag convention: v*8elite* (e.g. v1.3-8elite-beta2)
-name: Publish Odin 3 Release
+name: Release Odin 3 (8 Elite)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
         type: string
       image_run_id:
         description: >-
-          Run ID of the build-image workflow to release (leave blank for latest successful build)
+          Run ID of the build-image-sm8750 workflow to release (leave blank for latest successful build)
         required: false
         type: string
       release_title:
@@ -38,7 +38,7 @@ on:
     branches:
       - 'ci/github-actions-mvp'  # Registers workflow in GitHub Actions index
     paths:
-      - '.github/workflows/release.yml'
+      - '.github/workflows/release-sm8750.yml'
 
 jobs:
   publish-release:
@@ -70,19 +70,20 @@ jobs:
             RUN_ID="${{ inputs.image_run_id }}"
             echo "Using specified image run ID: $RUN_ID"
           else
-            echo "Finding latest successful build-image.yml run..."
+            echo "Finding latest successful build-image-sm8750.yml run..."
             RUN_ID=$(gh run list \
               --repo "${{ github.repository }}" \
-              --workflow=build-image.yml \
+              --workflow=build-image-sm8750.yml \
               --status=success --limit=1 \
               --json databaseId -q '.[0].databaseId')
             echo "Latest successful image run ID: $RUN_ID"
           fi
 
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::No successful build-image.yml run found. Run build-image.yml first."
+            echo "::error::No successful build-image-sm8750.yml run found. Run build-image-sm8750.yml first."
             exit 1
           fi
+
 
           echo "IMAGE_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
 
