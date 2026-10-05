@@ -24,12 +24,27 @@ if [[ -f /usr/lib/steamos/gamescope-env-list ]]; then
   source /usr/lib/steamos/gamescope-env-list && unset "${gamescope_inherit_vars[@]}"
 fi
 ours=(_STEAM_SETENV_MANAGER SteamDeck STEAM_DISPLAY_REFRESH_LIMITS GAMESCOPE_MANGOAPP_SOCKET_DISABLE
-      ENABLE_GAMESCOPE_WSI DISPLAY XDG_SESSION_DESKTOP)
+      ENABLE_GAMESCOPE_WSI XDG_SESSION_DESKTOP)
 systemctl --user unset-environment "${ours[@]}" 2>/dev/null || true
 dbus-update-activation-environment "${ours[@]/%/=}" >/dev/null 2>&1 || true
 unset "${ours[@]}"
 rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gamescope-steam.env"
 export GAMESCOPE_ZENITY_DISABLE=1
+# The cleanup leaves DISPLAY empty, and Steam's Desktop autostart starts
+# before anything sets it again: "Unable to open a connection to X". KWin
+# starts its Xwayland on the first free display, which is :0 once Game
+# Mode's are gone (stale lock files of dead X servers removed first).
+for lock in /tmp/.X[0-9]*-lock; do
+  [[ -f "$lock" ]] || continue
+  pid="$(tr -dc 0-9 <"$lock" 2>/dev/null)"
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    n="${lock#/tmp/.X}"; n="${n%-lock}"
+    rm -f "$lock" "/tmp/.X11-unix/X$n" 2>/dev/null || true
+  fi
+done
+export DISPLAY=:0
+systemctl --user set-environment DISPLAY=:0 2>/dev/null || true
+dbus-update-activation-environment DISPLAY=:0 >/dev/null 2>&1 || true
 
 unset QT_QPA_PLATFORM
 unset GAMESCOPE_WAYLAND_DISPLAY
