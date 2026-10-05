@@ -53,7 +53,9 @@ PROFILES = ("silent", "balanced", "turbo")
 
 # temp °C → pwm 0..255, linearly interpolated
 FAN_CURVES = {
-    "silent":   [(55, 0), (65, 45), (75, 85), (85, 150), (93, 255)],
+    # Silent leans on the chip's headroom (it throttles past ~100 °C): off
+    # to 60, a murmur through the 70s, full only near the top (GitHub #38).
+    "silent":   [(60, 0), (68, 35), (76, 65), (84, 110), (90, 170), (95, 255)],
     "balanced": [(50, 35), (60, 60), (70, 100), (80, 160), (90, 255)],
     "turbo":    [(45, 90), (60, 140), (70, 200), (80, 255)],
 }
@@ -185,6 +187,28 @@ def soc_temp_c() -> float:
     return hottest
 
 
+def curve_temp_c() -> tuple[float, float]:
+    """(what the fan curve follows, the hottest zone), °C. The curve follows
+    the mean of the three hottest CPU/GPU zones: one core alone runs several
+    degrees over the rest and jumps with every burst, which kept the fan
+    hunting and loud. The single hottest still drives the safety rules."""
+    temps = []
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        t = rd(f"{z}/type")
+        if not (t.startswith("cpu") or t.startswith("gpu") or "gpuss" in t):
+            continue
+        try:
+            value = int(rd(f"{z}/temp")) / 1000.0
+        except ValueError:
+            continue
+        if -20 <= value <= 150:
+            temps.append(value)
+    if not temps:
+        raise RuntimeError("no valid CPU/GPU temperature sensor")
+    top = sorted(temps, reverse=True)[:3]
+    return sum(top) / len(top), top[0]
+
+
 def hottest_zone() -> str:
     best, name = -1.0, "?"
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
@@ -255,7 +279,7 @@ class Fan:
             return
         fan = fan or {}
         try:
-            raw = soc_temp_c()
+            follow, raw = curve_temp_c()
         except RuntimeError:
             wr(f"{self.dir}/pwm1", 255)
             self.cur = 255
@@ -297,13 +321,15 @@ class Fan:
         # Smooth short spikes (boot, shader compiles) but react at once to
         # genuinely hot readings.
         if self.smooth is None or raw >= 85:
-            self.smooth = raw
+            self.smooth = max(follow, raw if raw >= 85 else follow)
         else:
-            self.smooth = 0.75 * self.smooth + 0.25 * raw
+            self.smooth = 0.75 * self.smooth + 0.25 * follow
         temp = self.smooth
         want = max(self.min_pwm, curve_pwm(FAN_CURVES[profile], temp))
         if want > self.cur:
-            step = want                          # up: immediately
+            # up: at most 20 a second (a burst no longer makes it surge),
+            # straight there when something is genuinely hot
+            step = want if raw >= 85 or self.cur < 0 else min(want, self.cur + 20)
             self.set_temp = temp
         elif want < self.cur and temp <= self.set_temp - 3:
             step = max(want, self.cur - 15)      # down: once 3 °C below, ramp
