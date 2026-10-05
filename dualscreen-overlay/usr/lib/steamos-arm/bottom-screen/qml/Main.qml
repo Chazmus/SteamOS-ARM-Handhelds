@@ -39,6 +39,7 @@ Window {
     property bool bottomOn: true
     property string rowsKey: ""
     property string shotFile: ""
+    property bool demo: false
 
     Binding { target: Ui; property: "s"; value: Math.min(root.width / 1240, root.height / 1080) }
 
@@ -79,8 +80,26 @@ Window {
         Ui.request("GET", "/state", undefined, function (n) {
             if (!n || n.hidden)
                 return
+            if (root.shotFile !== "" && !(n.sessions && n.sessions.length)) {   // screenshots: a play log
+                var e = Date.now() / 1000
+                n.sessions = [{ appid: 1546970, name: "Grand Theft Auto III", minutes: 47, wh: 5.4, fps: 55, end: e - 2400 },
+                              { appid: 271590, name: "Hollow Knight", minutes: 82, wh: 7.9, fps: 60, end: e - 26000 },
+                              { appid: 0, name: "Dolphin: Metroid Prime", minutes: 35, wh: 4.6, fps: 30, end: e - 95000 }]
+            }
+            if (root.demo) {               // screenshots of a game in progress
+                var t = Date.now() / 1000
+                n.fps = Math.round(58 + 3 * Math.sin(t / 3))
+                n.game = { appid: 1546970, name: "Grand Theft Auto III", remembered: true }
+                n.fg = { multiplier: 2, flow: 0.5, profile: true }
+                n.power_w = -(7.2 + 0.8 * Math.sin(t / 5))
+                n.cpu = { ghz: 2.4, load: 46 }; n.gpu = { mhz: 680, max_mhz: 1050 }
+                n.temps = { cpu: 63, gpu: 58, hot: 64 }
+                n.refresh = { rates: [60, 90, 120, 144], choice: 0 }
+            }
             Ui.st = n
             dashPage.pushFps(n.fps)
+            dashPage.pushStats(n)
+            if (root.demo && dashPage.energyWh < 1) { dashPage.sessionStart = Date.now() - 47 * 60000; dashPage.energyWh = 5.4 }
         })
     }
     Connections {
@@ -133,8 +152,13 @@ Window {
             root.height = parseInt(wh[1])
             if (args[si + 3] && args[si + 3].indexOf("/") < 0)
                 page = args[si + 3]
-            for (var i = 0; i < 58; i++)     // a minute of history for the picture
+            if (page === "dashplay") { page = "dash"; demo = true }
+            if (page === "homeplay") { page = "home"; demo = true }
+            for (var i = 0; i < 58; i++) {   // a minute of history for the picture
                 dashPage.pushFps(Math.round(55 + 5 * Math.sin(i / 4) - (i % 17 === 0 ? 14 : 0)))
+                dashPage.pushStats({ cpu: { load: 40 + 15 * Math.sin(i / 6) }, gpu: { mhz: 600 + 120 * Math.sin(i / 5), max_mhz: 1050 },
+                                     power_w: -(6.5 + 1.5 * Math.sin(i / 7)), temps: { hot: 58 + i / 10 } }, true)
+            }
             shotTimer.start()
         }
         Ui.loadApi(args[args.length - 1], function () {

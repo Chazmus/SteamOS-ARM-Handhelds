@@ -121,12 +121,72 @@ Item {
         Item { Layout.preferredWidth: 300 * Ui.s }
     }
 
+    // --------------------------------------------------- game strip --
+    // While a game runs: the things you reach for mid-game, one tap each.
+    Rectangle {
+        id: strip
+        readonly property bool on: !!home.game.name && !Ui.st.desktop
+        readonly property var fg: Ui.st.fg
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.leftMargin: 36 * Ui.s
+        anchors.rightMargin: 36 * Ui.s
+        anchors.topMargin: on ? 10 * Ui.s : 0
+        height: on ? 86 * Ui.s : 0
+        visible: on
+        radius: height / 2
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: "#1f3a5c" }
+            GradientStop { position: 1; color: Ui.card }
+        }
+        border.color: Ui.cardEdge
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 34 * Ui.s
+            anchors.rightMargin: 14 * Ui.s
+            spacing: 12 * Ui.s
+            Column {
+                Layout.fillWidth: true
+                Txt { text: "NOW PLAYING"; color: Ui.accent; font.pixelSize: 17 * Ui.s; font.weight: Font.Bold; font.letterSpacing: 2 * Ui.s }
+                Txt {
+                    width: parent.width
+                    text: home.game.name || ""
+                    elide: Text.ElideRight
+                    font.pixelSize: 27 * Ui.s
+                    font.weight: Font.Bold
+                }
+            }
+            component Act: Btn {
+                Layout.preferredHeight: 66 * Ui.s
+                Layout.preferredWidth: 140 * Ui.s
+                fontSize: 22
+            }
+            Act { label: "Notes"; onClicked: home.open("notes") }
+            Act {
+                visible: home.web.some(function (w) { return w.id === "web:guide" })
+                label: "Guide"
+                onClicked: Ui.post("/launch", { id: "web:guide" })
+            }
+            Act { label: "Capture"; onClicked: Ui.post("/steam/screenshot") }
+            // Frame generation steps Off, 2x, 3x, 4x and back.
+            Act {
+                visible: !!strip.fg
+                Layout.preferredWidth: 190 * Ui.s
+                active: !!strip.fg && strip.fg.multiplier > 1
+                label: strip.fg ? "Frame gen " + (strip.fg.multiplier > 1 ? strip.fg.multiplier + "×" : "off") : ""
+                onClicked: Ui.post("/fg", { multiplier: strip.fg.multiplier >= 4 ? 1 : (strip.fg.multiplier < 2 ? 2 : strip.fg.multiplier + 1) })
+            }
+        }
+    }
+
     // ------------------------------------------------------------ tiles --
     ListView {
         id: pager
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: header.bottom
+        anchors.top: strip.bottom
         anchors.topMargin: 10 * Ui.s
         anchors.bottom: dots.top
         anchors.bottomMargin: 18 * Ui.s
@@ -143,6 +203,7 @@ Item {
             height: pager.height
             Grid {
                 anchors.centerIn: parent
+                scale: strip.on ? 0.9 : 1          // room for the game strip
                 columns: 4
                 columnSpacing: 34 * Ui.s
                 rowSpacing: 16 * Ui.s

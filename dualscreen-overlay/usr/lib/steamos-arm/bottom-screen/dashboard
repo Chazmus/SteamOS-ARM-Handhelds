@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     "momentum": True,           # two-finger scrolls keep gliding after a flick
     "webapps": [],              # your own: [{"id", "name", "url"}]
     "pin_after": [],            # hub apps to pin on the home screen once installed
-    "skin": "glance",           # the dashboard's stats look (skins/, or the user's own)
+    "skin": "pulse",            # the dashboard's stats look (skins/, or the user's own)
     "bricks_best": 0,           # the brick game's best score
     "per_game": {},             # appid -> {profile, fan_mode, fan_fixed, refresh}
 }
@@ -147,6 +147,9 @@ def battery() -> dict:
             else:
                 wh = int(rd(f"{b}/charge_now")) / 1e6 * uv / 1e6
             w = uv * ua / 1e12
+            full = rd(f"{b}/energy_full") or rd(f"{b}/charge_full")
+            if full:
+                out["energy_full_wh"] = round(int(full) / 1e6 * (1 if rd(f"{b}/energy_full") else uv / 1e6), 1)
             if out["status"] == "Discharging" and w > 0.3:
                 out["hours_left"] = round(wh / w, 2)
         except ValueError:
@@ -528,6 +531,88 @@ def web_target(web_id: str, cfg: dict) -> tuple[str, str] | None:
 
 # ----------------------------------------------------------------- notes ----
 NOTES_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "steamos-arm" / "notes"
+
+
+# ------------------------------------------------------- frame generation --
+# lsfg-vk's per-game profiles (decky-lsfg-vk writes them, keyed by app id).
+# lsfg-vk rereads the file while the game runs, so a change shows at once.
+LSFG_CONF = Path.home() / ".config/lsfg-vk/conf.toml"
+FG_DEFAULTS = {"pacing_mode": '"vsync"', "flow_scale": "0.5", "performance_mode": "true",
+               "override_present_mode": "true", "preserve_swapchain_image_count": "false"}
+
+
+def _fg_blocks(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, block text) of every [[profile]] table."""
+    starts = [m.start() for m in re.finditer(r"(?m)^\[\[profile\]\]\s*$", text)]
+    return [(a, b, text[a:b]) for a, b in zip(starts, starts[1:] + [len(text)])]
+
+
+def fg_state(appid: int) -> dict | None:
+    if not appid or not LSFG_CONF.is_file():
+        return None
+    try:
+        text = LSFG_CONF.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for _a, _b, block in _fg_blocks(text):
+        if re.search(r'active_in\s*=\s*\[[^\]]*"%d"' % appid, block):
+            mult = re.search(r"(?m)^multiplier\s*=\s*(\d+)", block)
+            flow = re.search(r"(?m)^flow_scale\s*=\s*([\d.]+)", block)
+            return {"multiplier": int(mult.group(1)) if mult else 1,
+                    "flow": float(flow.group(1)) if flow else 1.0, "profile": True}
+    return {"multiplier": 1, "flow": float(FG_DEFAULTS["flow_scale"]), "profile": False}
+
+
+def fg_set(appid: int, name: str, multiplier: int) -> bool:
+    """Set the running game's frame generation (1 = off), making its profile
+    with the Adreno defaults (performance mode, flow 0.5) if it has none."""
+    if not appid or not LSFG_CONF.is_file() or not 1 <= multiplier <= 4:
+        return False
+    text = LSFG_CONF.read_text(encoding="utf-8")
+    for a, b, block in _fg_blocks(text):
+        if re.search(r'active_in\s*=\s*\[[^\]]*"%d"' % appid, block):
+            if re.search(r"(?m)^multiplier\s*=", block):
+                block = re.sub(r"(?m)^multiplier\s*=\s*\d+", f"multiplier = {multiplier}", block)
+            else:
+                block = block.rstrip("\n") + f"\nmultiplier = {multiplier}\n\n"
+            text = text[:a] + block + text[b:]
+            break
+    else:
+        title = (name or str(appid)).replace("\\", "").replace('"', "")
+        text = text.rstrip("\n") + "\n\n[[profile]]\n" + f'name = "{title}"\nactive_in = [ "{appid}" ]\n' \
+            + f"multiplier = {multiplier}\n" + "".join(f"{k} = {v}\n" for k, v in FG_DEFAULTS.items())
+    tmp = LSFG_CONF.with_name(".conf.toml.dash")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, LSFG_CONF)
+    return True
+
+
+# ------------------------------------------------------------- play log ----
+# A line per game session (the UI sends it when the game closes): what ran,
+# for how long, the energy it took and its average frame rate.
+SESSIONS = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "steamos-arm" / "sessions.json"
+
+
+def sessions_get(count: int = 20) -> list:
+    try:
+        return json.loads(SESSIONS.read_text())[-count:][::-1]
+    except (OSError, ValueError):
+        return []
+
+
+def session_add(b: dict) -> bool:
+    try:
+        entry = {"appid": int(b["appid"]), "name": str(b.get("name", ""))[:80],
+                 "end": int(time.time()), "minutes": max(0, int(b.get("minutes", 0))),
+                 "wh": round(float(b.get("wh", 0)), 2), "fps": int(b.get("fps") or 0)}
+    except (KeyError, TypeError, ValueError):
+        return False
+    log = sessions_get(200)[::-1] + [entry]
+    SESSIONS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SESSIONS.with_name(".sessions.json.tmp")
+    tmp.write_text(json.dumps(log[-200:]))
+    os.replace(tmp, SESSIONS)
+    return True
 
 
 def notes_get(appid: int) -> str:
@@ -2069,8 +2154,10 @@ class Handler(BaseHTTPRequestHandler):
                 "nav": rows["nav"],
                 "config": {**{k: cfg.get(k, v) for k, v in DEFAULT_CONFIG.items()
                               if k not in ("pinned", "per_game", "pin_after")},
-                           "skin_url": skin_url(cfg.get("skin", "glance"))},
+                           "skin_url": skin_url(cfg.get("skin", "pulse"))},
                 "game": GAMES.state(cfg),
+                "fg": fg_state(GAMES.state(cfg)["appid"]),
+                "sessions": sessions_get(4),
                 "toggles": toggles(),
                 "desktop": DESKTOP,
                 "media": media(),
@@ -2129,6 +2216,11 @@ class Handler(BaseHTTPRequestHandler):
                 ok = set_brightness(str(b.get("id", "")), int(b.get("percent", 50)))
         elif path == ["rgb"]:
             ok = set_rgb(b)
+        elif path == ["session"]:
+            ok = session_add(b)
+        elif path == ["fg"]:
+            g = GAMES.state(load_config())
+            ok = fg_set(g["appid"], g["name"], int(b.get("multiplier", 1)))
         elif path == ["remote", "move"]:
             ok = REMOTE.move(int(b.get("dx", 0)), int(b.get("dy", 0)))
         elif path == ["remote", "wheel"]:
