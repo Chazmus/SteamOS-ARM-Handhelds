@@ -320,16 +320,20 @@ class Fan:
             profile = "turbo"
         # Smooth short spikes (boot, shader compiles) but react at once to
         # genuinely hot readings.
-        if self.smooth is None or raw >= 85:
-            self.smooth = max(follow, raw if raw >= 85 else follow)
+        # Genuinely hot: the chip as a whole at 85 C, or any one sensor at
+        # 95 C. A single hotspot touching 85 for a moment while the rest sat
+        # near 60 used to throw the fan from 30 to 100 % (RP6, Silent).
+        hot = follow >= 85 or raw >= 95
+        if self.smooth is None or hot:
+            self.smooth = follow
         else:
             self.smooth = 0.75 * self.smooth + 0.25 * follow
         temp = self.smooth
         want = max(self.min_pwm, curve_pwm(FAN_CURVES[profile], temp))
         if want > self.cur:
             # up: at most 20 a second (a burst no longer makes it surge),
-            # straight there when something is genuinely hot
-            step = want if raw >= 85 or self.cur < 0 else min(want, self.cur + 20)
+            # straight there when the chip is genuinely hot
+            step = want if hot or self.cur < 0 else min(want, self.cur + 20)
             self.set_temp = temp
         elif want < self.cur and temp <= self.set_temp - 3:
             step = max(want, self.cur - 15)      # down: once 3 °C below, ramp
