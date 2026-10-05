@@ -328,6 +328,7 @@ EOF
     sed "s/@ROOT_UUID@/${root_uuid}/" "${MOD}/kernel-sm8750/post-flash.sh" \
       | sudo_run tee "${MNT}/boot/post-flash.sh" "${MNT}/boot/boot/post-flash.sh" >/dev/null
   fi
+  sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-rocknix-abl.sh" "${MNT}/boot" sm8750
 
   log "Writing p2 root"
   sudo_run rsync -aHAX --numeric-ids \

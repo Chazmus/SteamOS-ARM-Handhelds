@@ -502,7 +502,9 @@ ABL reads KERNEL from this FAT partition.
 Do not rename KERNEL. After flashing to a bigger card, home grows on first boot.
 root=PARTUUID=${disk_id}-02
 ABL (ROCKNIX ABL for ${SOC^^}): Set device model -> your handheld.
+To install or update the ABL from Android, see rocknix_abl/README.txt.
 EOF
+  sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-rocknix-abl.sh" "${MNT}/boot" "${SOC}"
 
   sync
   cleanup_image
