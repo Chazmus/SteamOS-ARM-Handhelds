@@ -136,6 +136,85 @@ def verify_payload(payload, manifest):
     if not (payload / 'boot/KERNEL').is_file(): raise ValueError('missing KERNEL')
 
 
+# ---------------------------------------------------------------- format 2 ---
+# A format 2 package is signed and content-addressed:
+#   manifest.json  every managed path of the release it installs:
+#                    "f": [mode, uid, gid, size, sha256, {xattr: hex}]
+#                    "l": [target]           "d": [mode, uid, gid]
+#                  plus "blobs": the sha256s whose contents ship in blobs/.
+#   manifest.sig   Ed25519 signature of manifest.json (openssl pkeyutl -rawin)
+#   blobs/aa/<sha256>
+# A full package ships every blob, a delta only those none of its "from"
+# releases had. The device works out what to change by comparing the
+# manifest with its own files, so only changed files are backed up and
+# written; the install inventory recorded at build time spares hashing a
+# file whose size and mtime it still matches.
+FORMAT2 = 2
+MANAGED = ('root/usr', 'root/opt', 'root/etc', 'root/' + UPPER,
+           *('home/steamos/' + rel for rel in HOME_DIRS))
+INVENTORY = 'usr/share/steamos-arm/update/installed.json'
+SIGNING_KEY = Path('/usr/share/steamos-arm/update/signing.pub')
+
+
+def entry_for(path):
+    st = os.lstat(path)
+    import stat as S
+    if S.S_ISLNK(st.st_mode): return {'l': [os.readlink(path)]}
+    if S.S_ISDIR(st.st_mode): return {'d': [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid]}
+    # overlayfs whiteouts in the /etc upper layer: a deleted file
+    if S.S_ISCHR(st.st_mode) and st.st_rdev == 0: return {'w': []}
+    if not S.S_ISREG(st.st_mode): raise ValueError(f'special file in managed tree: {path}')
+    xattrs = {}
+    try:
+        for name in os.listxattr(path, follow_symlinks=False):
+            if name.startswith(('security.capability', 'user.')):
+                xattrs[name] = os.getxattr(path, name, follow_symlinks=False).hex()
+    except OSError:
+        pass
+    return {'f': [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_size, digest(path), xattrs]}
+
+
+def walk_managed(base_of, skip_etc=False):
+    """{managed path: entry}. base_of maps a managed prefix to a real directory."""
+    out = {}
+    for prefix in MANAGED:
+        base = base_of(prefix)
+        if base is None or not base.exists(): continue
+        for dirpath, dirs, files in os.walk(base):
+            dirs.sort()
+            rel = os.path.relpath(dirpath, base)
+            key = prefix if rel == '.' else f'{prefix}/{rel}'
+            if skip_etc and preserved(key): dirs[:] = []; continue
+            out[key] = entry_for(dirpath)
+            for name in sorted(files) + [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]:
+                k = f'{key}/{name}'
+                if skip_etc and preserved(k): continue
+                out[k] = entry_for(os.path.join(dirpath, name))
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]
+    return out
+
+
+def preserved(key):
+    """Identity, accounts and credentials under etc are never managed."""
+    for prefix in ('root/etc/', 'root/' + UPPER + '/'):
+        if key.startswith(prefix):
+            rel = key[len(prefix):]
+            return any(rel == p or rel.startswith(p + '/') for p in PRESERVE)
+    return False
+
+
+def sign_manifest(manifest_path, key_path, sig_path):
+    run('openssl', 'pkeyutl', '-sign', '-inkey', key_path, '-rawin', '-in', manifest_path, '-out', sig_path)
+
+
+def verify_signature(manifest_path, sig_path, pub=SIGNING_KEY):
+    if not pub.is_file(): raise ValueError('no update signing key on this system')
+    r = subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', str(pub), '-rawin',
+                        '-in', str(manifest_path), '-sigfile', str(sig_path)], capture_output=True, text=True)
+    if r.returncode != 0 or 'Signature Verified Successfully' not in r.stdout:
+        raise ValueError('update signature does not verify: not an official release')
+
+
 BOOTIMG = Path('/usr/share/easy-ufs-install/ufs-bootimg.py')
 
 
@@ -192,6 +271,15 @@ def retarget_kernel(src, dst, rootarg, helper=BOOTIMG):
     dst.write_bytes(image.build(module.retarget(image.cmdline, rootarg)))
 
 
+def package_format(package):
+    """2 for a signed package (manifest.sig among the first members), else 1."""
+    with tarfile.open(package, 'r:gz') as tf:
+        for i, m in enumerate(tf):
+            if m.name.removeprefix('./') == 'manifest.sig': return FORMAT2
+            if i > 3: break
+    return FORMAT
+
+
 def stage(args):
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
     model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
@@ -200,8 +288,8 @@ def stage(args):
     import pwd
     if pwd.getpwnam('steamos').pw_uid != 1000: raise ValueError('unsupported SteamOS account layout')
     source_package = Path(args.package).resolve()
-    expected = args.sha256.lower()
-    if not re.fullmatch('[0-9a-f]{64}', expected): raise ValueError('invalid expected SHA256')
+    expected = (args.sha256 or '').lower()
+    if expected and not re.fullmatch('[0-9a-f]{64}', expected): raise ValueError('invalid expected SHA256')
     root_info, home_info, boot_info = [mount_info(x) for x in ('/', '/home', '/boot')]
     if root_info['fstype'] != 'ext4' or home_info['fstype'] != 'ext4' or boot_info['fstype'] != 'vfat':
         raise ValueError('requires separate ext4 root/home and FAT boot filesystems')
@@ -218,7 +306,12 @@ def stage(args):
         # Validate and extract only a private, root-owned copy to avoid input races.
         package = work / 'package.tar.gz'
         shutil.copyfile(source_package, package); os.chmod(package, 0o600)
-        if digest(package) != expected: raise ValueError('package SHA256 mismatch')
+        if expected and digest(package) != expected: raise ValueError('package SHA256 mismatch')
+        if package_format(package) == FORMAT2:
+            if mount_info('/var')['source'] != root_info['source']:
+                raise ValueError('a separate /var partition is not supported')
+            return stage2(work, package, root_info, home_info, boot_info, model, pending)
+        if not expected: raise ValueError('--sha256 is required for this package')
         manifest, size = validate_archive(package)
         # One package per SoC: its KERNEL only boots the models it lists.
         if model not in manifest['devices']:
@@ -334,6 +427,278 @@ def apply(root, boot, home, work, manifest):
     install_kernel(work / 'next-KERNEL', boot)
 
 
+# ------------------------------------------------------- format 2: device ---
+def real_path(key, root, home, boot=None):
+    if key == 'boot/KERNEL': return (boot or Path('/boot')) / 'KERNEL'
+    if key.startswith('root/'): return root / key[5:]
+    if key.startswith('home/'): return home / key[5:]
+    raise ValueError(f'unmanaged path: {key}')
+
+
+def recorded(root):
+    """The install inventory: key -> [size, mtime_ns, sha256] as last written."""
+    try: return json.loads((root / INVENTORY).read_text()).get('files', {})
+    except (OSError, ValueError): return {}
+
+
+def record_inventory(root, home, target, boot=None):
+    files = {}
+    for key, e in target.items():
+        if 'f' in e and key != 'boot/KERNEL':
+            try: st = os.lstat(real_path(key, root, home))
+            except OSError: continue
+            files[key] = [st.st_size, st.st_mtime_ns, e['f'][4]]
+    write_json(root / INVENTORY, {'format': FORMAT2, 'files': files})
+
+
+def make_plan(target, root, home, boot):
+    """What turns this system into `target`, touching only what differs."""
+    import stat as S
+    rec = recorded(root)
+    plan = {'mkdir': [], 'write': [], 'link': [], 'whiteout': [], 'meta': [], 'delete': []}
+    live = set()
+    for prefix in MANAGED:
+        base = real_path(prefix, root, home)
+        if not base.exists(): continue
+        for dirpath, dirs, files in os.walk(base):
+            rel = os.path.relpath(dirpath, base)
+            key = prefix if rel == '.' else f'{prefix}/{rel}'
+            if preserved(key): dirs[:] = []; continue
+            live.add(key)
+            for name in files + [d for d in dirs if os.path.islink(os.path.join(dirpath, d))]:
+                if not preserved(f'{key}/{name}'): live.add(f'{key}/{name}')
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(dirpath, d))]
+    for key in sorted(target):
+        e = target[key]
+        p = real_path(key, root, home, boot)
+        try: st = os.lstat(p)
+        except FileNotFoundError: st = None
+        if 'd' in e:
+            if st is None or not S.S_ISDIR(st.st_mode): plan['mkdir'].append(key)
+            elif [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid] != e['d']: plan['meta'].append(key)
+        elif 'l' in e:
+            if st is None or not S.S_ISLNK(st.st_mode) or os.readlink(p) != e['l'][0]: plan['link'].append(key)
+        elif 'w' in e:
+            if st is None or not (S.S_ISCHR(st.st_mode) and st.st_rdev == 0): plan['whiteout'].append(key)
+        else:
+            mode, uid, gid, size, sha, _x = e['f']
+            same = False
+            if st is not None and S.S_ISREG(st.st_mode) and st.st_size == size:
+                r = rec.get(key)
+                same = (r is not None and r[0] == size and r[1] == st.st_mtime_ns and r[2] == sha) or digest(p) == sha
+            if not same: plan['write'].append(key)
+            elif key != 'boot/KERNEL' and entry_for(p)['f'][:3] != [mode, uid, gid]: plan['meta'].append(key)
+            elif key != 'boot/KERNEL' and entry_for(p)['f'][5] != _x: plan['meta'].append(key)
+    live.discard('root/' + INVENTORY)                 # rewritten after every update
+    # Deleted: longest first, so a directory goes after what was in it.
+    plan['delete'] = sorted(live - set(target), key=lambda k: (-k.count('/'), k))
+    return plan
+
+
+def plan_keys(plan):
+    return [k for kind in ('mkdir', 'write', 'link', 'whiteout', 'meta', 'delete') for k in plan[kind]]
+
+
+def backup_plan(plan, root, home, work):
+    """Copy what the plan will change, nothing else; record what didn't exist."""
+    import stat as S
+    index = {}
+    for key in plan_keys(plan):
+        if key == 'boot/KERNEL': continue
+        p = real_path(key, root, home)
+        try: st = os.lstat(p)
+        except FileNotFoundError: index[key] = None; continue
+        dst = work / 'backup' / key
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if S.S_ISREG(st.st_mode):
+            shutil.copy2(p, dst, follow_symlinks=False)
+            os.chown(dst, st.st_uid, st.st_gid, follow_symlinks=False)
+            index[key] = entry_for(p)
+        elif S.S_ISLNK(st.st_mode) or S.S_ISDIR(st.st_mode) or S.S_ISCHR(st.st_mode):
+            index[key] = entry_for(p)
+        if S.S_ISDIR(st.st_mode) and key in plan['delete']:
+            # A deleted directory's contents are in the plan too (walked above).
+            pass
+    write_json(work / 'backup-index.json', index)
+    os.sync()
+
+
+def put_file(src, dst, e):
+    mode, uid, gid, _size, _sha, xattrs = e['f']
+    tmp = dst.with_name('.sau-' + dst.name)
+    if tmp.exists() or tmp.is_symlink(): tmp.unlink()
+    shutil.copyfile(src, tmp)
+    os.chown(tmp, uid, gid); os.chmod(tmp, mode)          # chown clears setuid: chmod after
+    for name, val in xattrs.items(): os.setxattr(tmp, name, bytes.fromhex(val))
+    with open(tmp, 'rb') as f: os.fsync(f.fileno())
+    if dst.is_dir() and not dst.is_symlink(): shutil.rmtree(dst)
+    os.replace(tmp, dst)
+
+
+def put_meta(p, e):
+    if 'd' in e:
+        mode, uid, gid = e['d']; os.chown(p, uid, gid); os.chmod(p, mode)
+    elif 'f' in e:
+        mode, uid, gid, _s, _h, xattrs = e['f']
+        os.chown(p, uid, gid); os.chmod(p, mode)
+        have = {n for n in os.listxattr(p) if n.startswith(('security.capability', 'user.'))}
+        for name in have - set(xattrs): os.removexattr(p, name)
+        for name, val in xattrs.items(): os.setxattr(p, name, bytes.fromhex(val))
+
+
+def put_link(p, target):
+    tmp = p.with_name('.sau-' + p.name)
+    if tmp.exists() or tmp.is_symlink(): tmp.unlink()
+    os.symlink(target, tmp)
+    if p.is_dir() and not p.is_symlink(): shutil.rmtree(p)
+    os.replace(tmp, p)
+
+
+def remove_path(p):
+    if p.is_symlink() or not p.is_dir():
+        if p.exists() or p.is_symlink(): p.unlink()
+    else:
+        shutil.rmtree(p)
+
+
+class Progress:
+    """Restart-step progress on the console and in the kernel log."""
+    def __init__(self, total):
+        self.total, self.done, self.shown = max(total, 1), 0, -1
+
+    def step(self, n=1):
+        self.done += n
+        pct = self.done * 100 // self.total
+        if pct != self.shown:
+            self.shown = pct
+            line = f'Installing update: {pct}%'
+            print(line, flush=True)
+            for dev in ('/dev/kmsg', '/dev/console'):
+                try:
+                    with open(dev, 'w') as f: f.write(('\r' if dev == '/dev/console' else '') + line + ('\n' if dev == '/dev/kmsg' else ''))
+                except OSError: pass
+
+
+def apply2(root, boot, home, work):
+    plan = json.loads((work / 'plan.json').read_text())
+    target = json.loads((work / 'target.json').read_text())
+    blobs = work / 'blobs'
+    prog = Progress(len(plan_keys(plan)))
+    for key in sorted(plan['mkdir'], key=lambda k: k.count('/')):
+        p = real_path(key, root, home)
+        if (p.exists() or p.is_symlink()) and (p.is_symlink() or not p.is_dir()): p.unlink()
+        p.mkdir(exist_ok=True); put_meta(p, target[key]); prog.step()
+    for key in plan['write']:
+        if key == 'boot/KERNEL': prog.step(); continue
+        e = target[key]
+        put_file(blobs / e['f'][4][:2] / e['f'][4], real_path(key, root, home), e); prog.step()
+    for key in plan['link']:
+        put_link(real_path(key, root, home), target[key]['l'][0]); prog.step()
+    for key in plan['whiteout']:
+        p = real_path(key, root, home)
+        if p.exists() or p.is_symlink(): remove_path(p)
+        import stat as S
+        os.mknod(p, S.S_IFCHR | 0o000, 0); prog.step()
+    for key in plan['meta']:
+        put_meta(real_path(key, root, home), target[key]); prog.step()
+    for key in plan['delete']:
+        remove_path(real_path(key, root, home)); prog.step()
+    for key in plan['write']:
+        if key == 'boot/KERNEL': continue
+        if digest(real_path(key, root, home)) != target[key]['f'][4]:
+            raise ValueError(f'installed checksum mismatch: {key}')
+    record_inventory(root, home, target)
+    os.sync()
+    if 'boot/KERNEL' in plan['write']: install_kernel(work / 'next-KERNEL', boot)
+
+
+def restore2(root, boot, home, work):
+    plan = json.loads((work / 'plan.json').read_text())
+    index = json.loads((work / 'backup-index.json').read_text())
+    keys = [k for k in plan_keys(plan) if k != 'boot/KERNEL']
+    # Remove what the update created, then put back what it changed, parents first.
+    for key in sorted(keys, key=lambda k: -k.count('/')):
+        if index.get(key) is None:
+            p = real_path(key, root, home)
+            if p.exists() or p.is_symlink(): remove_path(p)
+    for key in sorted(keys, key=lambda k: k.count('/')):
+        e = index.get(key)
+        if e is None: continue
+        p = real_path(key, root, home)
+        if 'd' in e:
+            if p.is_symlink() or (p.exists() and not p.is_dir()): p.unlink()
+            p.mkdir(parents=True, exist_ok=True); put_meta(p, e)
+        elif 'l' in e: put_link(p, e['l'][0])
+        elif 'w' in e:
+            if p.exists() or p.is_symlink(): remove_path(p)
+            import stat as S
+            os.mknod(p, S.S_IFCHR | 0o000, 0)
+        else: put_file(work / 'backup' / key, p, e)
+    os.sync()
+    install_kernel(work / 'previous-KERNEL', boot)
+
+
+def stage2(work, package, root_info, home_info, boot_info, model, pending):
+    """Stage a signed format 2 package: plan against this system, keep only
+    the contents the plan needs, back up only what it will change."""
+    run('tar', '-xzf', package, '-C', work, 'manifest.json', 'manifest.sig')
+    verify_signature(work / 'manifest.json', work / 'manifest.sig')
+    manifest = json.loads((work / 'manifest.json').read_text())
+    if manifest.get('format') != FORMAT2 or manifest.get('architecture') != 'aarch64':
+        raise ValueError('unsupported update format or architecture')
+    if model not in manifest.get('devices', []):
+        raise ValueError(f'this update is for {", ".join(manifest["devices"])}, not {model}')
+    target = manifest['inventory']
+    for key in target:
+        p = PurePosixPath(key)
+        if p.is_absolute() or '..' in p.parts or not (key == 'boot/KERNEL' or any(
+                key == m or key.startswith(m + '/') for m in MANAGED)) or preserved(key):
+            raise ValueError(f'unsafe path in update: {key}')
+    # The root as stored on disk: /etc on SteamOS is an overlay mounted over it.
+    view = work / 'rootview'; view.mkdir()
+    run('mount', '--bind', '/', view)
+    try:
+        plan = make_plan(target, view, Path('/home'), Path('/boot'))
+        need = {target[k]['f'][4] for k in plan['write']}
+        missing = need - set(manifest['blobs'])
+        if missing:
+            raise ValueError('this system differs from the releases this update was made for '
+                             f'({", ".join(manifest.get("from") or ["?"])}): install the full update')
+        listing = work / 'blobs.list'
+        listing.write_text(''.join(f'blobs/{h[:2]}/{h}\n' for h in sorted(need)))
+        if need: run('tar', '-xzf', package, '-C', work, '-T', listing)
+        for h in need:
+            if digest(work / 'blobs' / h[:2] / h) != h: raise ValueError(f'damaged update content {h}')
+        add = sum(target[k]['f'][3] for k in plan['write'] if k != 'boot/KERNEL')
+        if shutil.disk_usage('/').free < add + (256 << 20): raise ValueError('not enough space on the system partition')
+        write_json(work / 'plan.json', plan)
+        write_json(work / 'target.json', target)
+        backup_plan(plan, view, Path('/home'), work)
+    finally:
+        run('umount', view)
+        view.rmdir()
+    (work / 'package.tar.gz').unlink()
+    shutil.copy2('/boot/KERNEL', work / 'previous-KERNEL')
+    helper = BOOTIMG
+    if 'boot/KERNEL' in plan['write']:
+        h = target['boot/KERNEL']['f'][4]
+        rootarg = next((x[5:] for x in Path('/proc/cmdline').read_text().split() if x.startswith('root=')), '')
+        if not rootarg: raise ValueError('cannot identify the boot root argument')
+        retarget_kernel(work / 'blobs' / h[:2] / h, work / 'next-KERNEL', rootarg, helper)
+    n = len(plan_keys(plan))
+    info = {'id': work.name, 'format': FORMAT2, 'version': manifest['version'],
+            'root_uuid': root_info['uuid'], 'home_uuid': home_info['uuid'],
+            'boot_uuid': boot_info['uuid'], 'changes': n}
+    write_json(work / 'transaction.json', info)
+    recovery_runtime(work / 'recovery', helper)
+    state(work, 'backed-up')
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_text(work.name + '\n'); os.chmod(pending, 0o600)
+    os.sync()
+    if (work / 'next-KERNEL').exists(): install_kernel(work / 'next-KERNEL', Path('/boot'))
+    print(f'Update {manifest["version"]} staged: {n} changes. Restart to install.')
+
+
 def recover(args):
     if os.geteuid() != 0: raise ValueError('recovery needs administrator access')
     root, boot, home, work = map(Path, (args.root, args.boot, args.home, args.work))
@@ -348,6 +713,8 @@ def recover(args):
     if not pending.exists() or pending.read_text().strip() != record['id']:
         raise ValueError('transaction does not match this root filesystem')
     current = json.loads((work / 'state.json').read_text())['state']
+    if record.get('format') == FORMAT2:
+        return recover2(root, boot, home, work, pending, current)
     if current == 'committed':
         pending.unlink(); os.sync(); return 0
     if current == 'rolled-back':
@@ -381,10 +748,35 @@ def recover(args):
     raise ValueError(f'cannot recover state: {current}')
 
 
+def recover2(root, boot, home, work, pending, current):
+    if current == 'committed':
+        pending.unlink(); os.sync(); return 0
+    if current in ('rolled-back', 'aborted'):
+        pending.unlink(); os.sync(); return 10
+    if current == 'backed-up':
+        try:
+            state(work, 'applying')
+            apply2(root, boot, home, work)
+            state(work, 'committed')
+            pending.unlink(); os.sync(); return 0
+        except Exception as e:
+            print('RECOVERY ERROR:', e, flush=True)
+            (work / 'failure.txt').write_text(str(e) + '\n')
+            current = 'applying'
+    if current in ('applying', 'rolling-back', 'rollback-requested'):
+        state(work, 'rolling-back')
+        restore2(root, boot, home, work)
+        state(work, 'rolled-back')
+        pending.unlink(); os.sync(); return 10
+    raise ValueError(f'cannot recover state: {current}')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('stage'); p.add_argument('package'); p.add_argument('--sha256', required=True)
+    p = sub.add_parser('stage'); p.add_argument('package'); p.add_argument('--sha256')
+    p = sub.add_parser('record-inventory', help='write the install inventory of a built rootfs')
+    p.add_argument('--root', required=True)
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
@@ -394,6 +786,12 @@ def main():
             with open('/run/konkr-update.lock', 'w') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); stage(a)
         elif a.command == 'recover': return recover(a)
+        elif a.command == 'record-inventory':
+            root = Path(a.root)
+            def base_of(prefix): return root / prefix.split('/', 1)[1] if prefix.startswith('root/') else root / prefix
+            inv = walk_managed(base_of, skip_etc=True); inv.pop('root/' + INVENTORY, None)
+            record_inventory(root, root / 'home', inv)
+            print(f'{root / INVENTORY}: {sum(1 for e in inv.values() if "f" in e)} files')
         else:
             m, size = validate_archive(a.package); print(json.dumps({'version': m['version'], 'bytes': size}, indent=2))
     except Exception as e:
