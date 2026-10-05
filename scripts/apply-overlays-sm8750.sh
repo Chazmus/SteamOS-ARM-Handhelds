@@ -546,6 +546,19 @@ ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.targ
 install_file "$OVL/usr/lib/steamos-arm/desktop-portal-fix" "$R/usr/lib/steamos-arm/desktop-portal-fix" 0755
 install_file "$OVL/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" \
   "$R/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" 0644
+# Updates through Steam's own update button: the agent, the root service
+# that stages an update, the polkit rule letting the user start only that,
+# and the key update packages are signed with.
+install_file "$OVL/usr/lib/steamos-arm/update-agent" "$R/usr/lib/steamos-arm/update-agent" 0755
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-update.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-update.service" 0644
+install_file "$OVL/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" \
+  "$R/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" 0644
+install_file "$OVL/usr/share/steamos-arm/update/signing.pub" \
+  "$R/usr/share/steamos-arm/update/signing.pub" 0644
+# The updater itself (the other images get it with the vendor apps).
+install -d -m0755 "$R/usr/share/konkr-update"
+install -m0644 "$ROOT/external-and-mods/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"
 # Store plugins that break on the Steam client we ship, fixed where Decky
 # installs them (SteamGridDB 1.7.1's footer glyph lookup for now).
 install_file "$OVL/usr/lib/steamos-arm/decky-plugin-fixes" "$R/usr/lib/steamos-arm/decky-plugin-fixes" 0755
@@ -665,5 +678,9 @@ bad="$(find "$R/usr/share/gamescope" "$R/etc/gamescope" -xdev -type f ! -perm -o
 # abort on start, over and over: the Odin 3 test 1/2 black screen.
 find "$R" -xdev -name '._*' -type f -delete 2>/dev/null || true
 [[ -z "$(find "$R" -xdev -name '._*' -type f -print -quit 2>/dev/null)" ]] || die "._ files left in $R"
+
+# Last: what this image installed, and which release it is (see apply-overlays.sh).
+python3 "$ROOT/external-and-mods/konkr-update/konkr-update.py" record-inventory --root "$R" \
+  --version "${STEAMOS_ARM_VERSION:-1.3.0}" --soc sm8750 | tee -a "$LOG"
 
 log "== SM8750 overlays successfully applied"

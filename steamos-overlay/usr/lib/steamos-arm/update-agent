@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Find and install SteamOS ARM updates, for Steam's own update button.
+
+  update-agent check   newest release for this device newer than the one
+                       installed, as JSON ({} when up to date)
+  update-agent apply   download (or copy) it, check it, and stage it with
+                       konkr-update; it installs on the next restart
+
+Updates come from the project's GitHub releases, or from a microSD card or USB
+drive: any steamos-arm-<soc>-<version>.sau at the top of a mounted drive.
+Packages are signed; konkr-update refuses one whose signature doesn't verify.
+`apply` runs as root (steamos-arm-update.service) and reports its progress in
+/run/steamos-arm-update for steamos-update to pass on to Steam.
+"""
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+REPO = "hashtagbasit/SteamOS-ARM-Handhelds"
+KONKR_UPDATE = "/usr/share/konkr-update/konkr-update.py"
+RUN = Path("/run/steamos-arm-update")
+CACHE = Path("/home/.steamos-arm-update")
+NAME = re.compile(r"^steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)\.sau$")
+
+
+def vkey(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "0"))
+
+
+def status():
+    out = subprocess.run([sys.executable, KONKR_UPDATE, "status"], capture_output=True, text=True)
+    try:
+        return json.loads(out.stdout)
+    except ValueError:
+        return {}
+
+
+def github_candidates(soc):
+    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases?per_page=20",
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "User-Agent": "steamos-arm-update"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        releases = json.load(r)
+    out = []
+    for rel in releases:
+        if rel.get("draft") or rel.get("prerelease"):
+            continue
+        assets = {a["name"]: a for a in rel.get("assets", [])}
+        for name, a in assets.items():
+            m = NAME.match(name)
+            if m and m["soc"] == soc:
+                sha = assets.get(name + ".sha256")
+                out.append({"version": m["version"], "source": "github", "url": a["browser_download_url"],
+                            "size": a.get("size", 0), "sha256_url": sha["browser_download_url"] if sha else ""})
+    return out
+
+
+def media_candidates(soc):
+    out = []
+    for path in glob.glob("/run/media/*/*/steamos-arm-*.sau") + glob.glob("/run/media/*/steamos-arm-*.sau"):
+        m = NAME.match(os.path.basename(path))
+        if m and m["soc"] == soc:
+            out.append({"version": m["version"], "source": "drive", "path": path,
+                        "size": os.path.getsize(path)})
+    return out
+
+
+def newest(installed, soc):
+    found = media_candidates(soc)
+    try:
+        found += github_candidates(soc)
+    except Exception as exc:              # offline: drives still count
+        print(f"update-agent: GitHub: {exc}", file=sys.stderr)
+    newer = [c for c in found if vkey(c["version"]) > vkey(installed)]
+    # a drive wins over a download of the same version
+    newer.sort(key=lambda c: (vkey(c["version"]), c["source"] == "drive"))
+    return newer[-1] if newer else {}
+
+
+def check():
+    st = status()
+    if not st.get("soc") or not st.get("version"):
+        print("{}")                       # images before v1.3 don't record their release
+        return 0
+    print(json.dumps(newest(st["version"], st["soc"])))
+    return 0
+
+
+def progress(pct, phase):
+    RUN.mkdir(parents=True, exist_ok=True)
+    tmp = RUN / ".progress"
+    tmp.write_text(json.dumps({"percent": round(pct, 1), "phase": phase}))
+    os.replace(tmp, RUN / "progress")
+
+
+def result(code, message):
+    RUN.mkdir(parents=True, exist_ok=True)
+    (RUN / "result").write_text(json.dumps({"code": code, "message": message}))
+    print(f"update-agent: {message}", file=sys.stderr)
+    return code
+
+
+def fetch(url, dst, start, span):
+    req = urllib.request.Request(url, headers={"User-Agent": "steamos-arm-update"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as fh:
+        total = int(r.headers.get("Content-Length") or 0)
+        done, last = 0, 0.0
+        while chunk := r.read(1 << 20):
+            fh.write(chunk)
+            done += len(chunk)
+            if total and time.monotonic() - last > 0.5:
+                progress(start + span * done / total, "download")
+                last = time.monotonic()
+
+
+def apply():
+    for f in ("progress", "result"):
+        (RUN / f).unlink(missing_ok=True)
+    st = status()
+    if st.get("staged"):
+        return result(8, "an update is already staged: restart to install it")
+    cand = newest(st.get("version", ""), st.get("soc", ""))
+    if not cand:
+        return result(7, "no update available")
+    CACHE.mkdir(mode=0o700, exist_ok=True)
+    pkg = CACHE / f"steamos-arm-{st['soc']}-{cand['version']}.sau"
+    progress(0, "download")
+    try:
+        if cand["source"] == "drive":
+            shutil.copyfile(cand["path"], pkg)
+            sha_file = Path(cand["path"] + ".sha256")
+            want = sha_file.read_text().split()[0] if sha_file.exists() else ""
+        else:
+            fetch(cand["url"], pkg, 0, 70)
+            want = ""
+            if cand.get("sha256_url"):
+                with urllib.request.urlopen(cand["sha256_url"], timeout=30) as r:
+                    want = r.read().decode().split()[0]
+        progress(72, "verify")
+        if want:
+            h = hashlib.sha256()
+            with open(pkg, "rb") as fh:
+                for chunk in iter(lambda: fh.read(4 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest() != want:
+                return result(1, "the download is damaged (checksum mismatch)")
+        progress(75, "stage")
+        # konkr-update checks the signature, the device and the space, and
+        # backs up what it changes before anything is touched
+        out = subprocess.run([sys.executable, KONKR_UPDATE, "stage", str(pkg)], capture_output=True, text=True)
+        if out.returncode != 0:
+            return result(1, (out.stderr or out.stdout).strip().splitlines()[-1] if (out.stderr or out.stdout) else "staging failed")
+        progress(100, "done")
+        return result(0, f"update {cand['version']} staged: restart to install it")
+    except Exception as exc:
+        return result(1, f"update failed: {exc}")
+    finally:
+        pkg.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "check":
+        sys.exit(check())
+    if cmd == "apply":
+        if os.geteuid() != 0:
+            sys.exit(result(1, "apply needs root (steamos-arm-update.service)"))
+        sys.exit(apply())
+    print(__doc__, file=sys.stderr)
+    sys.exit(2)

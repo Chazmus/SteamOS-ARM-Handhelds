@@ -350,6 +350,16 @@ ln -sfn ../steamos-arm-vpower.service "$R/usr/lib/systemd/system/multi-user.targ
 install_file "$OVL/usr/lib/steamos-arm/desktop-portal-fix" "$R/usr/lib/steamos-arm/desktop-portal-fix" 0755
 install_file "$OVL/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" \
   "$R/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" 0644
+# Updates through Steam's own update button: the agent, the root service
+# that stages an update, the polkit rule letting the user start only that,
+# and the key update packages are signed with.
+install_file "$OVL/usr/lib/steamos-arm/update-agent" "$R/usr/lib/steamos-arm/update-agent" 0755
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-update.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-update.service" 0644
+install_file "$OVL/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" \
+  "$R/usr/share/polkit-1/rules.d/60-steamos-arm-update.rules" 0644
+install_file "$OVL/usr/share/steamos-arm/update/signing.pub" \
+  "$R/usr/share/steamos-arm/update/signing.pub" 0644
 # Store plugins that break on the Steam client we ship, fixed where Decky
 # installs them (SteamGridDB 1.7.1's footer glyph lookup for now).
 install_file "$OVL/usr/lib/steamos-arm/decky-plugin-fixes" "$R/usr/lib/steamos-arm/decky-plugin-fixes" 0755
@@ -1165,5 +1175,10 @@ log "== summary"
   echo "deck-uhid: $(grep -A2 target_devices "$R/etc/inputplumber/devices.d/02-ayn-odin.yaml" 2>/dev/null || echo missing)"
   echo "home:      $(find "$HOME_DST" -maxdepth 3 -printf '%p\n' | head -40)"
 } | tee -a "$LOG"
+
+# Last: what this image installed, and which release it is, so updates
+# know what they're changing and Steam knows what's current.
+python3 "$ROOT/external-and-mods/konkr-update/konkr-update.py" record-inventory --root "$R" \
+  --version "${STEAMOS_ARM_VERSION:-1.3.0}" --soc "${SOC:-sm8650}" | tee -a "$LOG"
 
 log "OK"

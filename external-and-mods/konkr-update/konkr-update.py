@@ -26,6 +26,7 @@ SOC_MODELS = {
                'AYANEO Pocket ACE', 'AYANEO Pocket DMG', 'AYANEO Pocket DS',
                'AYANEO Pocket EVO', 'AYANEO Pocket S 1K', 'AYANEO Pocket S 2K',
                'Retroid Pocket 6', 'Retroid Pocket 6 TOP-DPAD', 'Retroid Pocket Nova'],
+    'sm8750': ['AYN Odin 3', 'KONKR Pocket FIT Elite'],
 }
 SUPPORTED_MODELS = {m for models in SOC_MODELS.values() for m in models}
 ROOT_DIRS = ('usr', 'opt', 'etc')
@@ -441,14 +442,36 @@ def recorded(root):
     except (OSError, ValueError): return {}
 
 
-def record_inventory(root, home, target, boot=None):
+def record_inventory(root, home, target, boot=None, version=None, soc=None):
+    """The install inventory, plus the release it is (version, soc). Without
+    a version given, the one already recorded is kept."""
     files = {}
     for key, e in target.items():
         if 'f' in e and key != 'boot/KERNEL':
             try: st = os.lstat(real_path(key, root, home))
             except OSError: continue
             files[key] = [st.st_size, st.st_mtime_ns, e['f'][4]]
-    write_json(root / INVENTORY, {'format': FORMAT2, 'files': files})
+    old = recorded_release(root)
+    write_json(root / INVENTORY, {'format': FORMAT2, 'files': files,
+                                  'version': version or old.get('version', ''),
+                                  'soc': soc or old.get('soc', '')})
+
+
+def recorded_release(root=Path('/')):
+    """{'version', 'soc'} of the installed release ({} on images older than v1.3)."""
+    try:
+        d = json.loads((root / INVENTORY).read_text())
+        return {k: d[k] for k in ('version', 'soc') if d.get(k)}
+    except (OSError, ValueError):
+        return {}
+
+
+def this_soc():
+    try:
+        model = Path('/proc/device-tree/model').read_text().strip('\0\n ')
+    except OSError:
+        return ''
+    return next((soc for soc, models in SOC_MODELS.items() if model in models), '')
 
 
 def make_plan(target, root, home, boot):
@@ -607,7 +630,11 @@ def apply2(root, boot, home, work):
         if key == 'boot/KERNEL': continue
         if digest(real_path(key, root, home)) != target[key]['f'][4]:
             raise ValueError(f'installed checksum mismatch: {key}')
-    record_inventory(root, home, target)
+    try:
+        version = json.loads((work / 'transaction.json').read_text()).get('version')
+    except (OSError, ValueError):
+        version = None
+    record_inventory(root, home, target, version=version)
     os.sync()
     if 'boot/KERNEL' in plan['write']: install_kernel(work / 'next-KERNEL', boot)
 
@@ -777,6 +804,9 @@ def main():
     p = sub.add_parser('stage'); p.add_argument('package'); p.add_argument('--sha256')
     p = sub.add_parser('record-inventory', help='write the install inventory of a built rootfs')
     p.add_argument('--root', required=True)
+    p.add_argument('--version', default='')
+    p.add_argument('--soc', default='')
+    sub.add_parser('status', help='installed release and whether an update is staged (JSON)')
     p = sub.add_parser('recover')
     for name in ('root', 'boot', 'home', 'work'): p.add_argument('--' + name, required=True)
     p = sub.add_parser('inspect'); p.add_argument('package')
@@ -790,8 +820,14 @@ def main():
             root = Path(a.root)
             def base_of(prefix): return root / prefix.split('/', 1)[1] if prefix.startswith('root/') else root / prefix
             inv = walk_managed(base_of, skip_etc=True); inv.pop('root/' + INVENTORY, None)
-            record_inventory(root, root / 'home', inv)
+            record_inventory(root, root / 'home', inv, version=a.version or None, soc=a.soc or None)
             print(f'{root / INVENTORY}: {sum(1 for e in inv.values() if "f" in e)} files')
+        elif a.command == 'status':
+            rel = recorded_release()
+            # The device's own model decides the SoC (the REDMAGIC 6 shares this
+            # rootfs but no update package fits it, so it gets none).
+            print(json.dumps({'version': rel.get('version', ''), 'soc': this_soc(),
+                              'staged': Path('/' + PENDING).exists()}))
         else:
             m, size = validate_archive(a.package); print(json.dumps({'version': m['version'], 'bytes': size}, indent=2))
     except Exception as e:
