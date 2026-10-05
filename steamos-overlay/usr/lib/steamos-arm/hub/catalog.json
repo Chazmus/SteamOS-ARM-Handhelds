@@ -560,6 +560,19 @@
       "desktop_only": true
     },
     {
+      "id": "jamesdsp",
+      "title": "JamesDSP",
+      "plays": "speaker EQ and sound effects",
+      "kind": "app",
+      "icon": "flathub:me.timschneeberger.jdsp4linux",
+      "sources": [
+        {
+          "kind": "flathub",
+          "ref": "me.timschneeberger.jdsp4linux"
+        }
+      ]
+    },
+    {
       "id": "moonlight",
       "title": "Moonlight",
       "plays": "stream games from your PC",
