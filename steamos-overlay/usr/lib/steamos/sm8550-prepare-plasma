@@ -10,6 +10,27 @@ fi
 # gamescope creates this dir without the sticky bit; kwin then refuses Xwayland.
 chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
+# Everything Game Mode handed the user manager has to go before Plasma's
+# services start from it. ENABLE_GAMESCOPE_WSI=1 left over put every Vulkan
+# program on the desktop through gamescope's WSI layer, which pops up a
+# warning with zenity; zenity draws with Vulkan, so it popped up another:
+# hundreds of them until the kernel killed Plasma for memory (black screen
+# with the backlight on). Valve's list (gamescope-cleanup) plus the ones our
+# gamescope-onready adds, and the env file steam.service reads.
+# (Its own process: it sets -euo pipefail, which must not leak in here.)
+[[ -f /usr/lib/steamos/gamescope-cleanup ]] && bash /usr/lib/steamos/gamescope-cleanup >/dev/null 2>&1
+if [[ -f /usr/lib/steamos/gamescope-env-list ]]; then
+  # shellcheck disable=SC1091
+  source /usr/lib/steamos/gamescope-env-list && unset "${gamescope_inherit_vars[@]}"
+fi
+ours=(_STEAM_SETENV_MANAGER SteamDeck STEAM_DISPLAY_REFRESH_LIMITS GAMESCOPE_MANGOAPP_SOCKET_DISABLE
+      ENABLE_GAMESCOPE_WSI DISPLAY XDG_SESSION_DESKTOP)
+systemctl --user unset-environment "${ours[@]}" 2>/dev/null || true
+dbus-update-activation-environment "${ours[@]/%/=}" >/dev/null 2>&1 || true
+unset "${ours[@]}"
+rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gamescope-steam.env"
+export GAMESCOPE_ZENITY_DISABLE=1
+
 unset QT_QPA_PLATFORM
 unset GAMESCOPE_WAYLAND_DISPLAY
 unset GAMESCOPE_SESSION_TARGET

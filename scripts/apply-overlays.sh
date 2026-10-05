@@ -519,6 +519,8 @@ install_file "$OVL/etc/sdl2/qcom-gamecontrollerdb.txt" \
   "$R/etc/sdl2/qcom-gamecontrollerdb.txt" 0644
 install_file "$OVL/usr/lib/environment.d/60-sm8550-gamepad.conf" \
   "$R/usr/lib/environment.d/60-sm8550-gamepad.conf" 0644
+install_file "$OVL/usr/lib/environment.d/62-steamos-arm-no-wsi-dialogs.conf" \
+  "$R/usr/lib/environment.d/62-steamos-arm-no-wsi-dialogs.conf" 0644
 install_file "$OVL/etc/profile.d/sm8550-gamepad.sh" \
   "$R/etc/profile.d/sm8550-gamepad.sh" 0644
 "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" "$R"

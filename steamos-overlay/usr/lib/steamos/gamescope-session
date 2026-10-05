@@ -98,6 +98,9 @@ export STEAM_GAMESCOPE_HDR_SUPPORTED=0
 export STEAM_ENABLE_VOLUME_HANDLER="${STEAM_ENABLE_VOLUME_HANDLER:-0}"
 export SRT_URLOPEN_PREFER_STEAM=1
 export ENABLE_GAMESCOPE_WSI=1
+# No zenity pop-ups from the WSI layer (each one can start another, see
+# environment.d/62-steamos-arm-no-wsi-dialogs.conf).
+export GAMESCOPE_ZENITY_DISABLE=1
 export SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0
 export vk_xwayland_wait_ready=false
 export GAMESCOPE_DISABLE_ASYNC_FLIPS=1

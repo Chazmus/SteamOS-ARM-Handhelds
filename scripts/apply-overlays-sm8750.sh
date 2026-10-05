@@ -135,6 +135,8 @@ install_file "$OVL/usr/bin/steamos-select-branch" \
   "$R/usr/bin/steamos-select-branch" 0755
 
 # Desktop Plasma
+install_file "$OVL/usr/lib/environment.d/62-steamos-arm-no-wsi-dialogs.conf" \
+  "$R/usr/lib/environment.d/62-steamos-arm-no-wsi-dialogs.conf" 0644
 install_file "$OVL/usr/lib/steamos/sm8550-prepare-plasma" \
   "$R/usr/lib/steamos/sm8550-prepare-plasma" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-startplasma" \
