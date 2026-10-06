@@ -370,7 +370,14 @@ install_output() {
   [[ "${KEEP_IMAGE:-0}" == 1 ]] && cp "${SRC}/arch/arm64/boot/Image" "$o/boot/Image"
   cp "${SRC}/.config" "$o/config-${KREL}"
   cp "${SRC}/System.map" "$o/System.map-${KREL}"
-  pack_kernel_img "$o/boot/KERNEL"
+  # CMDLINE_BUILTIN: booted by a stock bootloader from our own boot image
+  # (mkbootimg-v4.py); there is no ROCKNIX ABL KERNEL to make, and its
+  # 512-byte cmdline field couldn't hold the cmdline anyway.
+  if [[ "${CMDLINE_BUILTIN:-0}" == 1 ]]; then
+    log "no ROCKNIX ABL KERNEL (cmdline built in)"
+  else
+    pack_kernel_img "$o/boot/KERNEL"
+  fi
   ln -sfn "$KREL" "${OUT_BASE}/current"
   log "done: $o"
   ls -la "$o/boot" >&2
