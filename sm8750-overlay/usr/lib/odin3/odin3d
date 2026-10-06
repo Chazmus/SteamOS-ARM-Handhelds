@@ -137,7 +137,7 @@ class Config:
                 "max_pwm": "255",
                 "failsafe_pwm": "150",
                 "poll_interval_s": "1.0",
-                "temp_smoothing": "0.30",
+                "temp_smoothing": "0.15",
                 "hysteresis_c": "3.0",
                 "ramp_down_step": "15",
                 "critical_temp_c": "88.0",
@@ -315,10 +315,27 @@ class FanController:
         self.smooth_temp: float | None = None
         self.set_temp: float = 0.0
         self.critical_override = False
+        # Bursts (waking, menus, loading) run the big cores flat out for a
+        # moment and their hotspot sensors jump 40 C in under a second: only a
+        # reading that stays hot this long counts as hot. Waking from s2idle
+        # does it on every core at once, so the fan holds its speed for a
+        # while after a resume.
+        self.hot_since: float | None = None
+        self.slept: float | None = None
+        self.settle_until = 0.0
+
+    HOT_HOLD_S = 3.0
+    DANGER_C = 100.0
+    RESUME_SETTLE_S = 8.0
 
     def tick(self) -> None:
         if not self.cfg.fan_enabled:
             return
+        # Time asleep shows as CLOCK_BOOTTIME pulling ahead of CLOCK_MONOTONIC.
+        slept = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+        if self.slept is not None and slept - self.slept > 1.0:
+            self.settle_until = time.monotonic() + self.RESUME_SETTLE_S
+        self.slept = slept
 
         try:
             raw_temp = self.hw.get_soc_temp()
@@ -362,7 +379,16 @@ class FanController:
                 follow = self.get_curve_temp()
             except RuntimeError:
                 follow = raw_temp
-            hot = follow >= 85.0 or raw_temp >= 95.0
+            if time.monotonic() < self.settle_until and raw_temp < self.DANGER_C:
+                return
+            now = time.monotonic()
+            if follow >= 85.0 or raw_temp >= 95.0:
+                if self.hot_since is None:
+                    self.hot_since = now
+            else:
+                self.hot_since = None
+            hot = (self.hot_since is not None and now - self.hot_since >= self.HOT_HOLD_S) \
+                or raw_temp >= self.DANGER_C
             if self.smooth_temp is None or hot:
                 self.smooth_temp = follow
             else:
