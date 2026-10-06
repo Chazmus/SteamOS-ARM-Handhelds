@@ -304,6 +304,15 @@ if not mine:
 entry = re.sub(r'menuentry "[^"]*"', 'menuentry "SteamOS ARM Port"', mine[0], count=1)
 open(dst, "w").write("set timeout=0\nset default=0\nset gfxpayload=keep\n\n" + entry + "\n")
 PY
+      # This ESP's own marker (the USB drive's stays on the drive), in both
+      # GRUB stages.
+      local mark="steamos-arm-boot-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+      echo "SteamOS ARM Port boot partition (GRUB looks for this file)" >"$WORK/boot/$mark"
+      sed -i -E "s|--file /[^ ]+ --set=root|--file /$mark --set=root|" \
+        "$WORK/boot/EFI/BOOT/qcomramp.cfg" "$WORK/boot/EFI/BOOT/grub.cfg"
+      grep -q -- "--file /$mark --set=root" "$WORK/boot/EFI/BOOT/qcomramp.cfg" \
+        && grep -q -- "--file /$mark --set=root" "$WORK/boot/EFI/BOOT/grub.cfg" \
+        || die "GRUB configs don't point at this ESP"
       grep -q 'root=PARTLABEL=STORAGE' "$WORK/boot/EFI/BOOT/qcomramp.cfg" || die "GRUB config has no root=PARTLABEL=STORAGE"
       flash_boot /boot/tablet/lenovo-legion-tab-gen3-boot.img ;;
     elden)

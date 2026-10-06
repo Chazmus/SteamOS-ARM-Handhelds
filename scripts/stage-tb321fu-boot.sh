@@ -43,6 +43,12 @@ get "${TB321FU_GRUB_URL}/BOOTAA64.EFI" BOOTAA64.EFI "$TB321FU_BOOTAA64_SHA256"
 get "${TB321FU_GRUB_URL}/QCOMRAMP-CONFIGFILE.EFI" QCOMRAMP-CONFIGFILE.EFI "$TB321FU_QCOMRAMP_SHA256"
 
 mkdir -p "$ESP/EFI/BOOT" "$ESP/dtb"
+# GRUB finds its own partition by a marker unique to it, not the first /Image:
+# with the USB installer plugged into an installed tablet both have one, and
+# a wrong pick boots the other one's kernel (or a stale one: black screen).
+MARK="steamos-arm-boot-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+rm -f "$ESP"/steamos-arm-boot-*
+echo "SteamOS ARM Port boot partition (GRUB looks for this file)" >"$ESP/$MARK"
 cp "$CACHE/BOOTAA64.EFI" "$ESP/EFI/BOOT/BOOTAA64.EFI"
 cp "$CACHE/QCOMRAMP-CONFIGFILE.EFI" "$ESP/EFI/BOOT/QCOMRAMP.EFI"
 cp "$KOUT/boot/Image" "$ESP/Image"
@@ -53,10 +59,10 @@ cat >"$ESP/EFI/BOOT/grub.cfg" <<CFG
 set timeout=2
 set default=0
 set gfxpayload=keep
-search --no-floppy --file /Image --set=root
+search --no-floppy --file /$MARK --set=root
 
 menuentry "SteamOS ARM Port" {
-    search --no-floppy --file /Image --set=root
+    search --no-floppy --file /$MARK --set=root
     chainloader /EFI/BOOT/QCOMRAMP.EFI
     boot
 }
@@ -84,7 +90,7 @@ timeout=0; [[ "$PANEL" == both ]] && timeout=8
     cat <<CFG
 
 menuentry "$name" {
-    search --no-floppy --file /Image --set=root
+    search --no-floppy --file /$MARK --set=root
     devicetree /dtb/sm8650-lenovo-tb321fu-${p}.dtb
     qcomfdtmem source rampartition
     $reserved
