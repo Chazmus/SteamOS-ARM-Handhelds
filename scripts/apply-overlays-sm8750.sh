@@ -76,9 +76,6 @@ for k in "${EXTRA_KOUTS[@]}"; do
   if [[ "$kr" == *-elden-steamos ]]; then
     log "== Lenovo Legion Y700 Gen 4 (${kr})"
     "${ROOT}/scripts/install-elden.sh" "$R" || die "elden install failed"
-    # Installs from a USB drive to internal storage (ufs-install).
-    ONLY_UFS=1 STEAMOS_HOME="$R/home/steamos" "${ROOT}/scripts/install-vendor-apps.sh" "$R" \
-      || die "installer install failed"
     install_file "$OVL/usr/lib/steamos-arm/tablet-firmware" "$R/usr/lib/steamos-arm/tablet-firmware" 0755
     install_file "$OVL/usr/lib/steamos-arm/tablet-firmware-boot" "$R/usr/lib/steamos-arm/tablet-firmware-boot" 0755
     install_file "$OVL/usr/lib/systemd/system/steamos-arm-tablet-firmware.service" \
@@ -88,6 +85,11 @@ for k in "${EXTRA_KOUTS[@]}"; do
       "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-firmware.service"
   fi
 done
+
+# Internal storage installer (ufs-install): the Odin 3 and Pocket FIT Elite
+# from the SD card, the Legion Y700 Gen 4 from a USB drive.
+ONLY_UFS=1 STEAMOS_HOME="$R/home/steamos" "${ROOT}/scripts/install-vendor-apps.sh" "$R" \
+  || die "installer install failed"
 
 # Merge SM8750 firmware
 cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"

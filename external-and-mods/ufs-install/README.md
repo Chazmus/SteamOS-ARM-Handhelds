@@ -2,8 +2,9 @@
 
 Moves the SteamOS you're running from the microSD card onto the internal
 storage, next to Android. For the KONKR Pocket FIT (and the AYANEO Pocket S2,
-untested), both SM8650, or SM8550 handhelds (AYN Odin 2, Odin 2 Mini, Odin 2
-Portal) with ROCKNIX ABL 1.1.8 or newer.
+untested), both SM8650, SM8550 handhelds (AYN Odin 2, Odin 2 Mini, Odin 2
+Portal), and the AYN Odin 3 and KONKR Pocket FIT Elite (SM8750, not tried on
+one yet) with ROCKNIX ABL 1.1.8 or newer.
 
 > **This erases Android's user data** (apps, photos, accounts) and changes the
 > internal partition table. Android itself stays and sets itself up again.
