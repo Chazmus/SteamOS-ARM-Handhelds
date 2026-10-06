@@ -754,7 +754,7 @@
    "sources": [
     {
      "kind": "github",
-     "repo": "steamos-arm-port/arm64-linux-apps",
+     "repo": "hashtagbasit/arm64-linux-apps",
      "file": "^Heroic-[0-9.]+-linux-arm64\\.tar\\.xz$"
     }
    ],

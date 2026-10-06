@@ -3,12 +3,12 @@
 You need a 32GB+ microSD card and a PC.
 
 1. Flash [ROCKNIX ABL](https://github.com/ROCKNIX/abl/releases) 1.1.8 or newer for your chip to `abl_a` and `abl_b`: `abl_signed-SM8650.elf` for 8 Gen 3, `abl_signed-SM8550.elf` for 8 Gen 2. Android still boots from its menu.
-2. Download all the `.7z` parts for your chip from [Releases](https://github.com/steamos-arm-port/SteamOS-ARM-Port/releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to the microSD card with balenaEtcher or Rufus.
+2. Download all the `.7z` parts for your chip from [Releases](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases), open the `.001` one with 7-Zip or WinRAR (Keka or The Unarchiver on Mac) and extract it. Flash the `.img` you get to the microSD card with balenaEtcher or Rufus.
 3. Hold Volume Down while turning it on, go to Set device model, pick your device, set boot mode to Linux and hit START. On the Pocket S2 Pro, pick AYANEO Pocket S2.
 
 First boot takes a couple of minutes, don't panic. Then sign in to Steam and you're good to go.
 
-On 8 Gen 3, apply the [v1.2.1 hotfix](https://github.com/steamos-arm-port/SteamOS-ARM-Port/releases/tag/v1.2.1) after the first boot, it only takes a minute.
+On 8 Gen 3, apply the [v1.2.1 hotfix](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.2.1) after the first boot, it only takes a minute.
 
 ## Your password
 
