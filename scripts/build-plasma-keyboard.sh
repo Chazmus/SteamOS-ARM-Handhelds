@@ -23,6 +23,20 @@ if [[ ! -f "$SRC/CMakeLists.txt" ]]; then
   tar -xzf "$TOP/src.tar.gz" -C "$TOP"
 fi
 
+# The 8 Elite rootfs has no extra-cmake-modules (the 8 Gen 3 one does).
+if [[ ! -f "$R/usr/share/ECM/cmake/ECMConfig.cmake" ]]; then
+  echo "==> installing extra-cmake-modules into rootfs"
+  ECM_PKG="${ECM_PKG:-/tmp/extra-cmake-modules-6.30.0-1-any.pkg.tar.xz}"
+  [[ -f "$ECM_PKG" ]] || curl -fsSL --max-time 60 -o "$ECM_PKG" \
+    "http://mirror.archlinuxarm.org/aarch64/extra/extra-cmake-modules-6.30.0-1-any.pkg.tar.xz"
+  tmp="$(mktemp -d)"
+  tar -C "$tmp" -xf "$ECM_PKG"
+  mkdir -p "$R/usr/share"
+  cp -a "$tmp/usr/share/ECM" "$R/usr/share/"
+  rm -rf "$tmp"
+  [[ -f "$R/usr/share/ECM/cmake/ECMConfig.cmake" ]] || { echo "ERROR: ECM still missing" >&2; exit 1; }
+fi
+
 run_in_rootfs() {
   bwrap --bind "$R" / --bind /tmp /tmp --dev /dev --proc /proc --tmpfs /run \
     --unshare-pid --die-with-parent --chdir /tmp "$@"
