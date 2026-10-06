@@ -338,6 +338,10 @@ def pick_file(src: dict) -> dict:
 def nice_version(tag: str, name: str) -> str:
     """'2609@2026-10-01_1790876487' -> '2609', 'build-<sha>' -> the file's version."""
     tag = tag.split("@")[0]
+    # one repo, several apps: tags like "heroic-2.22.3"
+    m = re.fullmatch(r"[a-z][a-z0-9_]*(?:-[a-z][a-z0-9_]*)*-v?(\d+(?:\.\d+)+)", tag)
+    if m:
+        return m.group(1)
     if re.fullmatch(r"build-[0-9a-f]{12,}", tag) or not tag:
         m = re.search(r"v?(\d+(?:\.\d+)+(?:-\d+)?)", name)
         return m.group(1) if m else tag[:14]
