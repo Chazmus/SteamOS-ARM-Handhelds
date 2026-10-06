@@ -640,6 +640,13 @@ if [[ ! -x "$R/usr/bin/plasma-keyboard" ]]; then
   "${SCRIPT_DIR}/build-plasma-keyboard.sh" "$R" \
     || die "plasma-keyboard is required (Desktop Mode touch keyboard)"
 fi
+# The touch keyboard draws itself in software: through zink its Vulkan
+# swapchain asked for explicit sync on a panel surface KWin had just replaced,
+# KWin dropped the connection and the keyboard was gone for the session.
+sed -i 's|^Exec=plasma-keyboard$|Exec=env QT_QUICK_BACKEND=software plasma-keyboard|' \
+  "$R/usr/share/applications/org.kde.plasma.keyboard.desktop"
+grep -q '^Exec=env QT_QUICK_BACKEND=software plasma-keyboard$' \
+  "$R/usr/share/applications/org.kde.plasma.keyboard.desktop" || die "touch keyboard Exec not set"
 KWIN_IM='/usr/share/applications/org.kde.plasma.keyboard.desktop'
 if ! grep -q '^\[Wayland\]' "$R/etc/xdg/kwinrc" 2>/dev/null; then
   mkdir -p "$R/etc/xdg"

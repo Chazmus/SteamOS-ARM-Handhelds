@@ -272,6 +272,13 @@ if [[ -f "$R/etc/xdg/kwinrc" ]]; then
 fi
 # Desktop Mode touch keyboard: KWin shows plasma-keyboard when a text field
 # is tapped (Steam's own keyboard needs Steam+X and the Deck controller).
+# The touch keyboard draws itself in software: through zink its Vulkan
+# swapchain asked for explicit sync on a panel surface KWin had just replaced,
+# KWin dropped the connection and the keyboard was gone for the session.
+sed -i 's|^Exec=plasma-keyboard$|Exec=env QT_QUICK_BACKEND=software plasma-keyboard|' \
+  "$R/usr/share/applications/org.kde.plasma.keyboard.desktop"
+grep -q '^Exec=env QT_QUICK_BACKEND=software plasma-keyboard$' \
+  "$R/usr/share/applications/org.kde.plasma.keyboard.desktop" || die "touch keyboard Exec not set"
 KWIN_IM='/usr/share/applications/org.kde.plasma.keyboard.desktop'
 if [[ -f "$R/etc/xdg/kwinrc" ]] && ! grep -q '^\[Wayland\]' "$R/etc/xdg/kwinrc"; then
   printf '\n[Wayland]\nInputMethod[$e]=%s\nVirtualKeyboardEnabled=true\n' "$KWIN_IM" >>"$R/etc/xdg/kwinrc"
