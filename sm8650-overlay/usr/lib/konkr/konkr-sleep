@@ -161,12 +161,16 @@ light() {
   return 1
 }
 
-# After a long sleep the saved scan results are gone and Wi-Fi needs a full
-# scan. Sometimes that first scan comes back empty (seen with the router on a
-# DFS channel) and nothing retries it, so the device stays offline until Wi-Fi
-# is turned off and on. Remember whether it was connected, and after waking do
-# that retry ourselves.
+# Wi-Fi after waking. NetworkManager drops the connection as soon as a sleep is
+# asked for (before this script runs), and after waking it needs a full scan
+# before it reconnects: 12 s with the router on a DFS channel, and sometimes
+# that scan comes back empty and nothing retries it, so the device stays
+# offline until Wi-Fi is turned off and on. konkrd keeps the network and its
+# channel in /run/konkr/wifi-last; after waking, scan just that channel first
+# (well under a second), then fall back to a new full scan, then to turning
+# Wi-Fi off and on.
 WIFI_MARK=/run/konkr/wifi-was-connected
+WIFI_LAST=/run/konkr/wifi-last
 
 wifi_connected() {
   [[ $(nmcli -t -g GENERAL.STATE device show wlan0 2>/dev/null) == 100* ]]
@@ -181,9 +185,26 @@ wifi_wait() {  # wifi_wait <seconds>: true once connected
   return 1
 }
 
+wifi_fast_scan() {
+  local freq ssid i
+  { read -r freq; read -r ssid; } <"$WIFI_LAST" 2>/dev/null || return 0
+  [[ $freq =~ ^[0-9]+$ && -n $ssid ]] || return 0
+  # wlan0 comes back a moment after the resume; NetworkManager's own first
+  # scan may already be running (EBUSY), so try for a few seconds.
+  for ((i = 0; i < 20; i++)); do
+    iw dev wlan0 scan trigger freq "$freq" ssid "$ssid" >/dev/null 2>&1 && {
+      log "wifi: scanning $freq MHz for the last network"
+      return 0
+    }
+    wifi_connected && return 0
+    sleep 0.25
+  done
+}
+
 wifi_watch() {
   [[ -e $WIFI_MARK ]] || exit 0
   rm -f "$WIFI_MARK"
+  wifi_fast_scan
   wifi_wait 6 && exit 0
   log "wifi: not back 6 s after waking, starting a new scan"
   iw dev wlan0 scan abort 2>/dev/null
@@ -195,8 +216,14 @@ wifi_watch() {
 }
 
 wifi_mark() {
+  # Was on a network before the sleep was asked for (konkrd saw it, and the
+  # radio is still on): NetworkManager has already let go of it by now.
   mkdir -p "${WIFI_MARK%/*}"
-  if wifi_connected; then : >"$WIFI_MARK"; else rm -f "$WIFI_MARK"; fi
+  if [[ -s $WIFI_LAST && $(nmcli radio wifi 2>/dev/null) == enabled ]]; then
+    : >"$WIFI_MARK"
+  else
+    rm -f "$WIFI_MARK"
+  fi
 }
 
 wifi_watch_start() {

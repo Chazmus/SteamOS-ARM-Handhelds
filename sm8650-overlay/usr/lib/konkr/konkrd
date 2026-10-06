@@ -226,6 +226,37 @@ def hottest_zone() -> str:
     return name
 
 
+# The network Wi-Fi is on and its channel, for konkr-sleep: NetworkManager
+# drops the connection as soon as a sleep is asked for, so after waking it
+# needs a full scan (12 s with a DFS channel in it) before it can reconnect.
+# Scanning just this channel first gets it back in about a second.
+WIFI_LAST = "/run/konkr/wifi-last"
+
+
+def record_wifi() -> None:
+    try:
+        out = subprocess.run(["iw", "dev", "wlan0", "link"], capture_output=True,
+                             text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    ssid = freq = ""
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("SSID: "):
+            ssid = line[6:]
+        elif line.startswith("freq: "):
+            freq = line[6:].split(".")[0]
+    if not ssid or not freq.isdigit():
+        return
+    try:
+        os.makedirs(os.path.dirname(WIFI_LAST), exist_ok=True)
+        with open(WIFI_LAST + ".tmp", "w") as f:
+            f.write(f"{freq}\n{ssid}\n")
+        os.replace(WIFI_LAST + ".tmp", WIFI_LAST)
+    except OSError:
+        pass
+
+
 def curve_pwm(curve, temp: float) -> int:
     if temp <= curve[0][0]:
         return curve[0][1]
@@ -1428,6 +1459,7 @@ class Daemon:
                 next_ui_check = now + 60.0
                 ensure_webhelper_vulkan()
                 pin_gpu_irqs()
+                record_wifi()
                 if not os.path.exists(STANDBY_FLAG):
                     ensure_gamepad_mode(self.conf)
             if now >= next_slow:
