@@ -1,62 +1,109 @@
-# SteamOS ARM Port
+<p align="center">
+  <a href="https://steamos-arm-port.github.io/">
+    <img src=".github/assets/logo.svg" alt="SteamOS ARM Port" width="112">
+  </a>
+</p>
 
-This is an unofficial community port of Valve's SteamOS for ARM, the build they made for the Steam Frame, to Snapdragon handhelds. You get Game Mode and the KDE desktop just like on a Steam Deck. The Frame software is made for a VR headset though, so I've spent a lot of time on the stuff that makes it annoying on a handheld (battery, fan, lag, broken overlay etc.).
+<h1 align="center">SteamOS ARM Port</h1>
 
-## Supported devices
+<p align="center"><strong>Unofficial SteamOS for Snapdragon handhelds</strong></p>
 
-### Handhelds
+<p align="center">
+  Valve's SteamOS for ARM, the one made for the Steam Frame, set up for handhelds:
+  Game Mode, the KDE desktop, PC games through FEX and Proton, and Android apps.
+</p>
 
-| Chip | Devices | Status |
-|---|---|---|
-| Snapdragon 8 Gen 3 (SM8650) | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | stable ([v1.2](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.2)) |
-| Snapdragon 8 Gen 2 (SM8550) | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova |  beta [(v1.3 beta 10)](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.3-beta10) |
-| Snapdragon 8 Elite (SM8750) | AYN Odin 3, KONKR Pocket FIT Elite | beta [(v1.3 8 Elite beta 2)](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.3-8elite-beta2)  ([docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md)) |
+<p align="center">
+  <a href="https://github.com/hashtagbasit/SteamOS-ARM-Port/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/hashtagbasit/SteamOS-ARM-Port?include_prereleases&style=flat&color=7c5cf0&label=release"></a>
+  <a href="https://steamos-arm-port.github.io/"><img alt="Documentation" src="https://img.shields.io/badge/docs-steamos--arm--port.github.io-18181a?style=flat"></a>
+  <a href="LICENSE"><img alt="GPL-2.0 license" src="https://img.shields.io/badge/license-GPL--2.0-18181a?style=flat"></a>
+  <a href="https://discord.gg/EP53nZYvg"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865F2?style=flat&amp;logo=discord&amp;logoColor=white"></a>
+</p>
 
-There's one image per chip and you pick your device in the ABL menu, the system figures out the rest. More chips will come later.
+<p align="center">
+  <a href="https://steamos-arm-port.github.io/getting-started/install/"><strong>Install it</strong></a>
+  ·
+  <a href="https://steamos-arm-port.github.io/devices/">Supported devices</a>
+  ·
+  <a href="https://steamos-arm-port.github.io/downloads/">Downloads</a>
+  ·
+  <a href="https://steamos-arm-port.github.io/help/known-issues/">Known issues</a>
+</p>
 
-### Phones & tablets
+> [!WARNING]
+> This is a community project, not affiliated with or endorsed by Valve.
+> Installing it means flashing the ROCKNIX ABL bootloader, and getting that
+> wrong can leave your device unable to boot or lose your data. Back up first
+> and follow the [install guide](https://steamos-arm-port.github.io/getting-started/install/)
+> step by step.
 
-| Chip | Devices | Status |
-|---|---|---|
-| Snapdragon 888 (SM8350) | REDMAGIC 6 (NX669J, North America / global) | works, build it yourself ([docs/redmagic6.md](docs/redmagic6.md)) |
+## About
 
-I only own a Pocket FIT, so if you have one of the others please [let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
+Valve's ARM build of SteamOS is made for a VR headset, so out of the box a lot
+of it gets in the way on a handheld: services that keep crashing, the UI stuck
+on the slow cores, the GPU not clocking up, standby that drains the battery. I
+turned off what a handheld doesn't need and fixed the rest, the long version
+is in [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
-## Features
+What you get:
 
-- Game Mode and Desktop Mode, x86 games through FEX and ARM64 Proton
-- the controller shows up as a Steam Deck controller, back buttons too
-- on the AYN Thor and AYANEO Pocket DS the bottom screen gets its own dashboard in Game Mode (Steam buttons, profiles, brightness, and any apps you want down there)
-- standby that actually saves battery (around 1W, the stock image sits at 3W+) and a proper fan curve
-- Lossless Scaling frame gen on ARM, Decky, the performance overlay
+- Game Mode and Desktop Mode, with the controller showing up as a Steam Deck pad
+- x86 PC games through FEX and ARM64 Proton, plus Epic, GOG and Amazon through Heroic
+- Loadout, which installs emulators and apps picked for your chip
+- Sleep that lasts and quiet fan curves
+- Updates through Steam, no reflashing
+- Lossless Scaling frame gen, Decky and the performance overlay
 - Android apps with the Play Store
-- updates install over your current system, no reflashing
+- A dashboard on the bottom screen of the AYN Thor and AYANEO Pocket DS
 
-## Guides
+## Devices
 
-| | |
+| Chip | Devices | Status |
+|---|---|---|
+| Snapdragon 8 Elite | AYN Odin 3, KONKR Pocket FIT Elite | Stable |
+| Snapdragon 8 Gen 3 | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | Stable |
+| Snapdragon 8 Gen 2 | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova | Stable |
+| Snapdragon 888 | REDMAGIC 6 | Build it yourself ([guide](docs/redmagic6.md)) |
+
+There's one image per chip, you pick your device in the ABL menu and it sets
+itself up. I only own a Pocket FIT, so if you have one of the others please
+[let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
+
+### Lenovo tablets (testing)
+
+| Tablet | Chip | Status |
+|---|---|---|
+| Lenovo Legion Y700 Gen 3 (TB321FU) | Snapdragon 8 Gen 3 | Testing |
+| Lenovo Legion Y700 Gen 4 (TB322FC) | Snapdragon 8 Elite | Testing |
+
+These boot from a USB drive and install to internal storage, nobody has run
+them on a real tablet yet. If you have one and want to help, ask on
+[Discord](https://discord.gg/EP53nZYvg) and see the
+[Lenovo page](https://steamos-arm-port.github.io/devices/lenovo/).
+
+## Documentation
+
+Everything lives on the [website](https://steamos-arm-port.github.io/).
+
+| I want to… | Guide |
 |---|---|
-| Installing | [docs/install.md](docs/install.md) |
-| Moving it to internal storage | [docs/internal-storage.md](docs/internal-storage.md) |
-| Updating | [docs/updating.md](docs/updating.md) |
-| The bottom screen | [docs/bottom-screen.md](docs/bottom-screen.md) |
-| Frame generation | [docs/frame-generation.md](docs/frame-generation.md) |
-| Android apps | [docs/android-apps.md](docs/android-apps.md) |
-| Profiles, commands, SSH | [docs/tips.md](docs/tips.md) |
-| Known issues | [docs/known-issues.md](docs/known-issues.md) |
-| Building it yourself | [docs/building.md](docs/building.md) |
-| AYN Odin 3 (SM8750) guide | [docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md) |
-| REDMAGIC 6 (SM8350) guide | [docs/redmagic6.md](docs/redmagic6.md) |
+| Install it | [Flash to a microSD card](https://steamos-arm-port.github.io/getting-started/install/) |
+| Check my device | [Supported devices](https://steamos-arm-port.github.io/devices/) |
+| Move it to internal storage | [Internal storage](https://steamos-arm-port.github.io/getting-started/internal-storage/) |
+| Update | [Updates](https://steamos-arm-port.github.io/using/updates/) |
+| Get help | [FAQ](https://steamos-arm-port.github.io/help/faq/) · [Troubleshooting](https://steamos-arm-port.github.io/help/troubleshooting/) |
+| Report a bug | [GitHub issues](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues) |
 
-Found a bug? [Open an issue](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
+## Building
 
-## What's different from other ARM builds
-
-Most other builds ship the Frame software pretty much as it is, and it's made for a VR headset. Out of the box a bunch of Frame services keep crashing in the background (that's a big part of why standby drains so fast), games and the Steam UI end up on the slow little cores so menus lag, the GPU doesn't clock as high as on Android, and things like the overlay and some ARM64 Proton games just don't work. I turned off what's useless on a handheld and fixed the rest, the long version is in [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+The images are built from this repo on an ARM64 Linux machine, see
+[docs/building.md](docs/building.md). Issues and pull requests are welcome,
+and for help with installing come say hi on [Discord](https://discord.gg/EP53nZYvg).
 
 ## Supporting the project
 
-I work on this in my free time and it's free for everyone. If it helped you out, a coffee means a lot.
+I work on this in my free time and it's free for everyone. If it helped you
+out, a coffee means a lot.
 
 <p align="left">
   <a href="https://ko-fi.com/aimalb"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi"></a>
@@ -67,12 +114,13 @@ If you can't donate, starring the repo helps too!
 
 ## Credits
 
-The kernel and all the device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution), and some of the early groundwork came from [MaSi's SM8550 project](https://github.com/MaSieS4Fun/SteamOS-ARM-SM8550). Big thanks to both, the full list is in [CREDITS.md](CREDITS.md).
+The kernels and device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution).
+The full list of projects and people is in [CREDITS.md](CREDITS.md).
 
 ## License
 
-My scripts and overlays are GPL-2.0, everything in `external-and-mods/` keeps its own license. See [LICENSE](LICENSE).
+My scripts and overlays are GPL-2.0, everything in `external-and-mods/` keeps
+its own license. See [LICENSE](LICENSE).
 
-## Disclaimer
-
-Not affiliated with or endorsed by Valve. Steam and SteamOS are trademarks of Valve Corporation, used here only to say what this is based on. The kernels and device support are community work, so please don't ask Valve for help with this. It doesn't get updates from Valve either, the OS and the Steam client in it are updated through this project's releases.
+Steam and SteamOS are trademarks of Valve Corporation, used here only to say
+what this is based on. Please don't ask Valve for help with it.
