@@ -334,6 +334,11 @@ EOF
       | sudo_run tee "${MNT}/boot/post-flash.sh" "${MNT}/boot/boot/post-flash.sh" >/dev/null
   fi
   sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-rocknix-abl.sh" "${MNT}/boot" sm8750
+  # Lenovo tablet boot files (the image on a USB drive starts it there):
+  # ELDEN_KERNEL_OUT is that tablet's kernel output.
+  if [[ -n "${ELDEN_KERNEL_OUT:-}" ]]; then
+    sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-tablet-boot.sh" "${MNT}/boot" elden "$ELDEN_KERNEL_OUT"
+  fi
 
   log "Writing p2 root"
   sudo_run rsync -aHAX --numeric-ids \

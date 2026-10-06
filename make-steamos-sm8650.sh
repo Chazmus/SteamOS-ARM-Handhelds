@@ -505,6 +505,11 @@ ABL (ROCKNIX ABL for ${SOC^^}): Set device model -> your handheld.
 To install or update the ABL from Android, see rocknix_abl/README.txt.
 EOF
   sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-rocknix-abl.sh" "${MNT}/boot" "${SOC}"
+  # Lenovo tablet boot files (the image on a USB drive starts it there):
+  # TB321FU_KERNEL_OUT is that tablet's kernel output.
+  if [[ -n "${TB321FU_KERNEL_OUT:-}" ]]; then
+    sudo_run env STEAMOS_WORK="${STEAMOS_WORK:-/work}" bash "${ROOT}/scripts/stage-tablet-boot.sh" "${MNT}/boot" tb321fu "$TB321FU_KERNEL_OUT"
+  fi
 
   sync
   cleanup_image

@@ -7,7 +7,8 @@
 #             a staging dir copied there)
 # KERNEL_OUT  kernel-tb321fu output (boot/Image, dtbs/)
 # boe|csot    the panel supplier (stock Android: getprop
-#             ro.vendor.display.paneltype, 1 = BOE)
+#             ro.vendor.display.paneltype, 1 = BOE), or "both" for the
+#             installer image: a menu with both, BOE first
 # CMDLINE     the kernel cmdline (root=PARTLABEL=STORAGE ...)
 # BOOTIMG_OUT where to put the UEFI boot.img for the boot partition
 #
@@ -19,10 +20,15 @@ source "${HERE}/../external-and-mods/tb321fu-boot/release.env"
 ESP="$1" KOUT="$2" PANEL="$3" CMDLINE="$4" BOOTIMG_OUT="${5:-}"
 CACHE="${CACHE:-/work/cache/tb321fu-boot}"
 die() { echo "stage-tb321fu-boot: $*" >&2; exit 1; }
-[[ "$PANEL" == boe || "$PANEL" == csot ]] || die "panel must be boe or csot"
-DTB="sm8650-lenovo-tb321fu-${PANEL}.dtb"
+case "$PANEL" in
+  boe|csot) PANELS="$PANEL" ;;
+  both) PANELS="boe csot" ;;
+  *) die "panel must be boe, csot or both" ;;
+esac
 [[ -s "$KOUT/boot/Image" ]] || die "no $KOUT/boot/Image (kernel-tb321fu builds it)"
-[[ -s "$KOUT/dtbs/$DTB" ]] || die "no $KOUT/dtbs/$DTB"
+for p in $PANELS; do
+  [[ -s "$KOUT/dtbs/sm8650-lenovo-tb321fu-${p}.dtb" ]] || die "no $KOUT/dtbs/sm8650-lenovo-tb321fu-${p}.dtb"
+done
 
 get() {  # get URL FILE SHA256
   local f="$CACHE/$2"
@@ -40,7 +46,7 @@ mkdir -p "$ESP/EFI/BOOT" "$ESP/dtb"
 cp "$CACHE/BOOTAA64.EFI" "$ESP/EFI/BOOT/BOOTAA64.EFI"
 cp "$CACHE/QCOMRAMP-CONFIGFILE.EFI" "$ESP/EFI/BOOT/QCOMRAMP.EFI"
 cp "$KOUT/boot/Image" "$ESP/Image"
-cp "$KOUT/dtbs/$DTB" "$ESP/dtb/$DTB"
+for p in $PANELS; do cp "$KOUT/dtbs/sm8650-lenovo-tb321fu-${p}.dtb" "$ESP/dtb/"; done
 
 # First stage: a moment to pick Reboot / Power off, then the direct boot.
 cat >"$ESP/EFI/BOOT/grub.cfg" <<CFG
@@ -68,19 +74,25 @@ CFG
 # partition table, minus Android's carve-outs.
 reserved="qcomfdtmem disable-reserved"
 for p in $TB321FU_DISABLE_RESERVED; do reserved="$reserved $p"; done
-cat >"$ESP/EFI/BOOT/qcomramp.cfg" <<CFG
-set timeout=0
-set default=0
-set gfxpayload=keep
+# One panel: straight in. Both (the installer image, before the panel is
+# known): a few seconds to pick, the BOE one first.
+timeout=0; [[ "$PANEL" == both ]] && timeout=8
+{
+  printf 'set timeout=%s\nset default=0\nset gfxpayload=keep\n' "$timeout"
+  for p in $PANELS; do
+    name="SteamOS ARM Port"; [[ "$PANEL" == both ]] && name="SteamOS ARM Port (${p^^} panel)"
+    cat <<CFG
 
-menuentry "SteamOS ARM Port" {
+menuentry "$name" {
     search --no-floppy --file /Image --set=root
-    devicetree /dtb/$DTB
+    devicetree /dtb/sm8650-lenovo-tb321fu-${p}.dtb
     qcomfdtmem source rampartition
     $reserved
     linuxdirect /Image $CMDLINE
 }
 CFG
+  done
+} >"$ESP/EFI/BOOT/qcomramp.cfg"
 
 if [[ -n "$BOOTIMG_OUT" ]]; then
   get "$TB321FU_BOOTIMG_URL" boot.img.7z "$TB321FU_BOOTIMG_7Z_SHA256"
