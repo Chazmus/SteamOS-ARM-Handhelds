@@ -3,7 +3,7 @@
 # they run below 1080p. Fixed properly in v1.3, this just patches v1.2.
 #
 # Run in Konsole (Desktop Mode):
-#   curl -fsSL https://raw.githubusercontent.com/hashtagbasit/SteamOS-ARM-Handhelds/main/hotfixes/v1.2-lowres-flicker.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hashtagbasit/SteamOS-ARM-Port/main/hotfixes/v1.2-lowres-flicker.sh | bash
 set -euo pipefail
 
 SESSION=/usr/lib/steamos/gamescope-session

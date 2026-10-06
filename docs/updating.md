@@ -2,7 +2,7 @@
 
 From v1.2 on, new versions install over your current system and keep your games, saves, accounts and Wi-Fi.
 
-1. Download the update package for your chip from [Releases](https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/releases).
+1. Download the update package for your chip from [Releases](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases).
 2. Open **SteamOS Update** in Desktop Mode and pick the package.
 3. Paste its SHA-256 from the release page and hit **Restart and install**.
 
