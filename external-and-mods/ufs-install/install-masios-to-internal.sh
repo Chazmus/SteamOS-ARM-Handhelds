@@ -67,8 +67,15 @@ for t in sfdisk mkfs.vfat mkfs.ext4 rsync findmnt lsblk python3 md5sum blockdev;
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
-tr '\0' '\n' </sys/firmware/devicetree/base/compatible | grep -qx 'qcom,sm8650' \
-  || die "this installer is for SM8650 devices (KONKR Pocket FIT / AYANEO Pocket S2)"
+# TABLET: a Lenovo tablet booted by its own bootloader, running from our image
+# on a USB drive (no ROCKNIX ABL, no microSD slot): its boot files go to the
+# ESP and its boot partition instead of a KERNEL for the ABL.
+TABLET=""
+compat="$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible)"
+grep -qx 'lenovo,tb321fu' <<<"$compat" && TABLET=tb321fu
+grep -qx 'lenovo,elden' <<<"$compat" && TABLET=elden
+[[ -n "$TABLET" ]] || grep -qx 'qcom,sm8650' <<<"$compat" \
+  || die "this installer is for SM8650 devices (KONKR Pocket FIT / AYANEO Pocket S2) and the Lenovo Legion Tab Gen 3 / Y700 Gen 4"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.
@@ -78,7 +85,14 @@ done
 
 ROOT_SRC="$(findmnt -no SOURCE /)"
 ROOT_DISK="/dev/$(lsblk -no PKNAME "$ROOT_SRC" | head -1)"
-[[ "$ROOT_DISK" == /dev/mmcblk* ]] || die "run this from the microSD install (/ is on $ROOT_SRC)"
+if [[ -n "$TABLET" ]]; then
+  case "$(readlink -f "/sys/class/block/${ROOT_DISK#/dev/}")" in
+    */usb*) ;;
+    *) die "run this from the image on a USB drive (/ is on $ROOT_SRC)" ;;
+  esac
+else
+  [[ "$ROOT_DISK" == /dev/mmcblk* ]] || die "run this from the microSD install (/ is on $ROOT_SRC)"
+fi
 
 [[ -f /boot/KERNEL ]] || die "/boot/KERNEL not found (is the SD's boot partition mounted?)"
 "${BOOTIMG[@]}" check /boot/KERNEL >/dev/null \
@@ -226,6 +240,83 @@ cleanup() {
 trap cleanup EXIT
 mnt() { mkdir -p "$2"; mount "${@:3}" "$1" "$2"; mounted+=("$2"); }
 
+# The boot partition the tablet starts from: Qualcomm A/B keeps the active
+# slot in the GPT attributes (bit 50 of boot_a / boot_b); without slots, boot.
+boot_slot_part() {
+  local s attrs
+  for s in a b; do
+    [[ -e /dev/disk/by-partlabel/boot_$s ]] || continue
+    attrs="$(sfdisk --part-attrs "$(lsblk -no PKNAME "$(readlink -f /dev/disk/by-partlabel/boot_$s)" | sed 's|^|/dev/|')" \
+      "$(cat "/sys/class/block/$(basename "$(readlink -f /dev/disk/by-partlabel/boot_$s)")/partition")" 2>/dev/null)"
+    grep -Eq '(^|[^0-9])50([^0-9]|$)' <<<"${attrs#*GUID:}" && [[ "$attrs" == *GUID:* ]] \
+      && { readlink -f /dev/disk/by-partlabel/boot_$s; return 0; }
+  done
+  [[ -e /dev/disk/by-partlabel/boot ]] && { readlink -f /dev/disk/by-partlabel/boot; return 0; }
+  return 1
+}
+
+# Write a boot image to the active boot partition, the stock one saved first
+# (once) to HOME's .ufs-backup, and read back.
+flash_boot() {
+  local img="$1" part size n
+  part="$(boot_slot_part)" || die "no boot partition found"
+  size="$(blockdev --getsize64 "$part")"
+  n="$(stat -c %s "$img")"
+  (( n <= size )) || die "$(basename "$img") ($n bytes) doesn't fit $part ($size)"
+  mkdir -p "$WORK/home/.ufs-backup"
+  local stock="$WORK/home/.ufs-backup/stock-$(basename "$(udevadm info -q property -n "$part" | sed -n 's/^ID_PART_ENTRY_NAME=//p')").img"
+  [[ -s "$stock" ]] || dd if="$part" of="$stock" bs=4M status=none conv=fsync
+  log "writing $(basename "$img") to $part (stock copy: ${stock#$WORK/home/})"
+  dd if="$img" of="$part" bs=4M status=none conv=fsync
+  cmp -s -n "$n" "$img" "$part" || die "$part doesn't read back as written; restore $stock with fastboot"
+}
+
+install_tablet_boot() {
+  case "$TABLET" in
+    tb321fu)
+      # The panel this boot is running on is the one that works.
+      local panel
+      case "$MODEL" in
+        *"BOE panel"*) panel=boe ;;
+        *"CSOT panel"*) panel=csot ;;
+        *) die "can't tell the panel from \"$MODEL\"" ;;
+      esac
+      log "Legion Tab Gen 3 ($panel panel): GRUB and the kernel on ROCKNIX"
+      # The drive's BOOT already has it all (stage-tablet-boot.sh); take it
+      # from there, with only this panel's entry and no menu wait.
+      local dtb="sm8650-lenovo-tb321fu-$panel.dtb" f
+      for f in EFI/BOOT/BOOTAA64.EFI EFI/BOOT/QCOMRAMP.EFI EFI/BOOT/grub.cfg EFI/BOOT/qcomramp.cfg \
+               Image "dtb/$dtb" tablet/lenovo-legion-tab-gen3-boot.img; do
+        [[ -s "/boot/$f" ]] || die "/boot/$f missing on the USB drive's BOOT"
+      done
+      mkdir -p "$WORK/boot/EFI/BOOT" "$WORK/boot/dtb"
+      cp /boot/EFI/BOOT/BOOTAA64.EFI /boot/EFI/BOOT/QCOMRAMP.EFI /boot/EFI/BOOT/grub.cfg "$WORK/boot/EFI/BOOT/"
+      cp /boot/Image "$WORK/boot/Image"
+      cp "/boot/dtb/$dtb" "$WORK/boot/dtb/"
+      python3 - "/boot/EFI/BOOT/qcomramp.cfg" "$WORK/boot/EFI/BOOT/qcomramp.cfg" "$dtb" <<'PY' || die "no $panel entry in the GRUB config"
+import re, sys
+src, dst, dtb = sys.argv[1:]
+text = open(src).read()
+entries = re.findall(r'menuentry "[^"]*" \{.*?\n\}', text, re.S)
+mine = [e for e in entries if "/dtb/" + dtb in e]
+if not mine:
+    sys.exit(1)
+entry = re.sub(r'menuentry "[^"]*"', 'menuentry "SteamOS ARM Port"', mine[0], count=1)
+open(dst, "w").write("set timeout=0\nset default=0\nset gfxpayload=keep\n\n" + entry + "\n")
+PY
+      grep -q 'root=PARTLABEL=STORAGE' "$WORK/boot/EFI/BOOT/qcomramp.cfg" || die "GRUB config has no root=PARTLABEL=STORAGE"
+      flash_boot /boot/tablet/lenovo-legion-tab-gen3-boot.img ;;
+    elden)
+      log "Legion Y700 Gen 4: firmware from Android, then the boot image"
+      local fw=/var/lib/steamos-arm/firmware/elden
+      /usr/lib/steamos-arm/tablet-firmware /usr/share/steamos-arm/tablets/elden-firmware.json "$fw" \
+        --also /usr/lib/firmware
+      mkdir -p "$WORK/root$fw"
+      rsync -a "$fw/" "$WORK/root$fw/"
+      flash_boot /boot/tablet/lenovo-legion-y700-gen4-boot.img ;;
+  esac
+}
+
 if (( ! RESUME )); then
   log "repartitioning (one write; the old table goes to $BACKUP_DIR first)"
   "${PART[@]}" apply --disk "$DISK" --storage-gib "$STORAGE_GB" \
@@ -298,6 +389,9 @@ esac
 log "installing KERNEL (root=PARTLABEL=STORAGE)"
 "${BOOTIMG[@]}" retarget /boot/KERNEL "$WORK/boot/KERNEL" --root PARTLABEL=STORAGE >/dev/null
 (cd "$WORK/boot" && md5sum KERNEL >KERNEL.md5)
+if [[ -n "$TABLET" ]]; then
+  install_tablet_boot
+fi
 if compgen -G "$BACKUP_DIR/ufs-gpt-*" >/dev/null; then
   mkdir -p "$WORK/home/.ufs-backup"
   cp "$BACKUP_DIR"/ufs-gpt-* "$WORK/home/.ufs-backup/"
@@ -318,6 +412,13 @@ cmp -s <(printf '%s' "$FSTAB") "$WORK/root/etc/fstab" || die "fstab not written"
 cleanup
 echo
 log "done. SteamOS is on internal storage."
+if [[ -n "$TABLET" ]]; then
+  echo "  - Power off and unplug the USB drive, then power on: it starts SteamOS from"
+  echo "    internal storage."
+  echo "  - Android's boot image is saved in /home/.ufs-backup (stock-boot_*.img). To go back"
+  echo "    to Android, flash it from a PC: fastboot flash boot stock-boot_<slot>.img"
+  exit 0
+fi
 echo "  - Power off and take out the SD card. In the ABL menu (hold Volume Down at power-on),"
 echo "    set Boot source to Internal, then boot Linux. With Boot source on SD it stops at"
 echo "    \"no volumes match boot source\"."
