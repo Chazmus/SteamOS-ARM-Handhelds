@@ -156,9 +156,54 @@ light() {
   return 1
 }
 
+# After a long sleep the saved scan results are gone and Wi-Fi needs a full
+# scan. Sometimes that first scan comes back empty (seen with the router on a
+# DFS channel) and nothing retries it, so the device stays offline until Wi-Fi
+# is turned off and on. Remember whether it was connected, and after waking do
+# that retry ourselves.
+WIFI_MARK=/run/konkr/wifi-was-connected
+
+wifi_connected() {
+  [[ $(nmcli -t -g GENERAL.STATE device show wlan0 2>/dev/null) == 100* ]]
+}
+
+wifi_wait() {  # wifi_wait <seconds>: true once connected
+  local i
+  for ((i = 0; i < $1 * 2; i++)); do
+    wifi_connected && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+wifi_watch() {
+  [[ -e $WIFI_MARK ]] || exit 0
+  rm -f "$WIFI_MARK"
+  wifi_wait 6 && exit 0
+  log "wifi: not back 6 s after waking, starting a new scan"
+  iw dev wlan0 scan abort 2>/dev/null
+  nmcli device wifi rescan 2>/dev/null
+  wifi_wait 8 && { log "wifi: connected after the new scan"; exit 0; }
+  log "wifi: still offline, turning it off and on"
+  nmcli radio wifi off && sleep 1 && nmcli radio wifi on
+  wifi_wait 10 && log "wifi: connected after turning it off and on" || log "wifi: still offline"
+}
+
+wifi_mark() {
+  mkdir -p "${WIFI_MARK%/*}"
+  if wifi_connected; then : >"$WIFI_MARK"; else rm -f "$WIFI_MARK"; fi
+}
+
+wifi_watch_start() {
+  [[ -e $WIFI_MARK ]] || return 0
+  systemd-run --no-block --quiet --collect --unit=konkr-wifi-wake \
+    /usr/lib/konkr/konkr-sleep wifi-watch 2>/dev/null || true
+}
+
 pre() {
   local n u
   report_start
+  wifi_mark
   if light; then
     sync
     u=$(ufs_off)
@@ -196,6 +241,7 @@ touch_on() {
 post() {
   report_end
   ufs_on
+  wifi_watch_start
   if light; then
     systemctl kill -s HUP konkrd.service >/dev/null 2>&1
     log "post: restored"
@@ -230,6 +276,7 @@ case "${1:-}" in
   standby-post)
     [[ -d /sys/module/${WIFI_MODS[0]} ]] || modprobe "${WIFI_MODS[0]}" ;;
   standby-screen-on) gamescope_screen 0 ;;
-  *) echo "usage: konkr-sleep pre|post|standby-pre|standby-audio-on|standby-post|standby-screen-on" >&2; exit 2 ;;
+  wifi-watch) wifi_watch ;;
+  *) echo "usage: konkr-sleep pre|post|standby-pre|standby-audio-on|standby-post|standby-screen-on|wifi-watch" >&2; exit 2 ;;
 esac
 exit 0
