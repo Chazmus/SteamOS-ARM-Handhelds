@@ -56,7 +56,9 @@ FAN_CURVES = {
     # Silent leans on the chip's headroom (it throttles past ~100 °C): off
     # to 60, a murmur through the 70s, full only near the top (GitHub #38).
     "silent":   [(60, 0), (68, 35), (76, 65), (84, 110), (90, 170), (95, 255)],
-    "balanced": [(50, 35), (60, 60), (70, 100), (80, 160), (90, 255)],
+    # Balanced: quieter through 60-85 °C, where games sit; the same full
+    # speed at the top.
+    "balanced": [(50, 35), (60, 50), (70, 80), (80, 130), (88, 200), (95, 255)],
     "turbo":    [(45, 90), (60, 140), (70, 200), (80, 255)],
 }
 # fraction of the GPU OPP range: (floor, ceiling)
@@ -233,6 +235,16 @@ def curve_pwm(curve, temp: float) -> int:
     return curve[-1][1]
 
 
+# A burst (waking, opening a menu, a loading screen) runs the big cores flat
+# out for a moment and their hotspot sensors jump 40 °C in under a second.
+# Only a reading that stays hot counts as hot; the chip's own limits (LMh)
+# cover the seconds in between.
+HOT_TICKS = 3
+DANGER_C = 100
+# Waking from s2idle is such a burst on every core at once: the fan holds its
+# speed this long after a resume.
+RESUME_SETTLE_S = 8.0
+
 FIXED_OVERRIDE_ON_C = 90
 FIXED_OVERRIDE_OFF_C = 82
 # Standby (konkr-standby, screen off): fan off while the SoC is below this.
@@ -268,6 +280,9 @@ class Fan:
         self.smooth = None
         self.set_temp = 0.0
         self.hot_override = False
+        self.hot_ticks = 0
+        self.slept = None
+        self.settle_until = 0.0
         if self.enabled:
             wr(f"{self.dir}/pwm1_enable", 1)
             log(f"fan: {self.dir}")
@@ -278,6 +293,12 @@ class Fan:
         if not self.enabled:
             return
         fan = fan or {}
+        # Time spent asleep shows as CLOCK_BOOTTIME pulling ahead of
+        # CLOCK_MONOTONIC: just woke up, so let the resume burst pass.
+        slept = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+        if self.slept is not None and slept - self.slept > 1.0:
+            self.settle_until = time.monotonic() + RESUME_SETTLE_S
+        self.slept = slept
         try:
             follow, raw = curve_temp_c()
         except RuntimeError:
@@ -323,11 +344,14 @@ class Fan:
         # Genuinely hot: the chip as a whole at 85 C, or any one sensor at
         # 95 C. A single hotspot touching 85 for a moment while the rest sat
         # near 60 used to throw the fan from 30 to 100 % (RP6, Silent).
-        hot = follow >= 85 or raw >= 95
+        if time.monotonic() < self.settle_until and raw < DANGER_C:
+            return
+        self.hot_ticks = self.hot_ticks + 1 if (follow >= 85 or raw >= 95) else 0
+        hot = self.hot_ticks >= HOT_TICKS or raw >= DANGER_C
         if self.smooth is None or hot:
             self.smooth = follow
         else:
-            self.smooth = 0.75 * self.smooth + 0.25 * follow
+            self.smooth = 0.85 * self.smooth + 0.15 * follow
         temp = self.smooth
         want = max(self.min_pwm, curve_pwm(FAN_CURVES[profile], temp))
         if want > self.cur:
@@ -341,7 +365,7 @@ class Fan:
             return
         if step != self.cur and wr(f"{self.dir}/pwm1", step):
             if abs(step - self.cur) >= 40 or self.cur < 0:
-                log(f"fan: {temp:.1f} C ({hottest_zone()}) -> pwm {step}")
+                log(f"fan: {temp:.1f} C (hottest {raw:.0f} C, {hottest_zone()}) -> pwm {step}")
             self.cur = step
 
     def failsafe_now(self) -> None:
