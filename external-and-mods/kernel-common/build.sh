@@ -27,25 +27,33 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_ROOT="$(cd "${HERE}/../.." && pwd)"
 
 SOC_ARG="${1:-}"
-[[ "$SOC_ARG" =~ ^sm[0-9]+$ ]] || { echo "usage: $0 <sm8650|sm8550> [--repack-boot]" >&2; exit 2; }
+[[ "$SOC_ARG" =~ ^[a-z0-9]+$ ]] || { echo "usage: $0 <sm8650|sm8550|sm8750|<device>> [--repack-boot]" >&2; exit 2; }
 shift
 SOC_DIR="${PORT_ROOT}/external-and-mods/kernel-${SOC_ARG}"
 [[ -f "${SOC_DIR}/soc.env" ]] || { echo "no ${SOC_DIR}/soc.env" >&2; exit 2; }
 # shellcheck source=../kernel-sm8650/soc.env
 source "${SOC_DIR}/soc.env"
 
-LOCALVERSION="${LOCALVERSION:--${SOC}-steamos}"
+# A device kernel (kernel-<device>/soc.env) builds on a chip's recipe under
+# its own name: KNAME names the build, its work dir and its release, and
+# PORT_DIRS lists the kernel-* folders whose patches/, dts/ and
+# steamos.config apply, in order. A chip's own recipe sets neither.
+KNAME="${KNAME:-$SOC}"
+read -ra PORT_DIRS_A <<<"${PORT_DIRS:-kernel-${SOC_ARG}}"
+port_dir() { echo "${PORT_ROOT}/external-and-mods/$1"; }
+
+LOCALVERSION="${LOCALVERSION:--${KNAME}-steamos}"
 ROCKNIX_DIR="${ROCKNIX_DIR:-${PORT_ROOT}/../rocknix-${ROCKNIX_REF}}"
 TDDI_REF="${TDDI_REF:-af27029fa2b27c4a77d16809298ed5d03c9da5a6}"
 DTBS="${DTBS_OVERRIDE:-$DTBS}"
 
-WORK="${WORK:-/work/kernel-${SOC}}"
+WORK="${WORK:-/work/kernel-${KNAME}}"
 CACHE="${WORK}/cache"
 SRC="${WORK}/linux-${KVER}"
 OUT_BASE="${OUT_BASE:-${WORK}/output}"
 JOBS="${JOBS:-$(nproc)}"
 
-log() { printf '[kernel-%s] %s\n' "$SOC" "$*" >&2; }
+log() { printf '[kernel-%s] %s\n' "$KNAME" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 [[ "$(uname -m)" == aarch64 ]] || die "build on aarch64 Linux (Colima VM), not $(uname -m)"
@@ -79,27 +87,43 @@ prepare_source() {
   else
     die "ROCKNIX source needs Git metadata to verify the pinned revision"
   fi
+  # KSRC_URL (soc.env): a kernel tree's source tarball instead of kernel.org's
+  # release, for a device whose support isn't in mainline or ROCKNIX yet.
   local tarball="${CACHE}/linux-${KVER}.tar.xz"
-  fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
-  local patch_digest
-  patch_digest="$( { echo "$PATCH_DIRS ${PATCH_SKIP:-}"; find "${SOC_DIR}" -path "${SOC_DIR}/patches/*" -type f -o -path "${SOC_DIR}/dts/*" -type f | sort | xargs -r sha256sum | cut -d" " -f1; } | sha256sum | cut -d" " -f1)"
-  if [[ -f "${SRC}/.${SOC}-patched" && "$(cat "${SRC}/.${SOC}-patched")" == "$patch_digest" ]]; then
+  if [[ -n "${KSRC_URL:-}" ]]; then
+    tarball="${CACHE}/linux-${KNAME}-${KSRC_URL##*/}"
+    fetch "$KSRC_URL" "$tarball"
+    [[ -z "${KSRC_SHA256:-}" ]] || echo "${KSRC_SHA256}  ${tarball}" | sha256sum -c --quiet || die "source hash mismatch: $tarball"
+  else
+    fetch "https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x/linux-${KVER}.tar.xz" "$tarball"
+  fi
+  local patch_digest pd
+  patch_digest="$( { echo "${KSRC_URL:-} $PATCH_DIRS ${PATCH_SKIP:-} ${PORT_DIRS_A[*]}"; for pd in "${PORT_DIRS_A[@]}"; do pd="$(port_dir "$pd")"; find "$pd" -path "${pd}/patches/*" -type f -o -path "${pd}/dts/*" -type f | sort; done | xargs -r sha256sum | cut -d" " -f1; } | sha256sum | cut -d" " -f1)"
+  if [[ -f "${SRC}/.${KNAME}-patched" && "$(cat "${SRC}/.${KNAME}-patched")" == "$patch_digest" ]]; then
     log "source already patched: ${SRC}"
     return 0
   fi
   rm -rf "$SRC"
   mkdir -p "$WORK"
-  log "extract linux-${KVER}"
-  tar -C "$WORK" -xf "$tarball"
+  log "extract $(basename "$tarball")"
+  if [[ -n "${KSRC_URL:-}" ]]; then
+    local top
+    top="$(tar -tf "$tarball" | head -1 | cut -d/ -f1)"
+    rm -rf "${WORK:?}/${top}"
+    tar -C "$WORK" -xf "$tarball"
+    mv "${WORK}/${top}" "$SRC"
+  else
+    tar -C "$WORK" -xf "$tarball"
+  fi
 
   # ROCKNIX patch dirs in soc.env order, then ours.
   local d p
   local -a dirs
   read -ra dirs <<<"$PATCH_DIRS"
-  dirs+=("@port")
+  for pd in "${PORT_DIRS_A[@]}"; do dirs+=("@port:${pd}"); done
   for d in "${dirs[@]}"; do
     local pdir
-    if [[ "$d" == "@port" ]]; then pdir="${SOC_DIR}/patches"; else pdir="$(rocknix_path "$d")"; fi
+    if [[ "$d" == @port:* ]]; then pdir="$(port_dir "${d#@port:}")/patches"; else pdir="$(rocknix_path "$d")"; fi
     [[ -d "$pdir" ]] || { log "skip missing patch dir $d"; continue; }
     for p in "$pdir"/*.patch; do
       [[ -e "$p" ]] || continue
@@ -115,11 +139,24 @@ prepare_source() {
     done
   done
 
-  log "install ROCKNIX ${ROCKNIX_DEVICE} DTS"
-  cp -v "$(rocknix_path "projects/ROCKNIX/devices/${ROCKNIX_DEVICE}/linux/dts/qcom")"/*.dts* \
-    "${SRC}/arch/arm64/boot/dts/qcom/" >&2
-  local app
-  for app in "${SOC_DIR}"/dts/*.append; do
+  # SKIP_ROCKNIX_DTS=1 (soc.env): a device tree's own source tree, where
+  # ROCKNIX's trees for that SoC don't belong.
+  if [[ "${SKIP_ROCKNIX_DTS:-0}" != 1 ]]; then
+    log "install ROCKNIX ${ROCKNIX_DEVICE} DTS"
+    cp -v "$(rocknix_path "projects/ROCKNIX/devices/${ROCKNIX_DEVICE}/linux/dts/qcom")"/*.dts* \
+      "${SRC}/arch/arm64/boot/dts/qcom/" >&2
+  fi
+  # Whole device trees of our own (a device ROCKNIX doesn't carry), then the
+  # appends onto ROCKNIX's or our trees.
+  local app f
+  for pd in "${PORT_DIRS_A[@]}"; do
+    for f in "$(port_dir "$pd")"/dts/*.dts "$(port_dir "$pd")"/dts/*.dtsi; do
+      [[ -e "$f" ]] || continue
+      log "dts $(basename "$f")"
+      cp "$f" "${SRC}/arch/arm64/boot/dts/qcom/"
+    done
+  done
+  for app in $(for pd in "${PORT_DIRS_A[@]}"; do ls "$(port_dir "$pd")"/dts/*.append 2>/dev/null; done); do
     [[ -e "$app" ]] || continue
     log "append $(basename "$app")"
     # <name>.dts.append goes onto <name>.dts (this used to write <name>.dts.dts,
@@ -132,7 +169,7 @@ prepare_source() {
   for dtb in $DTBS; do
     grep -q "${dtb}.dtb" "$mk" || echo "dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}.dtb" >>"$mk"
   done
-  printf "%s\n" "$patch_digest" > "${SRC}/.${SOC}-patched"
+  printf "%s\n" "$patch_digest" > "${SRC}/.${KNAME}-patched"
 }
 
 stage_builtin_firmware() {
@@ -177,9 +214,15 @@ stage_builtin_firmware() {
 }
 
 configure() {
+  # KCONFIG (soc.env): the base config of a device's own source tree, a file
+  # in kernel-<device>/, instead of ROCKNIX's for the SoC.
   local cfg
-  cfg="$(rocknix_path "projects/ROCKNIX/devices/${ROCKNIX_DEVICE}/linux/linux.aarch64.conf")"
-  [[ -f "$cfg" ]] || die "missing ROCKNIX config $cfg"
+  if [[ -n "${KCONFIG:-}" ]]; then
+    cfg="${SOC_DIR}/${KCONFIG}"
+  else
+    cfg="$(rocknix_path "projects/ROCKNIX/devices/${ROCKNIX_DEVICE}/linux/linux.aarch64.conf")"
+  fi
+  [[ -f "$cfg" ]] || die "missing base config $cfg"
   cp "$cfg" "${SRC}/.config"
   local sc="${SRC}/scripts/config --file ${SRC}/.config"
   # ROCKNIX embeds its own initramfs through this placeholder; ours goes
@@ -193,6 +236,14 @@ configure() {
   fi
   $sc --set-str LOCALVERSION "$LOCALVERSION"
   $sc --disable LOCALVERSION_AUTO
+  # CMDLINE_BUILTIN=1 (soc.env): a stock bootloader passes its own Android
+  # cmdline, so the kernel carries ours (root by partition name, CMDLINE_ROOT)
+  # and ignores what it is given.
+  if [[ "${CMDLINE_BUILTIN:-0}" == 1 ]]; then
+    $sc --set-str CMDLINE "$(bash -c "source '${SOC_DIR}/soc.env'; source '${HERE}/cmdline.sh'; build_cmdline '${CMDLINE_ROOT:?CMDLINE_BUILTIN needs CMDLINE_ROOT}'")"
+    $sc --enable CMDLINE_FORCE
+    $sc --disable CMDLINE_FROM_BOOTLOADER
+  fi
   # FW_BUILTIN=0 (soc.env): like ROCKNIX, nothing built in; the same files
   # still go to the rootfs (install_output) and load from there.
   if [[ "${FW_BUILTIN:-1}" == 1 ]]; then
@@ -205,7 +256,10 @@ configure() {
   # then the SoC's own (kernel-<soc>/steamos.config), if any.
   local frag="${WORK}/steamos.config.merged"
   cat "${HERE}/steamos.config" >"$frag"
-  [[ -f "${SOC_DIR}/steamos.config" ]] && cat "${SOC_DIR}/steamos.config" >>"$frag"
+  local pd
+  for pd in "${PORT_DIRS_A[@]}"; do
+    [[ -f "$(port_dir "$pd")/steamos.config" ]] && cat "$(port_dir "$pd")/steamos.config" >>"$frag"
+  done
   local line opt val
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -307,6 +361,9 @@ install_output() {
 
   local dtb
   for dtb in $DTBS; do cp "${SRC}/arch/arm64/boot/dts/qcom/${dtb}.dtb" "$o/dtbs/"; done
+  # KEEP_IMAGE=1 (soc.env): a device booted by its own bootloader (no ROCKNIX
+  # ABL) takes the plain Image and a DTB instead of KERNEL.
+  [[ "${KEEP_IMAGE:-0}" == 1 ]] && cp "${SRC}/arch/arm64/boot/Image" "$o/boot/Image"
   cp "${SRC}/.config" "$o/config-${KREL}"
   cp "${SRC}/System.map" "$o/System.map-${KREL}"
   pack_kernel_img "$o/boot/KERNEL"
