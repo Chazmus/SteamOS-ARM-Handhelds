@@ -131,6 +131,11 @@ ufs_off() {
     [[ -e $host ]] || continue
     name=${host##*/}
     ufs_in_use "$name" && continue
+    # Clock scaling off first: removing the host stops its devfreq monitor, and
+    # with scaling on that stop deadlocked (the unbind stuck in D state, every
+    # later suspend -EBUSY at freeze, shutdown hung). Off, the monitor is
+    # already idle. A fresh bind turns scaling back on.
+    [[ -w $host/clkscale_enable ]] && echo 0 >"$host/clkscale_enable"
     echo "$name" >/sys/bus/platform/drivers/ufshcd-qcom/unbind && echo "$name" >>"$UFS_STATE"
   done
   [[ -s $UFS_STATE ]] && echo "$(tr '\n' ' ' <"$UFS_STATE")"
