@@ -459,7 +459,8 @@ def start_job(action: str, app_id: str, **extra) -> dict:
     unit = f"steamos-arm-hub-{app_id}-{job['id']}"
     try:
         r = subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit={unit}",
-                            "--property=Nice=5", *cmd], capture_output=True, timeout=15)
+                            "--property=Nice=5", "--property=IOWeight=20", *cmd],
+                           capture_output=True, timeout=15)
         if r.returncode == 0:
             return job
     except (OSError, subprocess.TimeoutExpired):
@@ -811,10 +812,31 @@ def do_remove(job: Job) -> None:
     drop_shortcut(app_id)
 
 
+def wait_turn(job: "Job"):
+    """One job at a time. A pack starts a job per app; run together, eight
+    downloads, unpacks and installs at once made Game Mode stutter and Decky
+    lag. The others wait as Queued (and can still be cancelled)."""
+    JOBS.mkdir(parents=True, exist_ok=True)
+    lock = open(JOBS / ".running.lock", "w")
+    queued = False
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock
+        except BlockingIOError:
+            if job.path.with_suffix(".cancel").exists():
+                raise Cancelled()
+            if not queued:
+                job.step("Queued", 0)
+                queued = True
+            time.sleep(1.0)
+
+
 def runner(job_id: str) -> None:
     job = Job(job_id)
     signal.signal(signal.SIGTERM, lambda *_: job.path.with_suffix(".cancel").touch())
     try:
+        turn = wait_turn(job)  # held until this process exits
         action = job.data["action"]
         if action == "install":
             do_install(job)
