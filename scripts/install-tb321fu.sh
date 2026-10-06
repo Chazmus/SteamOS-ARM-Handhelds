@@ -61,13 +61,18 @@ U="$R/usr/share/alsa/ucm2"
 A="$W/ov/usr/share/alsa/ucm2"
 rm -rf "$U/LenovoY700TB321"
 mkdir -p "$U/LenovoY700TB321/wcd939x"
-cp -a "$A/LenovoY700TB321/HiFi.conf" "$A/LenovoY700TB321/LenovoY700TB321.conf" "$U/LenovoY700TB321/"
+cp -a "$A/LenovoY700TB321/LenovoY700TB321.conf" "$U/LenovoY700TB321/"
+# Our verb: speakers on their own PCM (see the file), not GUF296's shared one.
+cp "${HERE}/../external-and-mods/tb321fu-boot/ucm/HiFi.conf" "$U/LenovoY700TB321/HiFi.conf"
 cp -a "$A/codecs/wcd939x/." "$U/LenovoY700TB321/wcd939x/"
 # Its own WCD939x sequences, not the shared ones the other 8 Gen 3 devices use.
 sed -i 's|"/codecs/wcd939x/|"/LenovoY700TB321/wcd939x/|g' "$U/LenovoY700TB321/"*.conf "$U/LenovoY700TB321/wcd939x/"*.conf
 for d in sm8650 snd_soc_sc8280xp; do
   mkdir -p "$U/conf.d/$d"
-  ln -sfn ../../LenovoY700TB321/LenovoY700TB321.conf "$U/conf.d/$d/Lenovo-Y700-TB321FU.conf"
+  # Some Lenovo firmware names the card Lenovo-QRD-2.0.
+  for n in Lenovo-Y700-TB321FU Lenovo-QRD-2.0; do
+    ln -sfn ../../LenovoY700TB321/LenovoY700TB321.conf "$U/conf.d/$d/$n.conf"
+  done
 done
 grep -rq '/codecs/wcd939x/' "$U/LenovoY700TB321" && die "profile still points at the shared WCD939x sequences"
 
@@ -78,7 +83,7 @@ install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/51-lenov
 # Lenovo Legion Tab Gen 3: buffer sizes the ADSP accepts for its card.
 monitor.alsa.rules = [
   {
-    matches = [ { alsa.card_name = "Lenovo-Y700-TB321FU" } ]
+    matches = [ { alsa.card_name = "Lenovo-Y700-TB321FU" }, { alsa.card_name = "Lenovo-QRD-2.0" } ]
     actions = {
       update-props = {
         api.alsa.period-size = 1024
