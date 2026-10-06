@@ -8,10 +8,15 @@ machine driver. Upstream 7.2 has no TDM support at all, so the AW2308 smart PAs 
 SEC_TDM_RX_0 never get a bit clock (no_clks=1, start failed). GUF's TDM startup is
 chained in front of Armada's MI2S/SoundWire BE startup.
 
-diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
---- a/sound/soc/qcom/qdsp6/audioreach.c	2026-09-29 22:06:36.098891571 +0200
-+++ b/sound/soc/qcom/qdsp6/audioreach.c	2026-09-29 22:06:36.489835331 +0200
-@@ -153,6 +153,20 @@
+
+Rebased onto 7.2.8 for SteamOS ARM Port: the back-end startup chains to
+qcom_snd_sdw_startup, which 7.2.8 uses for these links.
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index af8736a..08f6441 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -152,6 +152,20 @@ struct apm_i2s_module_intf_cfg {
  
  #define APM_I2S_INTF_CFG_PSIZE ALIGN(sizeof(struct apm_i2s_module_intf_cfg), 8)
  
@@ -32,7 +37,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
  struct apm_module_hw_ep_mf_cfg {
  	struct apm_module_param_data param_data;
  	struct param_id_hw_ep_mf mf;
-@@ -169,6 +183,14 @@
+@@ -168,6 +182,14 @@ struct apm_module_frame_size_factor_cfg {
  
  #define APM_FS_CFG_PSIZE ALIGN(sizeof(struct apm_module_frame_size_factor_cfg), 8)
  
@@ -47,7 +52,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
  struct apm_module_hw_ep_power_mode_cfg {
  	struct apm_module_param_data param_data;
  	struct param_id_hw_ep_power_mode_cfg power_mode;
-@@ -305,6 +327,22 @@
+@@ -304,6 +326,22 @@ void audioreach_set_default_channel_mapping(u8 *ch_map, int num_channels)
  		ch_map[1] =  PCM_CHANNEL_FR;
  		ch_map[2] =  PCM_CHANNEL_LS;
  		ch_map[3] =  PCM_CHANNEL_RS;
@@ -70,15 +75,15 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
  	}
  }
  EXPORT_SYMBOL_GPL(audioreach_set_default_channel_mapping);
-@@ -853,6 +891,7 @@
+@@ -852,6 +890,7 @@ static int audioreach_mfc_set_media_format(struct q6apm_graph *graph,
  	struct apm_module_param_data *param_data;
  	struct param_id_mfc_media_format *media_format;
  	uint32_t num_channels = cfg->num_channels;
 +	uint32_t bit_width = cfg->bit_width;
  	int payload_size = APM_MFC_CFG_PSIZE(media_format, num_channels) +
  				APM_MODULE_PARAM_DATA_SIZE;
- 	int i, j;
-@@ -873,8 +912,8 @@
+ 	int i;
+@@ -872,8 +911,8 @@ static int audioreach_mfc_set_media_format(struct q6apm_graph *graph,
  	media_format = p;
  
  	media_format->sample_rate = cfg->sample_rate;
@@ -86,10 +91,10 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
 -	media_format->num_channels = cfg->num_channels;
 +	media_format->bit_width = bit_width;
 +	media_format->num_channels = num_channels;
- 	/* Convert the physical mapping to a logical mapping of the channels */
- 	for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < cfg->num_channels; i++) {
- 		if (!cfg->channel_map[i])
-@@ -997,70 +1036,368 @@
+ 	for (i = 0; i < num_channels; i++)
+ 		media_format->channel_mapping[i] = cfg->channel_map[i];
+ 
+@@ -992,70 +1031,368 @@ static int audioreach_i2s_set_media_format(struct q6apm_graph *graph,
  					   const struct audioreach_module *module,
  					   const struct audioreach_module_config *cfg)
  {
@@ -488,7 +493,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
  static int audioreach_logging_set_media_format(struct q6apm_graph *graph,
  					       const struct audioreach_module *module)
  {
-@@ -1413,6 +1750,10 @@
+@@ -1391,6 +1728,10 @@ int audioreach_set_media_format(struct q6apm_graph *graph,
  	case MODULE_ID_I2S_SINK:
  		rc = audioreach_i2s_set_media_format(graph, module, cfg);
  		break;
@@ -499,10 +504,11 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.
  	case MODULE_ID_WR_SHARED_MEM_EP:
  	case MODULE_ID_SH_MEM_PULL_MODE:
  		rc = audioreach_shmem_set_media_format(graph, module, cfg);
-diff -ruN a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.h
---- a/sound/soc/qcom/qdsp6/audioreach.h	2026-09-14 13:41:11.000000000 +0200
-+++ b/sound/soc/qcom/qdsp6/audioreach.h	2026-09-29 22:06:36.490141332 +0200
-@@ -22,6 +22,8 @@
+diff --git a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.h
+index 62a2fd7..06df419 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.h
++++ b/sound/soc/qcom/qdsp6/audioreach.h
+@@ -22,6 +22,8 @@ struct q6apm_graph;
  #define MODULE_ID_PLACEHOLDER_DECODER	0x07001009
  #define MODULE_ID_I2S_SINK		0x0700100A
  #define MODULE_ID_I2S_SOURCE		0x0700100B
@@ -511,7 +517,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.
  #define MODULE_ID_SAL			0x07001010
  #define MODULE_ID_MFC			0x07001015
  #define MODULE_ID_DATA_LOGGING		0x0700101A
-@@ -539,11 +541,60 @@
+@@ -539,11 +541,60 @@ struct param_id_i2s_intf_cfg {
  #define I2S_SD1				2
  #define I2S_SD2				3
  #define I2S_SD3				4
@@ -572,7 +578,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.
  #define PARAM_ID_DISPLAY_PORT_INTF_CFG		0x08001154
  
  struct param_id_display_port_intf_cfg {
-@@ -562,11 +613,29 @@
+@@ -562,11 +613,29 @@ struct param_id_hw_ep_mf {
  } __packed;
  
  #define PARAM_ID_HW_EP_FRAME_SIZE_FACTOR	0x08001018
@@ -602,7 +608,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.
  #define APM_CONTAINER_PROP_ID_PARENT_CONTAINER_ID	0x080010CB
  
  struct apm_cont_prop_id_parent_container  {
-@@ -900,6 +969,7 @@
+@@ -900,6 +969,7 @@ struct audioreach_module_config {
  	u32	sample_rate;
  	u16	bit_width;
  	u16	bits_per_sample;
@@ -610,9 +616,10 @@ diff -ruN a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.
  
  	u16	data_format;
  	u16	num_channels;
-diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
---- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c	2026-09-29 22:06:36.414985324 +0200
-+++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c	2026-09-29 22:08:33.956841575 +0200
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+index ae4dc54..e3253fd 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
++++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
 @@ -3,6 +3,7 @@
  
  #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
@@ -629,7 +636,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  
  struct q6apm_lpass_dai_data {
  	struct q6apm_graph *graph[APM_PORT_MAX];
-@@ -24,8 +26,21 @@
+@@ -24,8 +26,21 @@ struct q6apm_lpass_dai_data {
  	bool is_prepared[APM_PORT_MAX];
  	bool is_restored[APM_PORT_MAX];
  	struct audioreach_module_config module_config[APM_PORT_MAX];
@@ -651,7 +658,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  static int q6dma_set_channel_map(struct snd_soc_dai *dai,
  				 unsigned int tx_num,
  				 const unsigned int *tx_ch_mask,
-@@ -98,6 +113,174 @@
+@@ -98,6 +113,174 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
  	return 0;
  }
  
@@ -826,7 +833,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  static int q6hdmi_hw_params(struct snd_pcm_substream *substream,
  			    struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
  {
-@@ -143,6 +326,44 @@
+@@ -143,6 +326,44 @@ static int q6dma_hw_params(struct snd_pcm_substream *substream,
  	cfg->num_channels = channels;
  	audioreach_set_default_channel_mapping(cfg->channel_map, channels);
  
@@ -871,7 +878,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  	return 0;
  }
  
-@@ -164,6 +385,42 @@
+@@ -164,6 +385,42 @@ static void q6apm_lpass_dai_shutdown(struct snd_pcm_substream *substream, struct
  	}
  	dai_data->is_prepared[dai->id] = false;
  	dai_data->is_restored[dai->id] = false;
@@ -914,7 +921,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  }
  
  static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
-@@ -184,7 +441,8 @@
+@@ -184,7 +441,8 @@ static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
  		if (!dai_data->is_port_started[dai->id]) {
  			ret = q6apm_graph_start(dai_data->graph[dai->id]);
  			if (ret < 0)
@@ -924,7 +931,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  			else
  				dai_data->is_port_started[dai->id] = true;
  		}
-@@ -245,6 +503,12 @@
+@@ -245,6 +503,12 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct s
  	int graph_id = dai->id;
  	int rc;
  
@@ -937,7 +944,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  	/* Stopping a just-restored port drops BCLK while codecs may be starting */
  	if (dai_data->is_restored[dai->id]) {
  		dai_data->is_restored[dai->id] = false;
-@@ -292,6 +556,13 @@
+@@ -292,6 +556,13 @@ static int q6apm_lpass_dai_startup(struct snd_pcm_substream *substream, struct s
  	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
  	struct q6apm_graph *graph;
  	int graph_id = dai->id;
@@ -951,7 +958,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  
  	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
  		graph = q6apm_graph_open(dai->dev, NULL, dai->dev, graph_id, substream->stream);
-@@ -329,12 +600,24 @@
+@@ -329,12 +600,24 @@ static const struct snd_soc_dai_ops q6i2s_ops = {
  	.prepare	= q6apm_lpass_dai_prepare,
  	.startup	= q6apm_lpass_dai_startup,
  	.shutdown	= q6apm_lpass_dai_shutdown,
@@ -977,7 +984,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  static const struct snd_soc_dai_ops q6hdmi_ops = {
  	.prepare	= q6apm_lpass_dai_prepare,
  	.startup	= q6apm_lpass_dai_startup,
-@@ -418,10 +701,41 @@
+@@ -418,10 +701,41 @@ static int q6apm_lpass_dai_dev_probe(struct platform_device *pdev)
  	if (!dai_data)
  		return -ENOMEM;
  
@@ -1019,10 +1026,11 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm
  	cfg.q6dma_ops = &q6dma_ops;
  	cfg.q6hdmi_ops = &q6hdmi_ops;
  	dais = q6dsp_audio_ports_set_config(dev, &cfg, &num_dais);
-diff -ruN a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
---- a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c	2026-09-14 13:41:11.000000000 +0200
-+++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c	2026-09-29 22:06:36.490952473 +0200
-@@ -416,7 +416,9 @@
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
+index e5cd82f..6c337be 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
+@@ -416,7 +416,9 @@ static struct snd_soc_dai_driver q6dsp_audio_fe_dais[] = {
  			.stream_name = "Secondary MI2S Playback",
  			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
  				 SNDRV_PCM_RATE_16000,
@@ -1033,10 +1041,11 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c b/sound/soc/qcom/qdsp6/q6ds
  			.channels_min = 1,
  			.channels_max = 8,
  			.rate_min =     8000,
-diff -ruN a/sound/soc/qcom/qdsp6/q6prm-clocks.c b/sound/soc/qcom/qdsp6/q6prm-clocks.c
---- a/sound/soc/qcom/qdsp6/q6prm-clocks.c	2026-09-14 13:41:11.000000000 +0200
-+++ b/sound/soc/qcom/qdsp6/q6prm-clocks.c	2026-09-29 22:06:36.491138300 +0200
-@@ -42,6 +42,17 @@
+diff --git a/sound/soc/qcom/qdsp6/q6prm-clocks.c b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+index 4c574b4..769fc2c 100644
+--- a/sound/soc/qcom/qdsp6/q6prm-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+@@ -42,6 +42,17 @@ static const struct q6dsp_clk_init q6prm_clks[] = {
  	Q6PRM_CLK(LPASS_CLK_ID_INT5_MI2S_IBIT),
  	Q6PRM_CLK(LPASS_CLK_ID_INT6_MI2S_IBIT),
  	Q6PRM_CLK(LPASS_CLK_ID_QUI_MI2S_OSR),
@@ -1054,9 +1063,10 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6prm-clocks.c b/sound/soc/qcom/qdsp6/q6prm-clo
  	Q6PRM_CLK(LPASS_CLK_ID_WSA_CORE_MCLK),
  	Q6PRM_CLK(LPASS_CLK_ID_WSA_CORE_NPL_MCLK),
  	Q6PRM_CLK(LPASS_CLK_ID_VA_CORE_MCLK),
-diff -ruN a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
---- a/sound/soc/qcom/qdsp6/q6prm.h	2026-09-14 13:41:11.000000000 +0200
-+++ b/sound/soc/qcom/qdsp6/q6prm.h	2026-09-29 22:06:36.491381704 +0200
+diff --git a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
+index a988a32..bafce42 100644
+--- a/sound/soc/qcom/qdsp6/q6prm.h
++++ b/sound/soc/qcom/qdsp6/q6prm.h
 @@ -52,6 +52,19 @@
  /* Clock ID for QUINARY MI2S OSR CLK  */
  #define Q6PRM_LPASS_CLK_ID_QUI_MI2S_OSR                         0x116
@@ -1077,10 +1087,11 @@ diff -ruN a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
  #define Q6PRM_LPASS_CLK_ID_WSA_CORE_MCLK			0x305
  #define Q6PRM_LPASS_CLK_ID_WSA_CORE_NPL_MCLK			0x306
  
-diff -ruN a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
---- a/sound/soc/qcom/qdsp6/topology.c	2026-09-14 13:41:11.000000000 +0200
-+++ b/sound/soc/qcom/qdsp6/topology.c	2026-09-29 22:06:36.491817948 +0200
-@@ -743,6 +743,9 @@
+diff --git a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
+index 1f69fba..2010ed4 100644
+--- a/sound/soc/qcom/qdsp6/topology.c
++++ b/sound/soc/qcom/qdsp6/topology.c
+@@ -743,6 +743,9 @@ static int audioreach_widget_i2s_module_load(struct audioreach_module *mod,
  		case AR_TKN_U32_MODULE_WS_SRC:
  			mod->ws_src = le32_to_cpu(mod_elem->value);
  			break;
@@ -1090,7 +1101,7 @@ diff -ruN a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
  		default:
  			break;
  		}
-@@ -804,6 +807,8 @@
+@@ -804,6 +807,8 @@ static int audioreach_widget_load_buffer(struct snd_soc_component *component,
  		break;
  	case MODULE_ID_I2S_SINK:
  	case MODULE_ID_I2S_SOURCE:
@@ -1099,10 +1110,11 @@ diff -ruN a/sound/soc/qcom/qdsp6/topology.c b/sound/soc/qcom/qdsp6/topology.c
  		audioreach_widget_i2s_module_load(mod, mod_array);
  		break;
  	case MODULE_ID_DISPLAY_PORT_SINK:
-diff -ruN a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
---- a/sound/soc/qcom/sc8280xp.c	2026-09-29 22:06:36.405073210 +0200
-+++ b/sound/soc/qcom/sc8280xp.c	2026-09-29 22:06:36.492000489 +0200
-@@ -17,6 +17,11 @@
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 92b68c2..a418306 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -15,6 +15,11 @@
  #include "common.h"
  #include "sdw.h"
  
@@ -1114,7 +1126,7 @@ diff -ruN a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
  struct sc8280xp_snd_data {
  	bool stream_prepared[AFE_PORT_MAX];
  	struct snd_soc_card *card;
-@@ -140,6 +145,24 @@
+@@ -82,6 +87,24 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
  	channels->min = 2;
  	channels->max = 2;
  	switch (cpu_dai->id) {
@@ -1139,8 +1151,8 @@ diff -ruN a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
  	case TX_CODEC_DMA_TX_0:
  	case TX_CODEC_DMA_TX_1:
  	case TX_CODEC_DMA_TX_2:
-@@ -179,6 +202,126 @@
- 					   ayaneo_ps2_channels_mapping);
+@@ -96,6 +119,126 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	return 0;
  }
  
 +static int sc8280xp_tdm_snd_hw_params(struct snd_pcm_substream *substream,
@@ -1260,19 +1272,19 @@ diff -ruN a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
 +	if (ret)
 +		return ret;
 +
-+	return sc8280xp_snd_startup(substream);
++	return qcom_snd_sdw_startup(substream);
 +}
 +
  static int sc8280xp_snd_prepare(struct snd_pcm_substream *substream)
  {
  	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
-@@ -205,8 +348,9 @@
+@@ -115,8 +258,9 @@ static int sc8280xp_snd_hw_free(struct snd_pcm_substream *substream)
  }
  
  static const struct snd_soc_ops sc8280xp_be_ops = {
--	.startup = sc8280xp_snd_startup,
+-	.startup = qcom_snd_sdw_startup,
 +	.startup = sc8280xp_be_startup,
- 	.shutdown = sc8280xp_snd_shutdown,
+ 	.shutdown = qcom_snd_sdw_shutdown,
 +	.hw_params = sc8280xp_snd_hw_params,
  	.hw_free = sc8280xp_snd_hw_free,
  	.prepare = sc8280xp_snd_prepare,

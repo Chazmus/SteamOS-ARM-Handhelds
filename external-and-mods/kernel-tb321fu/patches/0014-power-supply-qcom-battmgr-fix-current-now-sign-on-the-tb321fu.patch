@@ -6,15 +6,19 @@ charging and positive while discharging.
 
 Taken from https://github.com/GUF296/linux branch TB321FU-7.1.1
 (5df8e852e), the Lenovo Legion Tab Gen 3 / Y700 2025 (TB321FU) bring-up.
+
+Rebased onto 7.2.8 for SteamOS ARM Port: the battery descriptor choice moved
+in the probe.
+
 ---
   drivers/power/supply/qcom_battmgr.c | 10 ++++++++--
   1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index 490137a23..4ebd484d3 100644
+index a9ae3a8..63602b3 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
-@@ -23,6 +23,7 @@ enum qcom_battmgr_variant {
+@@ -24,6 +24,7 @@ enum qcom_battmgr_variant {
  	QCOM_BATTMGR_SC8280XP,
  	QCOM_BATTMGR_SM8350,
  	QCOM_BATTMGR_SM8550,
@@ -22,7 +26,7 @@ index 490137a23..4ebd484d3 100644
  	QCOM_BATTMGR_X1E80100,
  };
  
-@@ -1432,7 +1433,10 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+@@ -1529,7 +1530,10 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
  			battmgr->info.voltage_max = le32_to_cpu(resp->intval.value);
  			break;
  		case BATT_CURR_NOW:
@@ -34,7 +38,7 @@ index 490137a23..4ebd484d3 100644
  			break;
  		case BATT_TEMP:
  			val = le32_to_cpu(resp->intval.value);
-@@ -1615,6 +1619,7 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
+@@ -1736,6 +1740,7 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
  	{ .compatible = "qcom,kaanapali-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550 },
  	{ .compatible = "qcom,sc8180x-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
  	{ .compatible = "qcom,sc8280xp-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
@@ -42,10 +46,10 @@ index 490137a23..4ebd484d3 100644
  	{ .compatible = "qcom,sm8550-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550 },
  	{ .compatible = "qcom,x1e80100-pmic-glink", .data = (void *)QCOM_BATTMGR_X1E80100 },
  	/* Unmatched devices falls back to QCOM_BATTMGR_SM8350 */
-@@ -1690,7 +1695,8 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
- 			return dev_err_probe(dev, PTR_ERR(battmgr->wls_psy),
- 					     "failed to register wireless charing power supply\n");
- 	} else {
+@@ -1813,7 +1818,8 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 		/* no BATTMGR_BAT_INFO from this firmware: it reports mAh */
+ 		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
+ 
 -		if (battmgr->variant == QCOM_BATTMGR_SM8550)
 +		if (battmgr->variant == QCOM_BATTMGR_SM8550 ||
 +		    battmgr->variant == QCOM_BATTMGR_SM8650)
