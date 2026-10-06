@@ -8,9 +8,9 @@ This is an unofficial community port of Valve's SteamOS for ARM, the build they 
 
 | Chip | Devices | Status |
 |---|---|---|
-| Snapdragon 8 Gen 3 (SM8650) | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | stable ([v1.2](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.2)) |
-| Snapdragon 8 Gen 2 (SM8550) | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova |  beta [(v1.3 beta 10)](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.3-beta10) |
-| Snapdragon 8 Elite (SM8750) | AYN Odin 3, KONKR Pocket FIT Elite | beta [(v1.3 8 Elite beta 2)](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/tag/v1.3-8elite-beta2)  ([docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md)) |
+| Snapdragon 8 Gen 3 (SM8650) | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | stable ([v1.2](https://github.com/steamos-arm-port/SteamOS-ARM-Port/releases/tag/v1.2)) |
+| Snapdragon 8 Gen 2 (SM8550) | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova |  beta [(v1.3 beta 10)](https://github.com/steamos-arm-port/SteamOS-ARM-Port/releases/tag/v1.3-beta10) |
+| Snapdragon 8 Elite (SM8750) | AYN Odin 3, KONKR Pocket FIT Elite | beta [(v1.3 8 Elite beta 2)](https://github.com/steamos-arm-port/SteamOS-ARM-Port/releases/tag/v1.3-8elite-beta2)  ([docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md)) |
 
 There's one image per chip and you pick your device in the ABL menu, the system figures out the rest. More chips will come later.
 
@@ -20,7 +20,7 @@ There's one image per chip and you pick your device in the ABL menu, the system 
 |---|---|---|
 | Snapdragon 888 (SM8350) | REDMAGIC 6 (NX669J, North America / global) | works, build it yourself ([docs/redmagic6.md](docs/redmagic6.md)) |
 
-I only own a Pocket FIT, so if you have one of the others please [let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
+I only own a Pocket FIT, so if you have one of the others please [let me know how it runs](https://github.com/steamos-arm-port/SteamOS-ARM-Port/issues).
 
 ## Features
 
@@ -48,7 +48,7 @@ I only own a Pocket FIT, so if you have one of the others please [let me know ho
 | AYN Odin 3 (SM8750) guide | [docs/ODIN3-INSTALL.md](docs/ODIN3-INSTALL.md) |
 | REDMAGIC 6 (SM8350) guide | [docs/redmagic6.md](docs/redmagic6.md) |
 
-Found a bug? [Open an issue](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
+Found a bug? [Open an issue](https://github.com/steamos-arm-port/SteamOS-ARM-Port/issues).
 
 ## What's different from other ARM builds
 
