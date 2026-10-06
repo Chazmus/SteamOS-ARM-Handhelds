@@ -94,6 +94,13 @@ for ((i = ${#KOUTS[@]} - 1; i >= 0; i--)); do
     rsync -a --ignore-existing "$k/firmware/ath12k/" "$R/usr/lib/firmware/ath12k/"
   fi
 done
+# Lenovo Legion Tab Gen 3: its firmware and audio profile, when its kernel is
+# one of this rootfs's (kernel-tb321fu).
+for k in "${KOUTS[@]}"; do
+  if [[ "$(basename "$k")" == *-tb321fu-steamos ]]; then
+    "${SCRIPT_DIR}/install-tb321fu.sh" "$R" || die "TB321FU firmware/audio install failed"
+  fi
+done
 # Frame supplies the exact upstream VPU33 firmware (SM8650) under its vendor
 # name. Iris requests the upstream alias. Verify before creating that alias.
 _vpu="$R/usr/lib/firmware/qcom/vpu/vpu33_4v.mbn"
