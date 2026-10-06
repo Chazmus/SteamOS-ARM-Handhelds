@@ -107,11 +107,15 @@ prepare_source() {
   mkdir -p "$WORK"
   log "extract $(basename "$tarball")"
   if [[ -n "${KSRC_URL:-}" ]]; then
-    local top
-    top="$(tar -tf "$tarball" | head -1 | cut -d/ -f1)"
-    rm -rf "${WORK:?}/${top}"
-    tar -C "$WORK" -xf "$tarball"
-    mv "${WORK}/${top}" "$SRC"
+    # Into a scratch dir first: the tree's top folder is named after the
+    # commit, and listing the tarball through head(1) died of SIGPIPE under
+    # pipefail.
+    local x
+    x="$(mktemp -d -p "$WORK" ksrc.XXXXXX)"
+    tar -C "$x" -xf "$tarball"
+    [[ "$(find "$x" -mindepth 1 -maxdepth 1 | wc -l)" == 1 ]] || die "$(basename "$tarball") has more than one top folder"
+    mv "$x"/* "$SRC"
+    rmdir "$x"
   else
     tar -C "$WORK" -xf "$tarball"
   fi
