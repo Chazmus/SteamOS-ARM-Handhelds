@@ -1,0 +1,15 @@
+[Unit]
+Description=Copy the tablet's firmware out of its own Android partitions
+ConditionFirmware=device-tree-compatible(lenovo,elden)
+DefaultDependencies=no
+After=local-fs.target systemd-udev-settle.service
+Before=NetworkManager.service bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/steamos-arm/tablet-firmware-boot
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

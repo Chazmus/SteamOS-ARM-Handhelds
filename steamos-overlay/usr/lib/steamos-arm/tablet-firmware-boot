@@ -1,0 +1,25 @@
+#!/bin/bash
+# Boot step for tablets whose firmware comes out of their own Android
+# (steamos-arm-tablet-firmware.service). Copies what is missing, then gives
+# the DSPs, Wi-Fi and Bluetooth another go if they came up without it.
+set -u
+model=""
+grep -aq "lenovo,elden" /sys/firmware/devicetree/base/compatible 2>/dev/null && model=elden
+[[ -n "$model" ]] || exit 0
+manifest=/usr/share/steamos-arm/tablets/${model}-firmware.json
+dest=/var/lib/steamos-arm/firmware/${model}
+[[ -f "$manifest" ]] || exit 0
+before="$(find "$dest" -type f 2>/dev/null | wc -l)"
+/usr/lib/steamos-arm/tablet-firmware "$manifest" "$dest" --also /usr/lib/firmware
+after="$(find "$dest" -type f 2>/dev/null | wc -l)"
+(( after > before )) || exit 0
+# Remote processors that failed to start for want of firmware.
+for rp in /sys/class/remoteproc/remoteproc*; do
+  [[ "$(cat "$rp/state" 2>/dev/null)" == offline ]] && echo start >"$rp/state" 2>/dev/null
+done
+# Wi-Fi and Bluetooth load their firmware when the driver binds.
+if [[ ! -e /sys/class/net/wlan0 ]]; then
+  modprobe -r ath12k_wifi7 ath12k 2>/dev/null; modprobe ath12k_wifi7 2>/dev/null || modprobe ath12k 2>/dev/null
+fi
+systemctl try-restart bluetooth.service 2>/dev/null
+exit 0

@@ -59,8 +59,32 @@ cp -a "$KOUT/boot/KERNEL.md5" "$R/boot/KERNEL.md5"
 chmod 0644 "$R/boot/KERNEL" "$R/boot/KERNEL.md5"
 
 # Clean out old Frame modules and install SM8750 modules
-find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 ! -name "$KREL" -exec rm -rf {} + 2>/dev/null || true
+# EXTRA_KERNEL_OUT: more kernels whose modules this rootfs carries (the
+# Lenovo Legion Y700 Gen 4 has its own kernel on the same system).
+read -ra EXTRA_KOUTS <<<"${EXTRA_KERNEL_OUT:-}"
+keep=(! -name "$KREL")
+for k in "${EXTRA_KOUTS[@]}"; do keep+=(! -name "$(basename "$(readlink -f "$k")")"); done
+find "$R/usr/lib/modules" -mindepth 1 -maxdepth 1 "${keep[@]}" -exec rm -rf {} + 2>/dev/null || true
 cp -a "$KOUT/modules/$KREL" "$R/usr/lib/modules/$KREL"
+for k in "${EXTRA_KOUTS[@]}"; do
+  k="$(readlink -f "$k")"; kr="$(basename "$k")"
+  [[ -d "$k/modules/$kr" ]] || die "missing modules at $k/modules/$kr"
+  rm -rf "$R/usr/lib/modules/$kr"
+  cp -a "$k/modules/$kr" "$R/usr/lib/modules/$kr"
+  mkdir -p "$R/opt/steamos-sm8750/$kr"
+  cp -a "$k/config-$kr" "$k/dtbs" "$R/opt/steamos-sm8750/$kr/" 2>/dev/null || true
+  if [[ "$kr" == *-elden-steamos ]]; then
+    log "== Lenovo Legion Y700 Gen 4 (${kr})"
+    "${ROOT}/scripts/install-elden.sh" "$R" || die "elden install failed"
+    install_file "$OVL/usr/lib/steamos-arm/tablet-firmware" "$R/usr/lib/steamos-arm/tablet-firmware" 0755
+    install_file "$OVL/usr/lib/steamos-arm/tablet-firmware-boot" "$R/usr/lib/steamos-arm/tablet-firmware-boot" 0755
+    install_file "$OVL/usr/lib/systemd/system/steamos-arm-tablet-firmware.service" \
+      "$R/usr/lib/systemd/system/steamos-arm-tablet-firmware.service" 0644
+    mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+    ln -sfn ../steamos-arm-tablet-firmware.service \
+      "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-firmware.service"
+  fi
+done
 
 # Merge SM8750 firmware
 cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
