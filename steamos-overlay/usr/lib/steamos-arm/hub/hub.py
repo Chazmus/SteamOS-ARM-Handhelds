@@ -1071,6 +1071,39 @@ def icon_for(e: dict) -> str:
     return "applications-games"
 
 
+def fetch_icons() -> None:
+    """Every catalog app's icon, so the store shows them before anything is
+    installed (icon_for used to run only at install). One runner at a time."""
+    ICON_DIR.mkdir(parents=True, exist_ok=True)
+    with open(ICON_DIR / ".fetch.lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        for e in catalog():
+            if e.get("icon") and not (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists():
+                icon_for(e)
+
+
+def fetch_icons_soon() -> None:
+    """Start fetch_icons in the background, at most every 10 minutes (an
+    offline device would otherwise try on every refresh)."""
+    stamp = ICON_DIR / ".fetch.stamp"
+    try:
+        if time.time() - stamp.stat().st_mtime < 600:
+            return
+    except OSError:
+        pass
+    try:
+        ICON_DIR.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        subprocess.Popen(["nice", "-n", "10", sys.executable, str(Path(__file__).resolve()), "_icons"],
+                         start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
 def write_desktop(e: dict) -> None:
     DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
     cat = {"emulator": "Game;Emulator;", "frontend": "Game;", "app": "Network;"}.get(e.get("kind"), "Game;")
@@ -1692,6 +1725,8 @@ def status() -> dict:
             "icon": str(ICON_DIR / f"steamos-arm-hub-{e['id']}.png") if (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists() else "",
             "available": best is not None,
         })
+    if any(not a["icon"] for a in apps):
+        fetch_icons_soon()
     return {"device": dev, "library": str(library()), "sd": sd_cards(),
             "home_label": HOME_LABELS[home_kind()], "apps": apps, "found": found_files()}
 
@@ -1747,6 +1782,9 @@ def main(argv: list[str]) -> int:
     out = None
     if cmd == "_run":
         runner(rest[0])
+        return 0
+    if cmd == "_icons":
+        fetch_icons()
         return 0
     if cmd == "run":
         run(rest[0], rest[1:])
