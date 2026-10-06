@@ -36,7 +36,7 @@ WARNING_TEXT = (
 
 
 def _is_tablet() -> bool:
-    """Lenovo Legion Tab Gen 3 / Y700 Gen 4: no ROCKNIX ABL, runs from USB."""
+    """Lenovo Legion Y700 Gen 3 / Gen 4: no ROCKNIX ABL, runs from USB."""
     try:
         compat = Path("/sys/firmware/devicetree/base/compatible").read_bytes()
     except OSError:

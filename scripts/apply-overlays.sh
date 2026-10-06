@@ -94,7 +94,7 @@ for ((i = ${#KOUTS[@]} - 1; i >= 0; i--)); do
     rsync -a --ignore-existing "$k/firmware/ath12k/" "$R/usr/lib/firmware/ath12k/"
   fi
 done
-# Lenovo Legion Tab Gen 3: its firmware and audio profile, when its kernel is
+# Lenovo Legion Y700 Gen 3: its firmware and audio profile, when its kernel is
 # one of this rootfs's (kernel-tb321fu).
 for k in "${KOUTS[@]}"; do
   if [[ "$(basename "$k")" == *-tb321fu-steamos ]]; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fill a Lenovo Legion Tab Gen 3 (TB321FU) ESP and fetch its boot.img.
+# Fill a Lenovo Legion Y700 Gen 3 (TB321FU) ESP and fetch its boot.img.
 #
 #   stage-tb321fu-boot.sh ESP_DIR KERNEL_OUT boe|csot CMDLINE [BOOTIMG_OUT]
 #

@@ -5,7 +5,7 @@
 #
 #   stage-tablet-boot.sh BOOT_DIR tb321fu|elden KERNEL_OUT
 #
-# tb321fu  Legion Tab Gen 3: EFI/BOOT (GRUB), Image and both panels' DTBs at
+# tb321fu  Legion Y700 Gen 3: EFI/BOOT (GRUB), Image and both panels' DTBs at
 #          the top of BOOT, which UEFI finds on the drive; the UEFI boot
 #          image to start it with goes to tablet/.
 # elden    Legion Y700 Gen 4: our kernel (DTB and cmdline built in) as a

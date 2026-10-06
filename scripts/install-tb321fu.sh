@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lenovo Legion Tab Gen 3 (TB321FU) support in the 8 Gen 3 rootfs.
+# Lenovo Legion Y700 Gen 3 (TB321FU) support in the 8 Gen 3 rootfs.
 #
 #   install-tb321fu.sh ROOTFS
 #
@@ -80,7 +80,7 @@ grep -rq '/codecs/wcd939x/' "$U/LenovoY700TB321" && die "profile still points at
 # PipeWire's default request fails (EINVAL) and nothing plays. Matched by the
 # card name, so no other device sees it.
 install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/51-lenovo-tb321fu-alsa.conf" <<'CONF'
-# Lenovo Legion Tab Gen 3: buffer sizes the ADSP accepts for its card.
+# Lenovo Legion Y700 Gen 3: buffer sizes the ADSP accepts for its card.
 monitor.alsa.rules = [
   {
     matches = [ { alsa.card_name = "Lenovo-Y700-TB321FU" }, { alsa.card_name = "Lenovo-QRD-2.0" } ]
@@ -100,7 +100,7 @@ CONF
 # the compositor instead (Game Mode already uses gamescope's shader).
 install -Dm0755 /dev/stdin "$R/etc/xdg/plasma-workspace/env/steamos-arm-tablet-kwin.sh" <<'ENV'
 #!/bin/sh
-# Lenovo Legion Tab Gen 3: rotate in the compositor (see install-tb321fu.sh).
+# Lenovo Legion Y700 Gen 3: rotate in the compositor (see install-tb321fu.sh).
 if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,tb321fu'; then
   export KWIN_ENABLE_HW_ROTATION=0
 fi
@@ -110,7 +110,7 @@ ENV
 # (Armada TB321FU notes): keep it powered until that is understood.
 install -Dm0644 /dev/stdin "$R/usr/lib/systemd/system/steamos-arm-tb321fu-gpu-on.service" <<'UNIT'
 [Unit]
-Description=Lenovo Legion Tab Gen 3: keep the GPU powered (its GMU doesn't resume)
+Description=Lenovo Legion Y700 Gen 3: keep the GPU powered (its GMU doesn't resume)
 ConditionFirmware=device-tree-compatible(lenovo,tb321fu)
 Before=display-manager.service
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Lenovo Legion Tab Gen 3 / Legion Y700 (2025), TB321FU, with the CSOT panel
+ * Lenovo Legion Y700 Gen 3, TB321FU, with the CSOT panel
  * (ro.vendor.display.paneltype other than 1 on stock Android).
  */
 
 #include "sm8650-lenovo-tb321fu.dtsi"
 
 / {
-	model = "Lenovo Legion Tab Gen 3 (CSOT panel)";
+	model = "Lenovo Legion Y700 Gen 3 (CSOT panel)";
 };
