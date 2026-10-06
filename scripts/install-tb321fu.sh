@@ -70,4 +70,59 @@ for d in sm8650 snd_soc_sc8280xp; do
   ln -sfn ../../LenovoY700TB321/LenovoY700TB321.conf "$U/conf.d/$d/Lenovo-Y700-TB321FU.conf"
 done
 grep -rq '/codecs/wcd939x/' "$U/LenovoY700TB321" && die "profile still points at the shared WCD939x sequences"
+
+# The ADSP takes at most 65280-byte buffers in 2-8 periods for this card;
+# PipeWire's default request fails (EINVAL) and nothing plays. Matched by the
+# card name, so no other device sees it.
+install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/51-lenovo-tb321fu-alsa.conf" <<'CONF'
+# Lenovo Legion Tab Gen 3: buffer sizes the ADSP accepts for its card.
+monitor.alsa.rules = [
+  {
+    matches = [ { alsa.card_name = "Lenovo-Y700-TB321FU" } ]
+    actions = {
+      update-props = {
+        api.alsa.period-size = 1024
+        api.alsa.period-num = 4
+        api.alsa.headroom = 0
+      }
+    }
+  }
+]
+CONF
+
+# Desktop Mode: the panel's two halves are 800 px wide, so the DPU's inline
+# rotator takes the rotation and leaves a line at the seam; KWin rotates in
+# the compositor instead (Game Mode already uses gamescope's shader).
+install -Dm0755 /dev/stdin "$R/etc/xdg/plasma-workspace/env/steamos-arm-tablet-kwin.sh" <<'ENV'
+#!/bin/sh
+# Lenovo Legion Tab Gen 3: rotate in the compositor (see install-tb321fu.sh).
+if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,tb321fu'; then
+  export KWIN_ENABLE_HW_ROTATION=0
+fi
+ENV
+
+# The Adreno 750's GMU fails to come back from runtime suspend on this tablet
+# (Armada TB321FU notes): keep it powered until that is understood.
+install -Dm0644 /dev/stdin "$R/usr/lib/systemd/system/steamos-arm-tb321fu-gpu-on.service" <<'UNIT'
+[Unit]
+Description=Lenovo Legion Tab Gen 3: keep the GPU powered (its GMU doesn't resume)
+ConditionFirmware=device-tree-compatible(lenovo,tb321fu)
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for d in 3d00000.gpu 3d6a000.gmu; do [ -e /sys/bus/platform/devices/$d/power/control ] && echo on > /sys/bus/platform/devices/$d/power/control; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
+ln -sfn ../steamos-arm-tb321fu-gpu-on.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tb321fu-gpu-on.service"
+
+# Tell the ABL each boot worked, or it gives up on the slot after 7.
+O="${HERE}/../steamos-overlay"
+install -Dm0755 "$O/usr/lib/steamos-arm/tablet-boot-ok" "$R/usr/lib/steamos-arm/tablet-boot-ok"
+install -Dm0644 "$O/usr/lib/systemd/system/steamos-arm-tablet-boot-ok.service" "$R/usr/lib/systemd/system/steamos-arm-tablet-boot-ok.service"
+ln -sfn ../steamos-arm-tablet-boot-ok.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-boot-ok.service"
 log "firmware and audio profile installed"

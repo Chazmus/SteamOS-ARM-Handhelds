@@ -1883,3 +1883,20 @@
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
 };
+
+/*
+ * No camera support yet (the sensor drivers are left out): with the camera
+ * subsystem up but nothing behind it, its video nodes fail and WirePlumber's
+ * v4l2 monitor stalls on them, so no audio stream ever links.
+ */
+&camss {
+	status = "disabled";
+};
+
+&cci0 {
+	status = "disabled";
+};
+
+&cci1 {
+	status = "disabled";
+};
