@@ -34,6 +34,9 @@ CacheDirectory=decky-box64
 # any archive read kills the plugin (decky-lsfg-vk Install did nothing) and
 # the loader then spins a core on the dead backend. Emulate liblzma instead.
 Environment=BOX64_EMULATED_LIBS=liblzma.so.5
+# Updating Decky from its settings would replace this unit with Decky's own,
+# which has none of the above; this tells the updater to keep ours.
+Environment=KEEP_SYSTEMD_SERVICE=1
 
 [Install]
 WantedBy=multi-user.target
