@@ -348,6 +348,11 @@ install_file "$OVL/usr/lib/steamos/sm8550-audio-setup" \
 install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
 # Charging/discharge time for Steam (the Frame's charger daemon is masked).
 install_file "$OVL/usr/lib/steamos-arm/vpower" "$R/usr/lib/steamos-arm/vpower" 0755
+# Keep the system's own drive and internal storage out of Steam's storage
+# settings (it offered to format the microSD card the system runs from).
+install_file "$OVL/usr/lib/steamos-arm/is-system-disk" "$R/usr/lib/steamos-arm/is-system-disk" 0755
+install_file "$OVL/usr/lib/udev/rules.d/98-steamos-arm-system-disk.rules" \
+  "$R/usr/lib/udev/rules.d/98-steamos-arm-system-disk.rules" 0644
 # Wi-Fi back quickly after s2idle (one-channel scan, then retries).
 install_file "$OVL/usr/lib/steamos-arm/steamos-arm-wifi-wake" "$R/usr/lib/steamos-arm/steamos-arm-wifi-wake" 0755
 install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
