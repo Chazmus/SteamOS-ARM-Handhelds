@@ -30,4 +30,14 @@ echo "RECOMMENDED_ANDROID_GIB=$rec"
 echo "BOOT_PART_GIB=2"
 echo "ROOT_PART_GIB=$STORAGE_GIB"
 echo "EXISTING_INSTALL=$([[ $(get MODE) == installed ]] && echo 1 || echo 0)"
-echo "RUNNING_FROM_SD=$([[ $root_disk == /dev/mmcblk* ]] && echo 1 || echo 0)"
+# Lenovo tablets have no microSD slot: our image runs from a USB drive there.
+tablet=0
+grep -aqE 'lenovo,(tb321fu|elden)' /sys/firmware/devicetree/base/compatible 2>/dev/null && tablet=1
+from_usb=0
+case "$(readlink -f "/sys/class/block/${root_disk#/dev/}")" in */usb*) from_usb=1 ;; esac
+echo "TABLET=$tablet"
+if (( tablet )); then
+  echo "RUNNING_FROM_SD=$from_usb"
+else
+  echo "RUNNING_FROM_SD=$([[ $root_disk == /dev/mmcblk* ]] && echo 1 || echo 0)"
+fi

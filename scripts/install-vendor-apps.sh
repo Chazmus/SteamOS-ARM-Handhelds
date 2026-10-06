@@ -84,6 +84,13 @@ EOF
 chmod 0755 "$bin/konkr-update-gui"
 install -m0644 "$MOD/konkr-update/konkr-update.desktop" "$apps/konkr-update.desktop"
 
+# ONLY_UFS=1: the installer alone (a system that otherwise has none of these,
+# like the 8 Elite one, where only the Legion Y700 Gen 4 installs to UFS).
+if [[ "${ONLY_UFS:-0}" == 1 ]]; then
+  log "done (installer only)"
+  exit 0
+fi
+
 # ── MESA Easy Manager (ARM-Manager, SteamOS password warning in app) ────────
 log "MESA Easy Manager"
 share_mesa="$R/usr/share/mesa-easy-manager"

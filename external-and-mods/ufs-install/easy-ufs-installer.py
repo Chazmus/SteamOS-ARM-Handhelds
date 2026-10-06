@@ -35,6 +35,19 @@ WARNING_TEXT = (
 )
 
 
+def _is_tablet() -> bool:
+    """Lenovo Legion Tab Gen 3 / Y700 Gen 4: no ROCKNIX ABL, runs from USB."""
+    try:
+        compat = Path("/sys/firmware/devicetree/base/compatible").read_bytes()
+    except OSError:
+        return False
+    return b"lenovo,tb321fu" in compat or b"lenovo,elden" in compat
+
+
+TABLET = _is_tablet()
+SOURCE = "the USB drive" if TABLET else "the SD card"
+
+
 def _pkexec(argv: list[str]) -> subprocess.CompletedProcess[str]:
     if os.geteuid() == 0:
         return subprocess.run(argv, check=False, text=True, capture_output=True)
@@ -95,14 +108,22 @@ class MainWindow(Gtk.Window):
             "<span foreground='#b00020'><b>WARNING — THIS WILL MODIFY THE INTERNAL "
             "STORAGE OF YOUR DEVICE</b></span>\n\n"
             + GLib.markup_escape_text(
-                "This tool repartitions internal UFS and installs SteamOS alongside Android "
-                "(ROCKNIX ABL: ROCKNIX boot + STORAGE root + HOME).\n\n"
-                "• Android userdata will be ERASED (factory-reset style).\n"
-                "• The old partition table is saved to the SD card first (/boot/ufs-backup), "
-                "so the space can be given back to Android later.\n"
-                "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
-                "• Run this from microSD Linux, not from an already-installed UFS root.\n"
-                "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n"
+                ("This tool repartitions internal UFS and installs SteamOS next to Android's "
+                 "data (ROCKNIX boot + STORAGE root + HOME), then writes SteamOS's boot image "
+                 "over Android's. Android's boot image is saved to /home/.ufs-backup first.\n\n"
+                 "• Android userdata will be ERASED (factory-reset style).\n"
+                 "• The old partition table is saved to the USB drive first (/boot/ufs-backup).\n"
+                 "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
+                 "• Run this from SteamOS on the USB drive, not from an already-installed one.\n\n"
+                 if TABLET else
+                 "This tool repartitions internal UFS and installs SteamOS alongside Android "
+                 "(ROCKNIX ABL: ROCKNIX boot + STORAGE root + HOME).\n\n"
+                 "• Android userdata will be ERASED (factory-reset style).\n"
+                 "• The old partition table is saved to the SD card first (/boot/ufs-backup), "
+                 "so the space can be given back to Android later.\n"
+                 "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
+                 "• Run this from microSD Linux, not from an already-installed UFS root.\n"
+                 "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n") +
                 "STEAMOS PASSWORD: official SteamOS ships with no user password. "
                 "Create one later (passwd in Konsole, or Users in System Settings). "
                 "This installer asks for that password (pkexec/sudo). "
@@ -132,7 +153,7 @@ class MainWindow(Gtk.Window):
         self.linux_label = Gtk.Label(label="SteamOS partitions: —", xalign=0)
         self.linux_label.set_line_wrap(True)
         grid.attach(self.linux_label, 0, 1, 2, 1)
-        grid.attach(Gtk.Label(label="Bring from the SD card's /home:", xalign=0), 0, 2, 1, 1)
+        grid.attach(Gtk.Label(label=f"Bring from {SOURCE}'s /home:", xalign=0), 0, 2, 1, 1)
         self.home_combo = Gtk.ComboBoxText()
         self.home_combo.append("all", "Everything, installed games included")
         self.home_combo.append("essentials", "Settings, saves and Steam login (no games)")
@@ -215,7 +236,7 @@ class MainWindow(Gtk.Window):
                 from_sd = info.get("RUNNING_FROM_SD") == "1"
                 self.install_btn.set_sensitive(fresh and from_sd)
                 if not from_sd:
-                    self._append("Running from internal storage: boot the SD card to install.")
+                    self._append(f"Running from internal storage: boot {SOURCE} to install.")
                 elif info.get("MODE") == "occupied":
                     self._append(f"Other partitions follow userdata ({info.get('OCCUPIED')}). "
                                  "Remove them in the ABL menu (UNINSTALL CFW) first.")
@@ -293,7 +314,10 @@ class MainWindow(Gtk.Window):
                 if out:
                     self._append(out[-8000:])
                 if proc.returncode == 0:
-                    self.status.set_text("Install finished. Power off, remove the SD card, then in the ABL menu set Boot source to Internal and boot Linux.")
+                    if TABLET:
+                        self.status.set_text("Install finished. Power off, unplug the USB drive, then power on.")
+                    else:
+                        self.status.set_text("Install finished. Power off, remove the SD card, then in the ABL menu set Boot source to Internal and boot Linux.")
                 else:
                     self.status.set_text(f"Install failed (exit {proc.returncode}). See log.")
 
