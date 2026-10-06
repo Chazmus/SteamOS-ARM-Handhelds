@@ -311,7 +311,7 @@ function ForYou({ st, refresh }) {
             jsx("div", { style: { fontSize: "24px", fontWeight: 800, margin: "6px 0 4px" }, children: !d ? "Looking through your games…"
                 : total ? `${total} games across ${d.systems.length} system${d.systems.length === 1 ? "" : "s"}` : "Your game library is empty" }),
             jsx(Small, { children: total ? `In ${d.library}/roms. Loadout picks emulators for what's there.`
-                : `Put games in ${st.library}/roms/<system> (or move the library to the SD card in Mine) and Loadout suggests what to get.` }),
+                : `Put games in ${st.library}/roms/<system> (or move it to a card in Mine) and Loadout suggests what to get.` }),
             d && d.systems.length ? jsx("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "12px" }, children:
                 d.systems.map((s) => jsx(Pill, { text: `${s.name} ${s.games}${s.ready ? (s.bios.length ? " · needs BIOS" : " ✓") : ""}`, color: s.ready ? (s.bios.length ? C.warn : C.ready) : C.accent }, s.system)) }) : null,
         ] }),
@@ -492,7 +492,7 @@ function Mine({ st, refresh }) {
         jsx(Small, { children: st.library }),
         jsx(DFL.DropdownItem, {
             label: "Keep games on",
-            rgOptions: [{ data: "internal", label: "Internal storage" }].concat((st.sd || []).length ? [{ data: "sd", label: "SD card" }] : []),
+            rgOptions: [{ data: "internal", label: st.home_label || "Internal storage" }].concat((st.sd || []).length ? [{ data: "sd", label: "SD card" }] : []),
             selectedOption: onSd ? "sd" : "internal",
             onChange: (o) => work("lib", () => E.library(o.data))(),
         }),

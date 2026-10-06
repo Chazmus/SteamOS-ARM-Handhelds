@@ -165,12 +165,55 @@ def settings() -> dict:
     return s
 
 
+def _mount_disk(path: str) -> str:
+    """The whole-disk name (mmcblk0, sda) a path's filesystem is on, or ""."""
+    best, dev = "", ""
+    try:
+        with open("/proc/self/mounts") as f:
+            for line in f:
+                src, mnt = line.split()[:2]
+                mnt = mnt.replace("\\040", " ")
+                if src.startswith("/dev/") and (path == mnt or path.startswith(mnt.rstrip("/") + "/")) \
+                        and len(mnt) > len(best):
+                    best, dev = mnt, src
+    except OSError:
+        return ""
+    name = os.path.basename(os.path.realpath(dev))
+    part = f"/sys/class/block/{name}"
+    if os.path.exists(f"{part}/partition"):
+        name = os.path.basename(os.path.dirname(os.path.realpath(part)))
+    return name
+
+
+def _disk_kind(disk: str) -> str:
+    """"sd" for a microSD card, "usb" for a USB drive, "internal" otherwise."""
+    if disk.startswith("mmcblk"):
+        return "sd"
+    if "/usb" in os.path.realpath(f"/sys/class/block/{disk}"):
+        return "usb"
+    return "internal"
+
+
+HOME_LABELS = {"sd": "microSD card (this system)", "usb": "USB drive (this system)",
+               "internal": "Internal storage"}
+
+
+def home_kind() -> str:
+    return _disk_kind(_mount_disk(str(HOME)))
+
+
 def sd_cards() -> list[str]:
-    """Mounted removable cards, largest first."""
+    """Mounted removable cards and drives other than the one this system runs
+    from, largest first. Internal storage partitions mounted under /run/media
+    (Android's, an internal install's) don't count: they aren't cards."""
     out = []
     user = os.environ.get("USER") or HOME.name
+    own = _mount_disk(str(HOME))
     for base in (f"/run/media/{user}", "/run/media"):
         for m in glob.glob(f"{base}/*"):
+            disk = _mount_disk(m)
+            if not disk or disk == own or _disk_kind(disk) == "internal":
+                continue
             if os.path.ismount(m) and os.access(m, os.W_OK):
                 try:
                     st = os.statvfs(m)
@@ -1627,7 +1670,8 @@ def status() -> dict:
             "icon": str(ICON_DIR / f"steamos-arm-hub-{e['id']}.png") if (ICON_DIR / f"steamos-arm-hub-{e['id']}.png").exists() else "",
             "available": best is not None,
         })
-    return {"device": dev, "library": str(library()), "sd": sd_cards(), "apps": apps, "found": found_files()}
+    return {"device": dev, "library": str(library()), "sd": sd_cards(),
+            "home_label": HOME_LABELS[home_kind()], "apps": apps, "found": found_files()}
 
 
 def check_updates() -> dict:
