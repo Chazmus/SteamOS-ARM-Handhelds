@@ -68,6 +68,36 @@ def log(msg: str) -> None:
     print(f"odin3d: {msg}", flush=True)
 
 
+# The network Wi-Fi is on and its channel, for steamos-arm-wifi-wake: after
+# waking it scans just that channel first instead of NetworkManager's full
+# scan (12 s with a DFS channel in it).
+WIFI_LAST = "/run/konkr/wifi-last"
+
+
+def record_wifi() -> None:
+    try:
+        out = subprocess.run(["iw", "dev", "wlan0", "link"], capture_output=True,
+                             text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    ssid = freq = ""
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("SSID: "):
+            ssid = line[6:]
+        elif line.startswith("freq: "):
+            freq = line[6:].split(".")[0]
+    if not ssid or not freq.isdigit():
+        return
+    try:
+        os.makedirs(os.path.dirname(WIFI_LAST), exist_ok=True)
+        with open(WIFI_LAST + ".tmp", "w") as f:
+            f.write(f"{freq}\n{ssid}\n")
+        os.replace(WIFI_LAST + ".tmp", WIFI_LAST)
+    except OSError:
+        pass
+
+
 def rd(path: str, default: str = "") -> str:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -975,6 +1005,7 @@ class Odin3Daemon:
         self.fan.tick()
 
         last_tick = time.monotonic()
+        next_wifi = 0.0
         while self.running:
             try:
                 self.power_btn.check_resume()
@@ -1005,6 +1036,9 @@ class Odin3Daemon:
                     self.fan.tick()
                     self.leds.tick(self.state.data.get("rgb", {}))
                     last_tick = now
+                if now >= next_wifi:
+                    next_wifi = now + 60.0
+                    record_wifi()
 
             except Exception as e:
                 log(f"loop exception: {e}")

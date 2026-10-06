@@ -161,76 +161,9 @@ light() {
   return 1
 }
 
-# Wi-Fi after waking. NetworkManager drops the connection as soon as a sleep is
-# asked for (before this script runs), and after waking it needs a full scan
-# before it reconnects: 12 s with the router on a DFS channel, and sometimes
-# that scan comes back empty and nothing retries it, so the device stays
-# offline until Wi-Fi is turned off and on. konkrd keeps the network and its
-# channel in /run/konkr/wifi-last; after waking, scan just that channel first
-# (well under a second), then fall back to a new full scan, then to turning
-# Wi-Fi off and on.
-WIFI_MARK=/run/konkr/wifi-was-connected
-WIFI_LAST=/run/konkr/wifi-last
-
-wifi_connected() {
-  [[ $(nmcli -t -g GENERAL.STATE device show wlan0 2>/dev/null) == 100* ]]
-}
-
-wifi_wait() {  # wifi_wait <seconds>: true once connected
-  local i
-  for ((i = 0; i < $1 * 2; i++)); do
-    wifi_connected && return 0
-    sleep 0.5
-  done
-  return 1
-}
-
-wifi_fast_scan() {
-  local freq ssid i
-  { read -r freq; read -r ssid; } <"$WIFI_LAST" 2>/dev/null || return 0
-  [[ $freq =~ ^[0-9]+$ && -n $ssid ]] || return 0
-  # wlan0 comes back a moment after the resume; NetworkManager's own first
-  # scan may already be running (EBUSY), so try for a few seconds.
-  for ((i = 0; i < 20; i++)); do
-    iw dev wlan0 scan trigger freq "$freq" ssid "$ssid" >/dev/null 2>&1 && {
-      log "wifi: scanning $freq MHz for the last network"
-      return 0
-    }
-    wifi_connected && return 0
-    sleep 0.25
-  done
-}
-
-wifi_watch() {
-  [[ -e $WIFI_MARK ]] || exit 0
-  rm -f "$WIFI_MARK"
-  wifi_fast_scan
-  wifi_wait 6 && exit 0
-  log "wifi: not back 6 s after waking, starting a new scan"
-  iw dev wlan0 scan abort 2>/dev/null
-  nmcli device wifi rescan 2>/dev/null
-  wifi_wait 8 && { log "wifi: connected after the new scan"; exit 0; }
-  log "wifi: still offline, turning it off and on"
-  nmcli radio wifi off && sleep 1 && nmcli radio wifi on
-  wifi_wait 10 && log "wifi: connected after turning it off and on" || log "wifi: still offline"
-}
-
-wifi_mark() {
-  # Was on a network before the sleep was asked for (konkrd saw it, and the
-  # radio is still on): NetworkManager has already let go of it by now.
-  mkdir -p "${WIFI_MARK%/*}"
-  if [[ -s $WIFI_LAST && $(nmcli radio wifi 2>/dev/null) == enabled ]]; then
-    : >"$WIFI_MARK"
-  else
-    rm -f "$WIFI_MARK"
-  fi
-}
-
-wifi_watch_start() {
-  [[ -e $WIFI_MARK ]] || return 0
-  systemd-run --no-block --quiet --collect --unit=konkr-wifi-wake \
-    /usr/lib/konkr/konkr-sleep wifi-watch 2>/dev/null || true
-}
+# Wi-Fi after waking: steamos-arm-wifi-wake (shared with the 8 Elite).
+wifi_mark() { /usr/lib/steamos-arm/steamos-arm-wifi-wake mark; }
+wifi_watch_start() { /usr/lib/steamos-arm/steamos-arm-wifi-wake start; }
 
 pre() {
   local n u
@@ -308,7 +241,7 @@ case "${1:-}" in
   standby-post)
     [[ -d /sys/module/${WIFI_MODS[0]} ]] || modprobe "${WIFI_MODS[0]}" ;;
   standby-screen-on) gamescope_screen 0 ;;
-  wifi-watch) wifi_watch ;;
+  wifi-watch) exec /usr/lib/steamos-arm/steamos-arm-wifi-wake watch ;;
   *) echo "usage: konkr-sleep pre|post|standby-pre|standby-audio-on|standby-post|standby-screen-on|wifi-watch" >&2; exit 2 ;;
 esac
 exit 0

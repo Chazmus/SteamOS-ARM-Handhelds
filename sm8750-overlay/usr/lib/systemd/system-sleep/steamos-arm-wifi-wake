@@ -1,0 +1,7 @@
+#!/bin/sh
+# Wi-Fi back quickly after s2idle (steamos-arm-wifi-wake). The 8 Gen 3 and
+# 8 Gen 2 images do this from konkr-sleep.
+case "$1" in
+  pre) exec /usr/lib/steamos-arm/steamos-arm-wifi-wake mark ;;
+  post) exec /usr/lib/steamos-arm/steamos-arm-wifi-wake start ;;
+esac

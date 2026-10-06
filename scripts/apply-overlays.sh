@@ -348,6 +348,8 @@ install_file "$OVL/usr/lib/steamos/sm8550-audio-setup" \
 install_file "$OVL/usr/lib/steamos-arm/save-devcoredump" "$R/usr/lib/steamos-arm/save-devcoredump" 0755
 # Charging/discharge time for Steam (the Frame's charger daemon is masked).
 install_file "$OVL/usr/lib/steamos-arm/vpower" "$R/usr/lib/steamos-arm/vpower" 0755
+# Wi-Fi back quickly after s2idle (one-channel scan, then retries).
+install_file "$OVL/usr/lib/steamos-arm/steamos-arm-wifi-wake" "$R/usr/lib/steamos-arm/steamos-arm-wifi-wake" 0755
 install_file "$OVL/usr/lib/systemd/system/steamos-arm-vpower.service" \
   "$R/usr/lib/systemd/system/steamos-arm-vpower.service" 0644
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
