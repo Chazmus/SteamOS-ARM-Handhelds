@@ -24,12 +24,14 @@ extra=0
 rootarg=""
 debug=0
 usbshell=0
+usbimage=0
 steamosroot=""
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
     konkr.bootlog_wait=*) extra="${arg#*=}" ;;
     steamos.debug=1) debug=1 ;;
     steamos.usbshell=1) usbshell=1 ;;
+    steamos.usbimage=1) usbimage=1 ;;
     steamos.root=*) steamosroot="${arg#steamos.root=}" ;;
     root=*) rootarg="${arg#root=}" ;;
   esac
@@ -91,16 +93,36 @@ by_partlabel() {
   return 1
 }
 
+# Partition 1 of our image on a USB drive (/dev/sdX1), if one is plugged in:
+# behind a USB controller (internal UFS shows up as sd* too), labelled BOOT.
+usb_image_boot() {
+  for p in /sys/class/block/sd*1; do
+    [ -e "$p/partition" ] || continue
+    case "$(readlink -f "$p")" in */usb*) ;; *) continue ;; esac
+    blkid "/dev/${p##*/}" 2>/dev/null | grep -q 'LABEL="BOOT"' || continue
+    echo "/dev/${p##*/}"
+    return 0
+  done
+  return 1
+}
+
 bootdev=""
 rootdev=""
 case "$rootarg" in
   PARTLABEL=*)
-    # UFS comes up a few seconds into boot.
+    # UFS comes up a few seconds into boot. steamos.usbimage=1 (the tablets,
+    # booted by their own bootloader with this cmdline built in): before the
+    # internal install exists, after 10 s our image on a USB drive (the
+    # installer) is used instead.
     for i in $(seq 1 60); do
       rootdev="$(by_partlabel "${rootarg#PARTLABEL=}")" && break
+      if [ "$usbimage" = 1 ] && [ "$i" -ge 20 ] && bootdev="$(usb_image_boot)"; then
+        rootdev="${bootdev%1}2"
+        break
+      fi
       sleep 0.5
     done
-    bootdev="$(by_partlabel ROCKNIX)"
+    [ -n "$bootdev" ] || bootdev="$(by_partlabel ROCKNIX)"
     ;;
   *)
     for i in $(seq 1 60); do
