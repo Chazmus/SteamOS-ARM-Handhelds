@@ -1135,6 +1135,7 @@ if [[ -d "$HOME_DST" ]]; then
     [[ -f "$R${src}" ]] || continue
     ln -sfn "$src" "$HOME_DST/.config/systemd/user/default.target.wants/${u}"
   done
+  chown -hR 1000:1000 "$HOME_DST/.config"
 fi
 # SteamOS empty-password user stays as extracted (steamos:: in shadow)
 

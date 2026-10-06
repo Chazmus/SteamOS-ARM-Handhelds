@@ -448,7 +448,7 @@ EOF
   if [[ -d "${R}/home/steamos" ]]; then
     sudo_run mkdir -p "${MNT}/home/steamos"
     sudo_run rsync -aHAX --numeric-ids "${R}/home/steamos/" "${MNT}/home/steamos/"
-    sudo_run chown -R 1000:1000 "${MNT}/home/steamos"
+    sudo_run chown -hR 1000:1000 "${MNT}/home/steamos"
   fi
 
   log "Writing fstab and KERNEL (root PARTUUID ${disk_id}-02)"

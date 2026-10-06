@@ -684,7 +684,7 @@ fi
 # ~/.config are made above as root when the base has none, and the hub and
 # Steam steps also write here as root. A root-owned ~/.config breaks Decky
 # plugins, lsfg-vk's conf.toml and KDE settings.
-chown -R 1000:1000 "$HOME_DST"
+chown -hR 1000:1000 "$HOME_DST"
 chmod 0755 "$HOME_DST"
 
 # Ensure correct root and user permissions across /usr and /etc
