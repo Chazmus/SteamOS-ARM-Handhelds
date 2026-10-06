@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Install the SteamOS running from the microSD card to internal UFS.
-# KONKR Pocket FIT / AYANEO Pocket S2 (SM8650) with ROCKNIX ABL 1.1.8+.
+# KONKR Pocket FIT / AYANEO Pocket S2 (SM8650), and SM8550 handhelds such as
+# the AYN Odin 2 / Odin 2 Mini / Odin 2 Portal, with ROCKNIX ABL 1.1.8+.
 #
 #   ... | userdata (Android, you pick) | ROCKNIX 2G | STORAGE 20G | HOME (rest) |
 #
@@ -74,8 +75,8 @@ TABLET=""
 compat="$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible)"
 grep -qx 'lenovo,tb321fu' <<<"$compat" && TABLET=tb321fu
 grep -qx 'lenovo,elden' <<<"$compat" && TABLET=elden
-[[ -n "$TABLET" ]] || grep -qx 'qcom,sm8650' <<<"$compat" \
-  || die "this installer is for SM8650 devices (KONKR Pocket FIT / AYANEO Pocket S2) and the Lenovo Legion Tab Gen 3 / Y700 Gen 4"
+[[ -n "$TABLET" ]] || grep -qxE 'qcom,sm8650|qcom,sm8550' <<<"$compat" \
+  || die "this installer is for SM8650 and SM8550 devices (KONKR Pocket FIT, AYANEO Pocket S2, AYN Odin 2 / Odin 2 Mini / Odin 2 Portal) and the Lenovo Legion Tab Gen 3 / Y700 Gen 4"
 MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.
