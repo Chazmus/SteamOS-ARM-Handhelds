@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Lenovo Legion Tab Gen 3 / Legion Y700 (2025), TB321FU, with the BOE panel
+ * (ro.vendor.display.paneltype 1 on stock Android). Same board, different
+ * panel init and touch firmware.
+ */
+
+#include "sm8650-lenovo-tb321fu.dtsi"
+
+/ {
+	model = "Lenovo Legion Tab Gen 3 (BOE panel)";
+};
+
+&display_panel {
+	compatible = "lenovo,tb321fu-kirby-nt36523-boe-dsc-vid",
+		     "lenovo,kirby-nt36523-boe-dsc-vid",
+		     "lenovo,tb321fu-kirby-nt36523-boe-dsc",
+		     "lenovo,kirby-nt36523-boe-dsc";
+	panel-name = "kirby_nt36523_boe_dsc_vid";
+};
+
+&touchscreen {
+	firmware-name = "qcom/sm8650/lenovo/tb321fu/novatek_ts_boe_fw.bin";
+};

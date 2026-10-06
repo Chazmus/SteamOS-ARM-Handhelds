@@ -1,0 +1,1417 @@
+From: guf296 <guf296@126.com>
+Subject: [PATCH] usb: typec: the TB321FU's two Type-C ports
+
+PS5169 redriver, FSA4480 audio accessory sequence, a virtual WCD939x
+USB switch, UCSI glink port select and audio accessory handling, dwc3
+host quirks and PTN3222 tuning.
+
+Taken from https://github.com/GUF296/linux branch TB321FU-7.1.1
+(5df8e852e), the Lenovo Legion Tab Gen 3 / Y700 2025 (TB321FU) bring-up.
+---
+  drivers/phy/phy-nxp-ptn3222.c         |  53 ++++++-
+  drivers/usb/dwc3/dwc3-qcom.c          | 116 ++++++++++++++-
+  drivers/usb/typec/mux/Kconfig         |  10 ++
+  drivers/usb/typec/mux/Makefile        |   1 +
+  drivers/usb/typec/mux/fsa4480.c       |  79 ++++++++++-
+  drivers/usb/typec/mux/ps5169.c        | 410 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  drivers/usb/typec/mux/wcd939x-usbss.c |  71 ++++++++--
+  drivers/usb/typec/ucsi/psy.c          |  35 ++++-
+  drivers/usb/typec/ucsi/ucsi.c         |  33 ++++-
+  drivers/usb/typec/ucsi/ucsi.h         |   3 +
+  drivers/usb/typec/ucsi/ucsi_glink.c   | 133 +++++++++++++++++-
+  11 files changed, 914 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/phy/phy-nxp-ptn3222.c b/drivers/phy/phy-nxp-ptn3222.c
+old mode 100644
+new mode 100755
+index c6179d870..34be1d903
+--- a/drivers/phy/phy-nxp-ptn3222.c
++++ b/drivers/phy/phy-nxp-ptn3222.c
+@@ -18,8 +18,37 @@ struct ptn3222 {
+ 	struct phy *phy;
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
++	u8 *param_override;
++	int param_override_len;
+ };
+ 
++static int ptn3222_write_param_override(struct ptn3222 *ptn3222)
++{
++	struct device *dev = &ptn3222->client->dev;
++	int i, ret;
++
++	if (!ptn3222->param_override_len)
++		return 0;
++
++	if (ptn3222->param_override_len % 2) {
++		dev_warn(dev, "ignoring odd param override length %d\n",
++			 ptn3222->param_override_len);
++		return -EINVAL;
++	}
++
++	for (i = 0; i < ptn3222->param_override_len; i += 2) {
++		ret = i2c_smbus_write_byte_data(ptn3222->client,
++						ptn3222->param_override[i],
++						ptn3222->param_override[i + 1]);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "failed to write override reg 0x%02x\n",
++					     ptn3222->param_override[i]);
++	}
++
++	return 0;
++}
++
+ static int ptn3222_init(struct phy *phy)
+ {
+ 	struct ptn3222 *ptn3222 = phy_get_drvdata(phy);
+@@ -31,7 +60,9 @@ static int ptn3222_init(struct phy *phy)
+ 
+ 	gpiod_set_value_cansleep(ptn3222->reset_gpio, 0);
+ 
+-	return 0;
++	usleep_range(1000, 2000);
++
++	return ptn3222_write_param_override(ptn3222);
+ }
+ 
+ static int ptn3222_exit(struct phy *phy)
+@@ -83,6 +114,26 @@ static int ptn3222_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
++	ptn3222->param_override_len =
++		of_property_count_u8_elems(dev->of_node,
++					   "qcom,param-override-seq-c1");
++	if (ptn3222->param_override_len > 0) {
++		ptn3222->param_override = devm_kmalloc(dev,
++						       ptn3222->param_override_len,
++						       GFP_KERNEL);
++		if (!ptn3222->param_override)
++			return -ENOMEM;
++
++		ret = of_property_read_u8_array(dev->of_node,
++						"qcom,param-override-seq-c1",
++						ptn3222->param_override,
++						ptn3222->param_override_len);
++		if (ret)
++			return ret;
++	} else if (ptn3222->param_override_len != -EINVAL) {
++		return ptn3222->param_override_len;
++	}
++
+ 	ptn3222->phy = devm_phy_create(dev, dev->of_node, &ptn3222_ops);
+ 	if (IS_ERR(ptn3222->phy)) {
+ 		dev_err(dev, "failed to create PHY: %d\n", ret);
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index f43f73ac3..db8d51c06 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -34,6 +34,7 @@
+ #define PIPE_UTMI_CLK_SEL			BIT(0)
+ #define PIPE3_PHYSTATUS_SW			BIT(3)
+ #define PIPE_UTMI_CLK_DIS			BIT(8)
++#define QSCRATCH_PWR_EVNT_IRQ_STAT_1		0x1e4
+ 
+ #define PWR_EVNT_LPM_IN_L2_MASK			BIT(4)
+ #define PWR_EVNT_LPM_OUT_L2_MASK		BIT(5)
+@@ -85,6 +86,8 @@ struct dwc3_qcom {
+ 	struct icc_path		*icc_path_apps;
+ 
+ 	enum usb_role		current_role;
++	bool			host_ss_powerup_quirk;
++	bool			host_usb2_phy_reinit_quirk;
+ };
+ 
+ #define to_dwc3_qcom(d) container_of((d), struct dwc3_qcom, dwc)
+@@ -436,6 +439,96 @@ static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom)
+ 			  PIPE_UTMI_CLK_DIS);
+ }
+ 
++static void dwc3_qcom_host_ss_powerup_quirk(struct dwc3_qcom *qcom)
++{
++	/*
++	 * Lenovo Y700 downstream dwc3-msm performs this sequence during host
++	 * SS power-up.  It differs from select-utmi-as-pipe-clk: for the
++	 * active host path it clears PIPE_UTMI_CLK_SEL/PIPE3_PHYSTATUS_SW and
++	 * clears the second power-event LPM-out bit.
++	 */
++	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_DIS);
++	usleep_range(100, 1000);
++
++	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
++	usleep_range(100, 1000);
++
++	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_DIS);
++	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_PWR_EVNT_IRQ_STAT_1,
++			  PWR_EVNT_LPM_OUT_L2_MASK);
++
++	dev_dbg(qcom->dev, "applied host SS powerup quirk\n");
++}
++
++static void dwc3_qcom_reinit_usb2_phys(struct dwc3_qcom *qcom)
++{
++	struct dwc3 *dwc = &qcom->dwc;
++	struct phy *phy;
++	bool was_powered;
++	int ret;
++	int i;
++
++	for (i = 0; i < dwc->num_usb2_ports; i++) {
++		phy = dwc->usb2_generic_phy[i];
++		if (!phy)
++			continue;
++
++		dev_dbg(qcom->dev, "reinit usb2 phy%d init=%d power=%d\n",
++			i, phy->init_count, phy->power_count);
++
++		if (!phy->init_count) {
++			dev_dbg(qcom->dev,
++				"skip usb2 phy%d reinit: not initialized\n", i);
++			continue;
++		}
++
++		was_powered = phy->power_count > 0;
++		if (was_powered) {
++			ret = phy_power_off(phy);
++			if (ret) {
++				dev_warn(qcom->dev,
++					 "usb2 phy%d power off failed: %d\n",
++					 i, ret);
++				continue;
++			}
++		}
++
++		ret = phy_exit(phy);
++		if (ret) {
++			dev_warn(qcom->dev, "usb2 phy%d exit failed: %d\n",
++				 i, ret);
++			if (was_powered)
++				phy_power_on(phy);
++			continue;
++		}
++
++		usleep_range(1000, 2000);
++
++		ret = phy_init(phy);
++		if (ret) {
++			dev_warn(qcom->dev, "usb2 phy%d init failed: %d\n",
++				 i, ret);
++			continue;
++		}
++
++		if (was_powered) {
++			ret = phy_power_on(phy);
++			if (ret)
++				dev_warn(qcom->dev,
++					 "usb2 phy%d power on failed: %d\n",
++					 i, ret);
++		}
++
++		ret = phy_set_mode(phy, PHY_MODE_USB_HOST);
++		if (ret)
++			dev_warn(qcom->dev, "usb2 phy%d host mode failed: %d\n",
++				 i, ret);
++	}
++}
++
+ static int dwc3_qcom_request_irq(struct dwc3_qcom *qcom, int irq,
+ 				 const char *name)
+ {
+@@ -562,8 +655,14 @@ static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_rol
+ {
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+ 
+-	if (qcom->current_role == next_role)
++	if (qcom->current_role == next_role) {
++		dev_dbg(qcom->dev, "role no-op current=%d next=%d xhci=%p\n",
++			qcom->current_role, next_role, qcom->dwc.xhci);
+ 		return;
++	}
++
++	dev_dbg(qcom->dev, "role change current=%d next=%d xhci=%p\n",
++		qcom->current_role, next_role, qcom->dwc.xhci);
+ 
+ 	if (pm_runtime_resume_and_get(qcom->dev)) {
+ 		dev_dbg(qcom->dev, "Failed to resume device\n");
+@@ -575,6 +674,13 @@ static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_rol
+ 	else if (qcom->current_role != USB_ROLE_DEVICE)
+ 		dwc3_qcom_vbus_override_enable(qcom, true);
+ 
++	if (next_role == USB_ROLE_HOST && qcom->host_usb2_phy_reinit_quirk &&
++	    qcom->current_role == USB_ROLE_NONE)
++		dwc3_qcom_reinit_usb2_phys(qcom);
++
++	if (next_role == USB_ROLE_HOST && qcom->host_ss_powerup_quirk)
++		dwc3_qcom_host_ss_powerup_quirk(qcom);
++
+ 	pm_runtime_mark_last_busy(qcom->dev);
+ 	pm_runtime_put_sync(qcom->dev);
+ 
+@@ -683,6 +789,11 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	if (ignore_pipe_clk)
+ 		dwc3_qcom_select_utmi_clk(qcom);
+ 
++	qcom->host_ss_powerup_quirk = device_property_read_bool(dev,
++				"qcom,host-ss-powerup-quirk");
++	qcom->host_usb2_phy_reinit_quirk = device_property_read_bool(dev,
++				"qcom,host-usb2-phy-reinit-quirk");
++
+ 	qcom->mode = usb_get_dr_mode(dev);
+ 
+ 	if (qcom->mode == USB_DR_MODE_HOST) {
+@@ -711,6 +822,9 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 		goto clk_disable;
+ 	}
+ 
++	if (qcom->host_ss_powerup_quirk && qcom->current_role == USB_ROLE_HOST)
++		dwc3_qcom_host_ss_powerup_quirk(qcom);
++
+ 	ret = dwc3_qcom_interconnect_init(qcom);
+ 	if (ret)
+ 		goto remove_core;
+diff --git a/drivers/usb/typec/mux/Kconfig b/drivers/usb/typec/mux/Kconfig
+old mode 100644
+new mode 100755
+index 6dd8f961b..2838a53ce
+--- a/drivers/usb/typec/mux/Kconfig
++++ b/drivers/usb/typec/mux/Kconfig
+@@ -56,6 +56,16 @@ config TYPEC_MUX_NB7VPQ904M
+ 	  Say Y or M if your system has a On Semiconductor NB7VPQ904M Type-C
+ 	  redriver chip found on some devices with a Type-C port.
+ 
++config TYPEC_MUX_PS5169
++	tristate "Parade PS5169 Type-C redriver driver"
++	depends on I2C
++	depends on DRM || DRM=n
++	select DRM_AUX_BRIDGE if DRM_BRIDGE && OF
++	select REGMAP_I2C
++	help
++	  Say Y or M if your system has a Parade PS5169 Type-C redriver chip
++	  found on some devices with a Type-C port.
++
+ config TYPEC_MUX_PS883X
+ 	tristate "Parade PS883x Type-C retimer driver"
+ 	depends on I2C
+diff --git a/drivers/usb/typec/mux/Makefile b/drivers/usb/typec/mux/Makefile
+old mode 100644
+new mode 100755
+index b4f599eb5..c775bfa12
+--- a/drivers/usb/typec/mux/Makefile
++++ b/drivers/usb/typec/mux/Makefile
+@@ -6,6 +6,7 @@ obj-$(CONFIG_TYPEC_MUX_PI3USB30532)	+= pi3usb30532.o
+ obj-$(CONFIG_TYPEC_MUX_INTEL_PMC)	+= intel_pmc_mux.o
+ obj-$(CONFIG_TYPEC_MUX_IT5205)		+= it5205.o
+ obj-$(CONFIG_TYPEC_MUX_NB7VPQ904M)	+= nb7vpq904m.o
++obj-$(CONFIG_TYPEC_MUX_PS5169)		+= ps5169.o
+ obj-$(CONFIG_TYPEC_MUX_PS883X)		+= ps883x.o
+ obj-$(CONFIG_TYPEC_MUX_PTN36502)	+= ptn36502.o
+ obj-$(CONFIG_TYPEC_MUX_TUSB1046)	+= tusb1046.o
+diff --git a/drivers/usb/typec/mux/fsa4480.c b/drivers/usb/typec/mux/fsa4480.c
+index c54e42c7e..5666e9b46 100644
+--- a/drivers/usb/typec/mux/fsa4480.c
++++ b/drivers/usb/typec/mux/fsa4480.c
+@@ -10,6 +10,7 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/regmap.h>
++#include <linux/delay.h>
+ #include <linux/usb/typec_dp.h>
+ #include <linux/usb/typec_mux.h>
+ #include <linux/regulator/consumer.h>
+@@ -31,6 +32,8 @@
+ #define FSA4480_DELAY_L_SENSE	0x0f
+ #define FSA4480_DELAY_L_AGND	0x10
+ #define FSA4480_FUNCTION_ENABLE	0x12
++#define FSA4480_DET_STATUS	0x17
++#define FSA4480_SPECIAL_CFG	0x1c
+ #define FSA4480_RESET		0x1e
+ #define FSA4480_MAX_REGISTER	0x1f
+ 
+@@ -76,6 +79,61 @@ static const struct regmap_config fsa4480_regmap_config = {
+ 	.disable_locking = true,
+ };
+ 
++static int fsa4480_set_android_audio(struct fsa4480 *fsa)
++{
++	int ret, i, dev_id = 0, func = 0, det = 0, status = 0;
++
++	if (fsa->cur_enable & FSA4480_ENABLE_SBU) {
++		regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE,
++			     fsa->cur_enable & ~FSA4480_ENABLE_SBU);
++		usleep_range(35, 1000);
++	}
++
++	regmap_write(fsa->regmap, FSA4480_RESET, 0x01);
++	regmap_write(fsa->regmap, FSA4480_SLOW_L, 0x4f);
++	regmap_write(fsa->regmap, FSA4480_SLOW_R, 0x4f);
++	regmap_write(fsa->regmap, FSA4480_SLOW_MIC, 0x4f);
++	regmap_write(fsa->regmap, FSA4480_SLOW_SENSE, 0x4f);
++	regmap_write(fsa->regmap, FSA4480_SLOW_GND, 0x4f);
++
++	ret = regmap_read(fsa->regmap, FSA4480_DEVICE_ID, &dev_id);
++	if (!ret && dev_id == 0xf1)
++		regmap_write(fsa->regmap, FSA4480_SPECIAL_CFG, 0x00);
++
++	regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, 0x9f);
++	regmap_write(fsa->regmap, FSA4480_SWITCH_SELECT, 0x00);
++	regmap_write(fsa->regmap, FSA4480_FUNCTION_ENABLE, 0x0d);
++
++	for (i = 0; i < 20; i++) {
++		ret = regmap_read(fsa->regmap, FSA4480_FUNCTION_ENABLE, &func);
++		if (!ret && func == 0x0c)
++			break;
++		usleep_range(1000, 2000);
++	}
++
++	msleep(1000);
++
++	regmap_read(fsa->regmap, FSA4480_DET_STATUS, &det);
++	regmap_read(fsa->regmap, FSA4480_SWITCH_STATUS1, &status);
++
++	if (det == 0x01 || status == 0x05) {
++		regmap_write(fsa->regmap, FSA4480_RESET, 0x01);
++		regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, 0x80);
++		regmap_write(fsa->regmap, FSA4480_SWITCH_SELECT, 0x00);
++		usleep_range(1000, 2000);
++		regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, 0x9f);
++	} else if (det == 0x02) {
++		regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, 0x87);
++		regmap_write(fsa->regmap, FSA4480_SWITCH_SELECT, 0x07);
++		usleep_range(1000, 2000);
++		regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, 0x9f);
++	}
++
++	fsa->cur_enable = 0x9f;
++
++	return 0;
++}
++
+ static int fsa4480_set(struct fsa4480 *fsa)
+ {
+ 	bool reverse = (fsa->orientation == TYPEC_ORIENTATION_REVERSE);
+@@ -96,9 +154,10 @@ static int fsa4480_set(struct fsa4480 *fsa)
+ 		/* DP Only */
+ 		case TYPEC_DP_STATE_C:
+ 		case TYPEC_DP_STATE_E:
+-			enable |= FSA4480_ENABLE_SBU;
++			enable |= FSA4480_ENABLE_USB | FSA4480_ENABLE_SBU;
++			sel = FSA4480_SEL_USB;
+ 			if (reverse)
+-				sel = FSA4480_SEL_SBU_REVERSE;
++				sel |= FSA4480_SEL_SBU_REVERSE;
+ 			break;
+ 
+ 		/* DP + USB */
+@@ -113,11 +172,14 @@ static int fsa4480_set(struct fsa4480 *fsa)
+ 		default:
+ 			return -EOPNOTSUPP;
+ 		}
+-	} else if (fsa->mode == TYPEC_MODE_AUDIO) {
+-		/* Audio Accessory Mode, setup to auto Jack Detection */
+-		enable |= FSA4480_ENABLE_USB | FSA4480_ENABLE_AGND;
+-	} else
+-		return -EOPNOTSUPP;
++		} else if (fsa->mode == TYPEC_MODE_AUDIO) {
++			return fsa4480_set_android_audio(fsa);
++		} else
++			return -EOPNOTSUPP;
++
++	dev_dbg(&fsa->client->dev,
++		"set orientation=%d mode=0x%lx svid=0x%x enable=0x%02x sel=0x%02x\n",
++		fsa->orientation, fsa->mode, fsa->svid, enable, sel);
+ 
+ 	if (fsa->cur_enable & FSA4480_ENABLE_SBU) {
+ 		/* Disable SBU output while re-configuring the switch */
+@@ -128,6 +190,9 @@ static int fsa4480_set(struct fsa4480 *fsa)
+ 		usleep_range(35, 1000);
+ 	}
+ 
++	if (fsa->cur_enable & FSA4480_ENABLE_AGND)
++		regmap_write(fsa->regmap, FSA4480_RESET, 0x01);
++
+ 	regmap_write(fsa->regmap, FSA4480_SWITCH_SELECT, sel);
+ 	regmap_write(fsa->regmap, FSA4480_SWITCH_ENABLE, enable);
+ 
+diff --git a/drivers/usb/typec/mux/ps5169.c b/drivers/usb/typec/mux/ps5169.c
+new file mode 100644
+index 000000000..538df24ec
+--- /dev/null
++++ b/drivers/usb/typec/mux/ps5169.c
+@@ -0,0 +1,410 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Parade PS5169 Type-C driver
++ *
++ * Copyright (c) 2025 map220v <map220v300@gmail.com>
++ */
++
++#include <drm/bridge/aux-bridge.h>
++#include <linux/i2c.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of_graph.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/usb/typec_dp.h>
++#include <linux/usb/typec_mux.h>
++#include <linux/usb/typec_retimer.h>
++
++#define PS5169_CHIP_ID_REG		0xac
++#define PS5169_CHIP_ID			0x6987
++
++struct ps5169 {
++	struct i2c_client *client;
++	struct regulator *dvdd_supply;
++	struct gpio_desc *reset_gpio;
++	struct regmap *regmap;
++	struct typec_switch_dev *sw;
++	struct typec_retimer *retimer;
++
++	struct typec_switch *typec_switch;
++	struct typec_mux *typec_mux;
++
++	struct mutex lock; /* protect non-concurrent retimer & switch */
++
++	enum typec_orientation orientation;
++	unsigned long mode;
++	unsigned int svid;
++};
++
++static int ps5169_set(struct ps5169 *ps5169)
++{
++	bool reverse = (ps5169->orientation == TYPEC_ORIENTATION_REVERSE);
++
++	dev_dbg(&ps5169->client->dev,
++		"set orientation=%d mode=0x%lx svid=0x%x\n",
++		ps5169->orientation, ps5169->mode, ps5169->svid);
++
++	switch (ps5169->mode) {
++	case TYPEC_STATE_SAFE:
++		regmap_write(ps5169->regmap, 0x40, 0x80);
++		regmap_write(ps5169->regmap, 0xa0, 0x02);
++		regmap_write(ps5169->regmap, 0x8d, 0x00);
++		regmap_write(ps5169->regmap, 0x90, 0x00);
++		regmap_write(ps5169->regmap, 0xa1, 0x00);
++
++		return 0;
++
++	case TYPEC_STATE_USB:
++		/*
++		 * Normal Orientation (CC1)
++		 * A -> USB RX
++		 * B -> USB TX
++		 * C -> X
++		 * D -> X
++		 * Flipped Orientation (CC2)
++		 * A -> X
++		 * B -> X
++		 * C -> USB TX
++		 * D -> USB RX
++		 */
++
++		/* USB 3.2 Gen 2 only */
++		if (!reverse)
++			regmap_write(ps5169->regmap, 0x40, 0xc0);
++		else
++			regmap_write(ps5169->regmap, 0x40, 0xd0);
++
++		regmap_write(ps5169->regmap, 0x8d, 0x01);
++		regmap_write(ps5169->regmap, 0x90, 0x01);
++
++		return 0;
++
++	default:
++		if (ps5169->svid != USB_TYPEC_DP_SID)
++			return -EINVAL;
++
++		break;
++	}
++
++	/* DP Altmode Setup */
++	switch (ps5169->mode) {
++	case TYPEC_DP_STATE_C:
++	case TYPEC_DP_STATE_E:
++		/*
++		 * Normal Orientation (CC1)
++		 * A -> DP3
++		 * B -> DP2
++		 * C -> DP1
++		 * D -> DP0
++		 * Flipped Orientation (CC2)
++		 * A -> DP0
++		 * B -> DP1
++		 * C -> DP2
++		 * D -> DP3
++		 */
++
++		/* 4-lane DP */
++		if (!reverse)
++			regmap_write(ps5169->regmap, 0x40, 0xa0);
++		else
++			regmap_write(ps5169->regmap, 0x40, 0xb0);
++
++		regmap_write(ps5169->regmap, 0xa0, 0x00);
++		regmap_write(ps5169->regmap, 0xa1, 0x04);
++		break;
++
++	case TYPEC_DP_STATE_D:
++	case TYPEC_DP_STATE_F: /* State F is deprecated */
++		/*
++		 * Normal Orientation (CC1)
++		 * A -> USB RX
++		 * B -> USB TX
++		 * C -> DP1
++		 * D -> DP0
++		 * Flipped Orientation (CC2)
++		 * A -> DP0
++		 * B -> DP1
++		 * C -> USB TX
++		 * D -> USB RX
++		 */
++
++		/* USB 3.2 Gen 2 and 2-lane DP */
++		if (!reverse)
++			regmap_write(ps5169->regmap, 0x40, 0xe0);
++		else
++			regmap_write(ps5169->regmap, 0x40, 0xf0);
++
++		regmap_write(ps5169->regmap, 0xa0, 0x00);
++		regmap_write(ps5169->regmap, 0xa1, 0x04);
++		break;
++
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
++}
++
++static int ps5169_sw_set(struct typec_switch_dev *sw, enum typec_orientation orientation)
++{
++	struct ps5169 *ps5169 = typec_switch_get_drvdata(sw);
++	int ret;
++
++	ret = typec_switch_set(ps5169->typec_switch, orientation);
++	if (ret)
++		return ret;
++
++	mutex_lock(&ps5169->lock);
++
++	if (ps5169->orientation != orientation) {
++		ps5169->orientation = orientation;
++
++		ret = ps5169_set(ps5169);
++	}
++
++	mutex_unlock(&ps5169->lock);
++
++	return ret;
++}
++
++static int ps5169_retimer_set(struct typec_retimer *retimer, struct typec_retimer_state *state)
++{
++	struct ps5169 *ps5169 = typec_retimer_get_drvdata(retimer);
++	struct typec_mux_state mux_state;
++	int ret = 0;
++
++	mutex_lock(&ps5169->lock);
++
++	if (ps5169->mode != state->mode) {
++		ps5169->mode = state->mode;
++
++		if (state->alt)
++			ps5169->svid = state->alt->svid;
++		else
++			ps5169->svid = 0;
++
++		ret = ps5169_set(ps5169);
++	}
++
++	mutex_unlock(&ps5169->lock);
++
++	if (ret)
++		return ret;
++
++	mux_state.alt = state->alt;
++	mux_state.data = state->data;
++	mux_state.mode = state->mode;
++
++	return typec_mux_set(ps5169->typec_mux, &mux_state);
++}
++
++static int ps5169_detect(struct ps5169 *ps5169)
++{
++	struct device *dev = &ps5169->client->dev;
++	u32 reg_val;
++	int ret;
++
++	ret = regmap_raw_read(ps5169->regmap, PS5169_CHIP_ID_REG, &reg_val, 2);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to read chip ID\n");
++
++	if (reg_val != PS5169_CHIP_ID)
++		return dev_err_probe(dev, -ENODEV, "unexpected chip ID: (0x%04x)\n", reg_val);
++
++	return 0;
++}
++
++static int ps5169_configure(struct ps5169 *ps5169)
++{
++	regmap_write(ps5169->regmap, 0x9d, 0x80);
++	usleep_range(10000, 10100);
++	regmap_write(ps5169->regmap, 0x9d, 0x00);
++	regmap_write(ps5169->regmap, 0x40, 0x80);
++	regmap_write(ps5169->regmap, 0x04, 0x44);
++
++	regmap_write(ps5169->regmap, 0xa0, 0x02);
++	regmap_write(ps5169->regmap, 0x8d, 0x01);
++	regmap_write(ps5169->regmap, 0x90, 0x01);
++
++	regmap_write(ps5169->regmap, 0x51, 0x87);
++	regmap_write(ps5169->regmap, 0x50, 0x00);
++	regmap_write(ps5169->regmap, 0x54, 0x01);
++	regmap_write(ps5169->regmap, 0x5d, 0x66);
++	regmap_write(ps5169->regmap, 0x52, 0x10);
++	regmap_write(ps5169->regmap, 0x55, 0x00);
++	regmap_write(ps5169->regmap, 0x56, 0x00);
++	regmap_write(ps5169->regmap, 0x57, 0x00);
++	regmap_write(ps5169->regmap, 0x58, 0x00);
++	regmap_write(ps5169->regmap, 0x59, 0x00);
++	regmap_write(ps5169->regmap, 0x5a, 0x00);
++	regmap_write(ps5169->regmap, 0x5b, 0x00);
++	regmap_write(ps5169->regmap, 0x5e, 0x05);
++	regmap_write(ps5169->regmap, 0x5f, 0x00);
++	regmap_write(ps5169->regmap, 0x60, 0x00);
++	regmap_write(ps5169->regmap, 0x61, 0x03);
++	regmap_write(ps5169->regmap, 0x65, 0x40);
++	regmap_write(ps5169->regmap, 0x66, 0x00);
++	regmap_write(ps5169->regmap, 0x67, 0x03);
++	regmap_write(ps5169->regmap, 0x75, 0x0c);
++	regmap_write(ps5169->regmap, 0x77, 0x00);
++	regmap_write(ps5169->regmap, 0x78, 0x7c);
++
++	return 0;
++}
++
++static const struct regmap_config ps5169_regmap = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = 0xff,
++};
++
++static int ps5169_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct typec_switch_desc sw_desc = { };
++	struct typec_retimer_desc retimer_desc = { };
++	struct ps5169 *ps5169;
++	int ret;
++
++	ps5169 = devm_kzalloc(dev, sizeof(*ps5169), GFP_KERNEL);
++	if (!ps5169)
++		return -ENOMEM;
++
++	ps5169->client = client;
++
++	mutex_init(&ps5169->lock);
++
++	ps5169->regmap = devm_regmap_init_i2c(client, &ps5169_regmap);
++	if (IS_ERR(ps5169->regmap))
++		return dev_err_probe(dev, PTR_ERR(ps5169->regmap),
++				     "failed to allocate register map\n");
++
++	ps5169->dvdd_supply = devm_regulator_get_optional(dev, "dvdd");
++	if (IS_ERR(ps5169->dvdd_supply)) {
++		if (PTR_ERR(ps5169->dvdd_supply) == -ENODEV)
++			ps5169->dvdd_supply = NULL;
++		else
++			return dev_err_probe(dev, PTR_ERR(ps5169->dvdd_supply),
++					     "failed to get dvdd regulator\n");
++	}
++
++	ps5169->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ps5169->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ps5169->reset_gpio),
++				     "failed to get reset gpio\n");
++
++	ps5169->typec_switch = typec_switch_get(dev);
++	if (IS_ERR(ps5169->typec_switch))
++		return dev_err_probe(dev, PTR_ERR(ps5169->typec_switch),
++				     "failed to acquire orientation-switch\n");
++
++	ps5169->typec_mux = typec_mux_get(dev);
++	if (IS_ERR(ps5169->typec_mux)) {
++		ret = dev_err_probe(dev, PTR_ERR(ps5169->typec_mux),
++				    "failed to acquire mode-switch\n");
++		goto err_switch_put;
++	}
++
++	if (ps5169->dvdd_supply) {
++		ret = regulator_enable(ps5169->dvdd_supply);
++		if (ret) {
++			ret = dev_err_probe(dev, ret, "failed to enable dvdd regulator\n");
++			goto err_mux_put;
++		}
++	}
++
++	if (ps5169->reset_gpio)
++		gpiod_set_value(ps5169->reset_gpio, 0);
++
++	msleep(20);
++
++	ret = ps5169_detect(ps5169);
++	if (ret)
++		goto err_disable_regulator;
++
++	ret = ps5169_configure(ps5169);
++	if (ret)
++		goto err_disable_regulator;
++
++	ret = drm_aux_bridge_register(dev);
++	if (ret)
++		goto err_disable_regulator;
++
++	sw_desc.drvdata = ps5169;
++	sw_desc.fwnode = dev_fwnode(dev);
++	sw_desc.set = ps5169_sw_set;
++
++	ps5169->sw = typec_switch_register(dev, &sw_desc);
++	if (IS_ERR(ps5169->sw)) {
++		ret = dev_err_probe(dev, PTR_ERR(ps5169->sw),
++				    "failed to register typec switch\n");
++		goto err_disable_regulator;
++	}
++
++	retimer_desc.drvdata = ps5169;
++	retimer_desc.fwnode = dev_fwnode(dev);
++	retimer_desc.set = ps5169_retimer_set;
++
++	ps5169->retimer = typec_retimer_register(dev, &retimer_desc);
++	if (IS_ERR(ps5169->retimer)) {
++		ret = dev_err_probe(dev, PTR_ERR(ps5169->retimer),
++				    "failed to register typec retimer\n");
++		goto err_switch_unregister;
++	}
++
++	return 0;
++
++err_switch_unregister:
++	typec_switch_unregister(ps5169->sw);
++err_disable_regulator:
++	if (ps5169->reset_gpio)
++		gpiod_set_value(ps5169->reset_gpio, 1);
++	if (ps5169->dvdd_supply)
++		regulator_disable(ps5169->dvdd_supply);
++err_mux_put:
++	typec_mux_put(ps5169->typec_mux);
++err_switch_put:
++	typec_switch_put(ps5169->typec_switch);
++
++	return ret;
++}
++
++static void ps5169_remove(struct i2c_client *client)
++{
++	struct ps5169 *ps5169 = i2c_get_clientdata(client);
++
++	typec_retimer_unregister(ps5169->retimer);
++	typec_switch_unregister(ps5169->sw);
++
++	if (ps5169->reset_gpio)
++		gpiod_set_value(ps5169->reset_gpio, 1);
++
++	if (ps5169->dvdd_supply)
++		regulator_disable(ps5169->dvdd_supply);
++
++	typec_mux_put(ps5169->typec_mux);
++	typec_switch_put(ps5169->typec_switch);
++}
++
++static const struct of_device_id ps5169_of_table[] = {
++	{ .compatible = "parade,ps5169" },
++	{ .compatible = "hq_redriver,ps5169" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ps5169_of_table);
++
++static struct i2c_driver ps5169_driver = {
++	.driver = {
++		.name = "ps5169",
++		.of_match_table = ps5169_of_table,
++	},
++	.probe		= ps5169_probe,
++	.remove		= ps5169_remove,
++};
++module_i2c_driver(ps5169_driver);
++
++MODULE_AUTHOR("map220v <map220v300@gmail.com>");
++MODULE_DESCRIPTION("Parade PS5169 Type-C driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/usb/typec/mux/wcd939x-usbss.c b/drivers/usb/typec/mux/wcd939x-usbss.c
+old mode 100644
+new mode 100755
+index d46c353df..6127af979
+--- a/drivers/usb/typec/mux/wcd939x-usbss.c
++++ b/drivers/usb/typec/mux/wcd939x-usbss.c
+@@ -197,6 +197,7 @@ struct wcd939x_usbss {
+ 	enum typec_orientation orientation;
+ 	unsigned long mode;
+ 	unsigned int svid;
++	bool virtual_only;
+ };
+ 
+ static const struct regmap_range_cfg wcd939x_usbss_ranges[] = {
+@@ -245,6 +246,9 @@ static int wcd939x_usbss_set(struct wcd939x_usbss *usbss)
+ 	bool enable_dp = false;
+ 	int ret;
+ 
++	if (usbss->virtual_only)
++		return 0;
++
+ 	/* USB Mode */
+ 	if (usbss->mode < TYPEC_STATE_MODAL ||
+ 	    (!usbss->svid && (usbss->mode == TYPEC_MODE_USB2 ||
+@@ -540,6 +544,9 @@ static int wcd939x_usbss_switch_set(struct typec_switch_dev *sw,
+ 	mutex_lock(&usbss->lock);
+ 
+ 	if (usbss->orientation != orientation) {
++		dev_dbg(&usbss->client->dev,
++			"switch orientation %u -> %u virtual=%d\n",
++			usbss->orientation, orientation, usbss->virtual_only);
+ 		usbss->orientation = orientation;
+ 
+ 		ret = wcd939x_usbss_set(usbss);
+@@ -551,7 +558,16 @@ static int wcd939x_usbss_switch_set(struct typec_switch_dev *sw,
+ 		return ret;
+ 
+ 	/* Report orientation to codec after switch has been done */
+-	return typec_switch_set(usbss->codec_switch, orientation);
++	if (!usbss->codec_switch)
++		dev_dbg(&usbss->client->dev,
++			"codec switch handle is NULL; orientation event is no-op\n");
++
++	ret = typec_switch_set(usbss->codec_switch, orientation);
++	dev_dbg(&usbss->client->dev,
++		"forward codec switch handle=%p ret=%d\n",
++		usbss->codec_switch, ret);
++
++	return ret;
+ }
+ 
+ static int wcd939x_usbss_mux_set(struct typec_mux_dev *mux,
+@@ -563,6 +579,10 @@ static int wcd939x_usbss_mux_set(struct typec_mux_dev *mux,
+ 	mutex_lock(&usbss->lock);
+ 
+ 	if (usbss->mode != state->mode) {
++		dev_dbg(&usbss->client->dev,
++			"mux mode 0x%lx -> 0x%lx svid 0x%x virtual=%d\n",
++			usbss->mode, state->mode,
++			state->alt ? state->alt->svid : 0, usbss->virtual_only);
+ 		usbss->mode = state->mode;
+ 
+ 		if (state->alt)
+@@ -579,7 +599,15 @@ static int wcd939x_usbss_mux_set(struct typec_mux_dev *mux,
+ 		return ret;
+ 
+ 	/* Report event to codec after switch has been done */
+-	return typec_mux_set(usbss->codec, state);
++	if (!usbss->codec)
++		dev_dbg(&usbss->client->dev,
++			"codec mux handle is NULL; mode event is no-op\n");
++
++	ret = typec_mux_set(usbss->codec, state);
++	dev_dbg(&usbss->client->dev,
++		"forward codec mux handle=%p ret=%d\n", usbss->codec, ret);
++
++	return ret;
+ }
+ 
+ static int wcd939x_usbss_probe(struct i2c_client *client)
+@@ -596,25 +624,30 @@ static int wcd939x_usbss_probe(struct i2c_client *client)
+ 
+ 	usbss->client = client;
+ 	mutex_init(&usbss->lock);
++	usbss->virtual_only = device_property_read_bool(dev, "qcom,virtual-usbss");
+ 
+-	usbss->regmap = devm_regmap_init_i2c(client, &wcd939x_usbss_regmap_config);
+-	if (IS_ERR(usbss->regmap))
+-		return dev_err_probe(dev, PTR_ERR(usbss->regmap), "failed to initialize regmap\n");
++	if (!usbss->virtual_only) {
++		usbss->regmap = devm_regmap_init_i2c(client, &wcd939x_usbss_regmap_config);
++		if (IS_ERR(usbss->regmap))
++			return dev_err_probe(dev, PTR_ERR(usbss->regmap), "failed to initialize regmap\n");
+ 
+-	usbss->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
+-	if (IS_ERR(usbss->reset_gpio))
+-		return dev_err_probe(dev, PTR_ERR(usbss->reset_gpio),
+-				     "unable to acquire reset gpio\n");
++		usbss->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
++		if (IS_ERR(usbss->reset_gpio))
++			return dev_err_probe(dev, PTR_ERR(usbss->reset_gpio),
++					     "unable to acquire reset gpio\n");
+ 
+-	usbss->vdd_supply = devm_regulator_get_optional(dev, "vdd");
+-	if (IS_ERR(usbss->vdd_supply))
+-		return PTR_ERR(usbss->vdd_supply);
++		usbss->vdd_supply = devm_regulator_get_optional(dev, "vdd");
++		if (IS_ERR(usbss->vdd_supply))
++			return PTR_ERR(usbss->vdd_supply);
++	}
+ 
+ 	/* Get Codec's MUX & Switch devices */
+ 	usbss->codec = fwnode_typec_mux_get(dev->fwnode);
+ 	if (IS_ERR(usbss->codec))
+ 		return dev_err_probe(dev, PTR_ERR(usbss->codec),
+ 				     "failed to acquire codec mode-switch\n");
++	dev_dbg(dev, "acquired codec mode-switch handle=%p virtual=%d\n",
++		usbss->codec, usbss->virtual_only);
+ 
+ 	usbss->codec_switch = fwnode_typec_switch_get(dev->fwnode);
+ 	if (IS_ERR(usbss->codec_switch)) {
+@@ -622,10 +655,15 @@ static int wcd939x_usbss_probe(struct i2c_client *client)
+ 				    "failed to acquire codec orientation-switch\n");
+ 		goto err_mux_put;
+ 	}
++	dev_dbg(dev, "acquired codec orientation-switch handle=%p virtual=%d\n",
++		usbss->codec_switch, usbss->virtual_only);
+ 
+ 	usbss->mode = TYPEC_STATE_SAFE;
+ 	usbss->orientation = TYPEC_ORIENTATION_NONE;
+ 
++	if (usbss->virtual_only)
++		goto register_muxes;
++
+ 	gpiod_set_value(usbss->reset_gpio, 1);
+ 
+ 	ret = regulator_enable(usbss->vdd_supply);
+@@ -700,6 +738,7 @@ static int wcd939x_usbss_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
++register_muxes:
+ 	sw_desc.drvdata = usbss;
+ 	sw_desc.fwnode = dev_fwnode(dev);
+ 	sw_desc.set = wcd939x_usbss_switch_set;
+@@ -719,6 +758,8 @@ static int wcd939x_usbss_probe(struct i2c_client *client)
+ 		ret = dev_err_probe(dev, PTR_ERR(usbss->mux), "failed to register typec mux\n");
+ 		goto err_switch_unregister;
+ 	}
++	dev_dbg(dev, "registered local mux/switch virtual=%d\n",
++		usbss->virtual_only);
+ 
+ 	i2c_set_clientdata(client, usbss);
+ 
+@@ -728,7 +769,8 @@ err_switch_unregister:
+ 	typec_switch_unregister(usbss->sw);
+ 
+ err_regulator_disable:
+-	regulator_disable(usbss->vdd_supply);
++	if (!usbss->virtual_only)
++		regulator_disable(usbss->vdd_supply);
+ 
+ err_mux_switch:
+ 	typec_switch_put(usbss->codec_switch);
+@@ -746,7 +788,8 @@ static void wcd939x_usbss_remove(struct i2c_client *client)
+ 	typec_mux_unregister(usbss->mux);
+ 	typec_switch_unregister(usbss->sw);
+ 
+-	regulator_disable(usbss->vdd_supply);
++	if (!usbss->virtual_only)
++		regulator_disable(usbss->vdd_supply);
+ 
+ 	typec_switch_put(usbss->codec_switch);
+ 	typec_mux_put(usbss->codec);
+diff --git a/drivers/usb/typec/ucsi/psy.c b/drivers/usb/typec/ucsi/psy.c
+old mode 100644
+new mode 100755
+index c8ebab8ba..2a90607c7
+--- a/drivers/usb/typec/ucsi/psy.c
++++ b/drivers/usb/typec/ucsi/psy.c
+@@ -60,6 +60,9 @@ static int ucsi_psy_get_status(struct ucsi_connector *con,
+ 
+ 	val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+ 
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO)
++		return 0;
++
+ 	if (con->ucsi->version >= UCSI_VERSION_2_0)
+ 		sink_path_enabled =
+ 			UCSI_CONSTAT(con, SINK_PATH_STATUS_V2_0) ==
+@@ -79,6 +82,9 @@ static int ucsi_psy_get_online(struct ucsi_connector *con,
+ 			       union power_supply_propval *val)
+ {
+ 	val->intval = UCSI_PSY_OFFLINE;
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO)
++		return 0;
++
+ 	if (UCSI_CONSTAT(con, CONNECTED) &&
+ 	    (UCSI_CONSTAT(con, PWR_DIR) == TYPEC_SINK))
+ 		val->intval = UCSI_PSY_FIXED_ONLINE;
+@@ -90,6 +96,11 @@ static int ucsi_psy_get_voltage_min(struct ucsi_connector *con,
+ {
+ 	u32 pdo;
+ 
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
++		val->intval = 0;
++		return 0;
++	}
++
+ 	switch (UCSI_CONSTAT(con, PWR_OPMODE)) {
+ 	case UCSI_CONSTAT_PWR_OPMODE_PD:
+ 		pdo = con->src_pdos[0];
+@@ -114,6 +125,11 @@ static int ucsi_psy_get_voltage_max(struct ucsi_connector *con,
+ 	u32 pdo;
+ 	int max_voltage = 0;
+ 
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
++		val->intval = 0;
++		return 0;
++	}
++
+ 	switch (UCSI_CONSTAT(con, PWR_OPMODE)) {
+ 	case UCSI_CONSTAT_PWR_OPMODE_PD:
+ 		for (int i = 0; i < con->num_pdos; i++) {
+@@ -146,6 +162,11 @@ static int ucsi_psy_get_voltage_now(struct ucsi_connector *con,
+ 	int index;
+ 	u32 pdo;
+ 
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
++		val->intval = 0;
++		return 0;
++	}
++
+ 	switch (UCSI_CONSTAT(con, PWR_OPMODE)) {
+ 	case UCSI_CONSTAT_PWR_OPMODE_PD:
+ 		index = rdo_index(con->rdo);
+@@ -175,7 +196,8 @@ static int ucsi_psy_get_current_max(struct ucsi_connector *con,
+ 	u32 pdo;
+ 	int max_current = 0;
+ 
+-	if (!UCSI_CONSTAT(con, CONNECTED)) {
++	if (!UCSI_CONSTAT(con, CONNECTED) ||
++	    UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
+ 		val->intval = 0;
+ 		return 0;
+ 	}
+@@ -212,7 +234,8 @@ static int ucsi_psy_get_current_max(struct ucsi_connector *con,
+ static int ucsi_psy_get_current_now(struct ucsi_connector *con,
+ 				    union power_supply_propval *val)
+ {
+-	if (!UCSI_CONSTAT(con, CONNECTED)) {
++	if (!UCSI_CONSTAT(con, CONNECTED) ||
++	    UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
+ 		val->intval = 0;
+ 		return 0;
+ 	}
+@@ -241,7 +264,8 @@ static int ucsi_psy_get_usb_type(struct ucsi_connector *con,
+ 				 union power_supply_propval *val)
+ {
+ 	val->intval = POWER_SUPPLY_USB_TYPE_C;
+-	if (UCSI_CONSTAT(con, CONNECTED) &&
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) != UCSI_CONSTAT_PARTNER_TYPE_AUDIO &&
++	    UCSI_CONSTAT(con, CONNECTED) &&
+ 	    UCSI_CONSTAT(con, PWR_OPMODE) == UCSI_CONSTAT_PWR_OPMODE_PD)
+ 		val->intval = POWER_SUPPLY_USB_TYPE_PD;
+ 
+@@ -255,6 +279,11 @@ static int ucsi_psy_get_charge_type(struct ucsi_connector *con, union power_supp
+ 		return 0;
+ 	}
+ 
++	if (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_AUDIO) {
++		val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
++		return 0;
++	}
++
+ 	/* The Battery Charging Cabability Status field is only valid in sink role. */
+ 	if (UCSI_CONSTAT(con, PWR_DIR) != TYPEC_SINK) {
+ 		val->intval = POWER_SUPPLY_CHARGE_TYPE_UNKNOWN;
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index 61cb24ed8..6401c5f9c 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1158,6 +1158,8 @@ static void ucsi_unregister_partner(struct ucsi_connector *con)
+ static void ucsi_partner_change(struct ucsi_connector *con)
+ {
+ 	enum usb_role u_role = USB_ROLE_NONE;
++	bool preserve_altmode_mux = false;
++	bool source_host_role = false;
+ 	int ret;
+ 
+ 	switch (UCSI_CONSTAT(con, PARTNER_TYPE)) {
+@@ -1185,8 +1187,15 @@ static void ucsi_partner_change(struct ucsi_connector *con)
+ 			typec_set_mode(con->port, TYPEC_MODE_AUDIO);
+ 			break;
+ 		default:
+-			if (UCSI_CONSTAT(con, PARTNER_FLAG_USB))
++			if (UCSI_CONSTAT(con, PARTNER_FLAG_USB)) {
++				preserve_altmode_mux =
++					(con->ucsi->quirks & UCSI_PRESERVE_ALTMODE_MUX) &&
++					UCSI_CONSTAT(con, PARTNER_FLAG_ALT_MODE);
++				if (preserve_altmode_mux)
++					break;
++
+ 				typec_set_mode(con->port, TYPEC_STATE_USB);
++			}
+ 		}
+ 
+ 		if (((con->ucsi->version >= UCSI_VERSION_3_0 &&
+@@ -1202,6 +1211,25 @@ static void ucsi_partner_change(struct ucsi_connector *con)
+ 		UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN4)))))
+ 		u_role = USB_ROLE_NONE;
+ 
++	if ((con->ucsi->quirks & UCSI_PRESERVE_ALTMODE_MUX) &&
++	    UCSI_CONSTAT(con, CONNECTED) &&
++	    UCSI_CONSTAT(con, PARTNER_FLAG_USB) &&
++	    !UCSI_CONSTAT(con, PWR_DIR) &&
++	    (UCSI_CONSTAT(con, PARTNER_TYPE) == UCSI_CONSTAT_PARTNER_TYPE_DFP ||
++	     UCSI_CONSTAT(con, PARTNER_TYPE) == 0)) {
++		u_role = USB_ROLE_HOST;
++		typec_set_data_role(con->port, TYPEC_HOST);
++		source_host_role = true;
++	}
++
++	dev_dbg(con->ucsi->dev,
++		"con%d partner_change connected=%lu change=0x%lx type=%lu flags=0x%lx pwr_dir=%lu opmode=%lu u_role=%d preserve_altmode=%d source_host_role=%d\n",
++		con->num, UCSI_CONSTAT(con, CONNECTED),
++		UCSI_CONSTAT(con, CHANGE), UCSI_CONSTAT(con, PARTNER_TYPE),
++		UCSI_CONSTAT(con, PARTNER_FLAGS), UCSI_CONSTAT(con, PWR_DIR),
++		UCSI_CONSTAT(con, PWR_OPMODE), u_role, preserve_altmode_mux,
++		source_host_role);
++
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);
+ 	if (ret)
+ 		dev_err(con->ucsi->dev, "con:%d: failed to set usb role:%d\n",
+@@ -1219,6 +1247,9 @@ static int ucsi_check_connection(struct ucsi_connector *con)
+ 		return ret;
+ 	}
+ 
++	if (con->ucsi->ops->connector_status)
++		con->ucsi->ops->connector_status(con);
++
+ 	if (UCSI_CONSTAT(con, CONNECTED)) {
+ 		if (prev_state)
+ 			return 0;
+diff --git a/drivers/usb/typec/ucsi/ucsi.h b/drivers/usb/typec/ucsi/ucsi.h
+old mode 100644
+new mode 100755
+index cff9ddc2a..e8d828d37
+--- a/drivers/usb/typec/ucsi/ucsi.h
++++ b/drivers/usb/typec/ucsi/ucsi.h
+@@ -500,6 +500,9 @@ struct ucsi {
+ 
+ /* USB4 connection can imply that USB communcation is supported */
+ #define UCSI_USB4_IMPLIES_USB	BIT(2)
++
++/* Preserve a mux state selected by an out-of-band alternate mode driver */
++#define UCSI_PRESERVE_ALTMODE_MUX	BIT(3)
+ };
+ 
+ #define UCSI_MAX_DATA_LENGTH(u) (((u)->version < UCSI_VERSION_2_0) ? 0x10 : 0xff)
+diff --git a/drivers/usb/typec/ucsi/ucsi_glink.c b/drivers/usb/typec/ucsi/ucsi_glink.c
+index 12e07b9fe..988316f9a 100644
+--- a/drivers/usb/typec/ucsi/ucsi_glink.c
++++ b/drivers/usb/typec/ucsi/ucsi_glink.c
+@@ -11,6 +11,7 @@
+ #include <linux/soc/qcom/pdr.h>
+ #include <linux/usb/typec_mux.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/bitmap.h>
+ #include <linux/soc/qcom/pmic_glink.h>
+ #include "ucsi.h"
+ 
+@@ -64,6 +65,11 @@ struct pmic_glink_ucsi {
+ 	struct device *dev;
+ 
+ 	struct gpio_desc *port_orientation[PMIC_GLINK_MAX_PORTS];
++	struct gpio_desc *c2_select;
++	struct gpio_desc *secondary_audio_detect;
++	bool connector_connected[PMIC_GLINK_MAX_PORTS];
++	bool audio_accessory_connected[PMIC_GLINK_MAX_PORTS];
++	u64 last_command;
+ 
+ 	struct pmic_glink_client *client;
+ 
+@@ -81,6 +87,67 @@ struct pmic_glink_ucsi {
+ 	u8 read_buf[UCSI_BUF_V2_SIZE];
+ };
+ 
++static void pmic_glink_ucsi_write_field(unsigned long *map,
++					struct ucsi_bitfield field,
++					u16 version, unsigned long value)
++{
++	if (version >= field.version)
++		bitmap_write(map, value, field.offset, field.size);
++}
++
++static unsigned long pmic_glink_ucsi_read_field(unsigned long *map,
++				       struct ucsi_bitfield field,
++				       u16 version)
++{
++	if (version < field.version)
++		return 0;
++
++	return bitmap_read(map, field.offset, field.size);
++}
++
++static void pmic_glink_ucsi_force_secondary_audio(struct pmic_glink_ucsi *ucsi,
++						 unsigned long *status)
++{
++	bool secondary_audio_present = false;
++	bool raw_audio_accessory;
++	unsigned long change, flags;
++	u8 idx = 1;
++
++	if (ucsi->secondary_audio_detect)
++		secondary_audio_present =
++			gpiod_get_value_cansleep(ucsi->secondary_audio_detect) > 0;
++
++	raw_audio_accessory =
++		pmic_glink_ucsi_read_field(status, UCSI_CONSTAT_PARTNER_TYPE,
++					       ucsi->ucsi->version) ==
++		UCSI_CONSTAT_PARTNER_TYPE_AUDIO;
++
++	if (raw_audio_accessory && secondary_audio_present)
++		ucsi->audio_accessory_connected[idx] = true;
++	else if (!secondary_audio_present)
++		ucsi->audio_accessory_connected[idx] = false;
++
++	if (!ucsi->audio_accessory_connected[idx] || !secondary_audio_present)
++		return;
++
++	change = pmic_glink_ucsi_read_field(status, UCSI_CONSTAT_CHANGE,
++					      ucsi->ucsi->version);
++	flags = pmic_glink_ucsi_read_field(status, UCSI_CONSTAT_PARTNER_FLAGS,
++					     ucsi->ucsi->version);
++
++	pmic_glink_ucsi_write_field(status, UCSI_CONSTAT_CONNECTED,
++				      ucsi->ucsi->version, 1);
++	pmic_glink_ucsi_write_field(status, UCSI_CONSTAT_CHANGE,
++				      ucsi->ucsi->version,
++				      change | UCSI_CONSTAT_CONNECT_CHANGE);
++	pmic_glink_ucsi_write_field(status, UCSI_CONSTAT_PARTNER_TYPE,
++				      ucsi->ucsi->version,
++				      UCSI_CONSTAT_PARTNER_TYPE_AUDIO);
++	pmic_glink_ucsi_write_field(status, UCSI_CONSTAT_PARTNER_FLAGS,
++				      ucsi->ucsi->version,
++				      flags | BIT(0));
++}
++
+ static int pmic_glink_ucsi_read(struct ucsi *__ucsi, unsigned int offset,
+ 				void *val, size_t val_len)
+ {
+@@ -129,9 +196,20 @@ static int pmic_glink_ucsi_read_cci(struct ucsi *ucsi, u32 *cci)
+ 	return pmic_glink_ucsi_read(ucsi, UCSI_CCI, cci, sizeof(*cci));
+ }
+ 
+-static int pmic_glink_ucsi_read_message_in(struct ucsi *ucsi, void *val, size_t val_len)
++static int pmic_glink_ucsi_read_message_in(struct ucsi *__ucsi, void *val, size_t val_len)
+ {
+-	return pmic_glink_ucsi_read(ucsi, UCSI_MESSAGE_IN, val, val_len);
++	struct pmic_glink_ucsi *ucsi = ucsi_get_drvdata(__ucsi);
++	int ret;
++
++	ret = pmic_glink_ucsi_read(__ucsi, UCSI_MESSAGE_IN, val, val_len);
++	if (ret)
++		return ret;
++
++	if (UCSI_COMMAND(ucsi->last_command) == UCSI_GET_CONNECTOR_STATUS &&
++	    UCSI_DEFAULT_GET_CONNECTOR_NUMBER(ucsi->last_command) == 2)
++		pmic_glink_ucsi_force_secondary_audio(ucsi, val);
++
++	return 0;
+ }
+ 
+ static int pmic_glink_ucsi_locked_write(struct pmic_glink_ucsi *ucsi, unsigned int offset,
+@@ -187,6 +265,7 @@ static int pmic_glink_ucsi_async_control(struct ucsi *__ucsi, u64 command)
+ 	int ret;
+ 
+ 	mutex_lock(&ucsi->lock);
++	ucsi->last_command = command;
+ 	ret = pmic_glink_ucsi_locked_write(ucsi, UCSI_CONTROL, &command, sizeof(command));
+ 	mutex_unlock(&ucsi->lock);
+ 
+@@ -207,9 +286,43 @@ static void pmic_glink_ucsi_update_connector(struct ucsi_connector *con)
+ static void pmic_glink_ucsi_connector_status(struct ucsi_connector *con)
+ {
+ 	struct pmic_glink_ucsi *ucsi = ucsi_get_drvdata(con->ucsi);
++	bool c1_connected, c2_connected, connected;
+ 	int orientation;
+ 
+-	if (!UCSI_CONSTAT(con, CONNECTED)) {
++	if (con->num == 2)
++		pmic_glink_ucsi_force_secondary_audio(ucsi, con->status);
++
++	connected = UCSI_CONSTAT(con, CONNECTED);
++	if (con->num <= PMIC_GLINK_MAX_PORTS)
++		ucsi->connector_connected[con->num - 1] = connected;
++
++	if (ucsi->c2_select) {
++		c1_connected = ucsi->connector_connected[0];
++		c2_connected = ucsi->connector_connected[1];
++
++		if (c1_connected && !c2_connected) {
++			gpiod_set_value_cansleep(ucsi->c2_select, 0);
++		} else if (!c1_connected && c2_connected) {
++			gpiod_set_value_cansleep(ucsi->c2_select, 1);
++		}
++	}
++
++	dev_dbg(ucsi->dev,
++		"raw con%d connected=%d change=0x%lx type=%lu flags=0x%lx pwr_dir=%lu opmode=%lu c1=%d c2=%d\n",
++		con->num, connected,
++		pmic_glink_ucsi_read_field(con->status, UCSI_CONSTAT_CHANGE,
++					   con->ucsi->version),
++		pmic_glink_ucsi_read_field(con->status, UCSI_CONSTAT_PARTNER_TYPE,
++					   con->ucsi->version),
++		pmic_glink_ucsi_read_field(con->status, UCSI_CONSTAT_PARTNER_FLAGS,
++					   con->ucsi->version),
++		pmic_glink_ucsi_read_field(con->status, UCSI_CONSTAT_PWR_DIR,
++					   con->ucsi->version),
++		pmic_glink_ucsi_read_field(con->status, UCSI_CONSTAT_PWR_OPMODE,
++					   con->ucsi->version),
++		ucsi->connector_connected[0], ucsi->connector_connected[1]);
++
++	if (!connected) {
+ 		typec_set_orientation(con->port, TYPEC_ORIENTATION_NONE);
+ 		return;
+ 	}
+@@ -371,6 +484,7 @@ static void pmic_glink_ucsi_destroy(void *data)
+ static unsigned long quirk_sc8180x = UCSI_NO_PARTNER_PDOS;
+ static unsigned long quirk_sc8280xp = UCSI_NO_PARTNER_PDOS | UCSI_DELAY_DEVICE_PDOS;
+ static unsigned long quirk_sm8450 = UCSI_DELAY_DEVICE_PDOS;
++static unsigned long quirk_sm8650 = UCSI_DELAY_DEVICE_PDOS | UCSI_PRESERVE_ALTMODE_MUX;
+ static unsigned long quirk_x1e80100 = UCSI_DELAY_DEVICE_PDOS | UCSI_USB4_IMPLIES_USB;
+ 
+ static const struct of_device_id pmic_glink_ucsi_of_quirks[] = {
+@@ -381,6 +495,7 @@ static const struct of_device_id pmic_glink_ucsi_of_quirks[] = {
+ 	{ .compatible = "qcom,sc8280xp-pmic-glink", .data = &quirk_sc8280xp, },
+ 	{ .compatible = "qcom,sm8350-pmic-glink", .data = &quirk_sc8180x, },
+ 	{ .compatible = "qcom,sm8450-pmic-glink", .data = &quirk_sm8450, },
++	{ .compatible = "qcom,sm8650-pmic-glink", .data = &quirk_sm8650, },
+ 	{ .compatible = "qcom,sm8550-pmic-glink", .data = &quirk_sm8450, },
+ 	{ .compatible = "qcom,x1e80100-pmic-glink", .data = &quirk_x1e80100, },
+ 	{}
+@@ -423,6 +538,18 @@ static int pmic_glink_ucsi_probe(struct auxiliary_device *adev,
+ 
+ 	ucsi_set_drvdata(ucsi->ucsi, ucsi);
+ 
++	ucsi->c2_select = devm_gpiod_get_optional(dev, "c2-select",
++						  GPIOD_OUT_HIGH);
++	if (IS_ERR(ucsi->c2_select))
++		return dev_err_probe(dev, PTR_ERR(ucsi->c2_select),
++				     "unable to acquire C2 select gpio\n");
++
++	ucsi->secondary_audio_detect =
++		devm_gpiod_get_optional(dev, "secondary-audio-detect", GPIOD_IN);
++	if (IS_ERR(ucsi->secondary_audio_detect))
++		return dev_err_probe(dev, PTR_ERR(ucsi->secondary_audio_detect),
++				     "unable to acquire secondary audio detect gpio\n");
++
+ 	device_for_each_child_node_scoped(dev, fwnode) {
+ 		struct gpio_desc *desc;
+ 		u32 port;
