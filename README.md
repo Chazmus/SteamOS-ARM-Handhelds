@@ -49,7 +49,7 @@ What you get:
 
 - Game Mode and Desktop Mode, with the controller showing up as a Steam Deck pad
 - x86 PC games through FEX and ARM64 Proton, plus Epic, GOG and Amazon through Heroic
-- Loadout, which installs emulators and apps picked for your chip
+- Loadout, which installs emulators and apps picked for your SoC
 - Sleep that lasts and quiet fan curves
 - Updates through Steam, no reflashing
 - Lossless Scaling frame gen, Decky and the performance overlay
@@ -58,27 +58,29 @@ What you get:
 
 ## Devices
 
-| Chip | Devices | Status |
+### Handhelds
+
+| SoC | Devices | Status |
 |---|---|---|
 | Snapdragon 8 Elite | AYN Odin 3, KONKR Pocket FIT Elite | Stable |
 | Snapdragon 8 Gen 3 | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | Stable |
 | Snapdragon 8 Gen 2 | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova | Stable |
-| Snapdragon 888 | REDMAGIC 6 | Build it yourself ([guide](docs/redmagic6.md)) |
 
-There's one image per chip, you pick your device in the ABL menu and it sets
+There's one image per SoC, you pick your device in the ABL menu and it sets
 itself up. I only own a Pocket FIT, so if you have one of the others please
 [let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
 
-### Lenovo tablets (testing)
+### Phones & tablets
 
-| Tablet | Chip | Status |
+| Device | SoC | Status |
 |---|---|---|
 | Lenovo Legion Y700 Gen 3 (TB321FU) | Snapdragon 8 Gen 3 | Testing |
 | Lenovo Legion Y700 Gen 4 (TB322FC) | Snapdragon 8 Elite | Testing |
+| REDMAGIC 6 (NX669J) | Snapdragon 888 | Build it yourself ([guide](docs/redmagic6.md)) |
 
-These boot from a USB drive and install to internal storage, nobody has run
-them on a real tablet yet. If you have one and want to help, ask on
-[Discord](https://discord.gg/EP53nZYvg) and see the
+The Lenovo tablets boot from a USB drive and install to internal storage,
+nobody has run them on a real tablet yet. If you have one and want to help,
+ask on [Discord](https://discord.gg/EP53nZYvg) and see the
 [Lenovo page](https://steamos-arm-port.github.io/devices/lenovo/).
 
 ## Documentation
@@ -102,15 +104,16 @@ and for help with installing come say hi on [Discord](https://discord.gg/EP53nZY
 
 ## Supporting the project
 
-I work on this in my free time and it's free for everyone. If it helped you
-out, a coffee means a lot.
-
 <p align="left">
   <a href="https://ko-fi.com/aimalb"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi"></a>
   <a href="https://paypal.me/Basit2000"><img src="https://img.shields.io/badge/PayPal-Basit2000-00457c?style=for-the-badge&logo=paypal&logoColor=white" alt="PayPal"></a>
 </p>
 
-If you can't donate, starring the repo helps too!
+Any amount raised will be used to buy devices to support and boost development, a star helps too!
+
+Have a device you'd like to see supported? Sending one over for long term
+development is the fastest way to get it there, message me on
+[Discord](https://discord.gg/EP53nZYvg).
 
 ## Credits
 
