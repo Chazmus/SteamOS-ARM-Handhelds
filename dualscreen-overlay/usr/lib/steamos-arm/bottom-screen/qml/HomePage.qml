@@ -39,7 +39,10 @@ Item {
             { id: "page:keys", page: "keys", name: "Keyboard", icon: "input-keyboard-symbolic", mask: true },
             { id: "page:notes", page: "notes", name: game.name ? "Notes" : "Game Notes", icon: "document-edit-symbolic", mask: true },
             { id: "page:hub", page: "hub", name: "Loadout", icon: "download-symbolic", mask: true },
-            { id: "page:bricks", page: "bricks", name: "Bricks", icon: "games-config-board-symbolic", mask: true }
+            { id: "page:bricks", page: "bricks", name: "Bricks", icon: "games-config-board-symbolic", mask: true },
+            // the only way in to the bottom screen's own settings (themes, idle
+            // timeout, what shows where)
+            { id: "page:settings", page: "settings", name: "Settings", icon: "configure-symbolic", mask: true }
         ]
         tools.forEach(function (t) { t.kind = "tool"; out.push(t) })
         web.forEach(function (w) {
