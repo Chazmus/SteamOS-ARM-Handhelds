@@ -38,7 +38,8 @@ a = ap.parse_args()
 
 root = Path(a.rootfs).resolve()
 output = Path(a.output).resolve()
-if not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file():
+# The 8 Elite image doesn't ship frame generation (yet); the others must.
+if a.soc != 'sm8750' and not (root / 'usr/lib/liblsfg-vk-layer-arm64.so').is_file():
     raise SystemExit('missing LSFG v2 ARM layer')
 
 
