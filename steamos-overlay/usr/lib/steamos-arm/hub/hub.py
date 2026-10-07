@@ -458,8 +458,13 @@ def start_job(action: str, app_id: str, **extra) -> dict:
     # detaching is the fallback without a user manager (tests, chroots).
     unit = f"steamos-arm-hub-{app_id}-{job['id']}"
     try:
+        # Downloads and unpacks go to /home, on the same card as the system:
+        # cap them so a big Flatpak can't freeze everything else (the user
+        # manager gets the io controller from 20-steamos-arm-io.conf).
         r = subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit={unit}",
-                            "--property=Nice=5", "--property=IOWeight=20", *cmd],
+                            "--property=Nice=5", "--property=CPUWeight=20", "--property=IOWeight=20",
+                            f"--property=IOReadBandwidthMax={HOME} 40M",
+                            f"--property=IOWriteBandwidthMax={HOME} 20M", *cmd],
                            capture_output=True, timeout=15)
         if r.returncode == 0:
             return job
