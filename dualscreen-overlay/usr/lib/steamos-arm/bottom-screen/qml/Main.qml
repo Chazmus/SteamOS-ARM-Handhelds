@@ -201,22 +201,23 @@ Window {
 
         // Status bar: home button (off the home screen), title, clock, battery.
         // On the dashboard it is a slim strip so the readings get the room:
-        // small home and Steam buttons on the left, time and battery right.
+        // home and Steam buttons on the left, time and battery right. The
+        // buttons stay big enough to hit on a 4" screen.
         readonly property bool slim: root.page === "dash"
         RowLayout {
             id: status
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: (parent.slim ? 52 : 72) * Ui.s
-            spacing: (parent.slim ? 12 : 24) * Ui.s
+            height: (parent.slim ? 76 : 72) * Ui.s
+            spacing: (parent.slim ? 16 : 24) * Ui.s
             Btn {
                 visible: root.page !== "home"
-                Layout.preferredWidth: (status.parent.slim ? 52 : 160) * Ui.s
-                Layout.preferredHeight: (status.parent.slim ? 52 : 68) * Ui.s
+                Layout.preferredWidth: (status.parent.slim ? 76 : 160) * Ui.s
+                Layout.preferredHeight: (status.parent.slim ? 76 : 68) * Ui.s
                 label: status.parent.slim ? "" : "⌂ Home"
                 icon: status.parent.slim ? "go-home-symbolic" : ""
-                iconSize: 26
+                iconSize: status.parent.slim ? 36 : 26
                 fontSize: 26
                 onClicked: root.go("home")
             }
@@ -236,21 +237,21 @@ Window {
                     ["keyboard", "input-keyboard-virtual-symbolic"], ["screenshot", "camera-photo-symbolic"]] : []
                 Btn {
                     required property var modelData
-                    Layout.preferredWidth: 52 * Ui.s
-                    Layout.preferredHeight: 52 * Ui.s
+                    Layout.preferredWidth: 76 * Ui.s
+                    Layout.preferredHeight: 76 * Ui.s
                     icon: modelData[1]
-                    iconSize: 26
+                    iconSize: 36
                     onClicked: Ui.post("/steam/" + modelData[0])
                 }
             }
             Item { Layout.fillWidth: true; visible: status.parent.slim }
-            Txt { text: Qt.formatTime(clock.now, "hh:mm"); font.pixelSize: (status.parent.slim ? 28 : 36) * Ui.s; font.weight: Font.Bold }
+            Txt { text: Qt.formatTime(clock.now, "hh:mm"); font.pixelSize: (status.parent.slim ? 32 : 36) * Ui.s; font.weight: Font.Bold }
             Txt {
                 readonly property var b: Ui.st.battery
                 visible: b !== undefined && b.percent >= 0
                 text: b ? (b.status === "Charging" ? "⚡ " : "") + b.percent + "%" : ""
                 color: b && b.percent < 15 ? Ui.warn : (status.parent.slim ? Ui.dim : Ui.text)
-                font.pixelSize: (status.parent.slim ? 26 : 34) * Ui.s
+                font.pixelSize: (status.parent.slim ? 30 : 34) * Ui.s
                 font.weight: Font.Bold
             }
         }
