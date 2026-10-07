@@ -8,7 +8,9 @@
 
 Updates come from the project's GitHub releases, a microSD card or USB drive
 (any steamos-arm-<soc>-<version>.sau at the top of a mounted drive), or the
-Downloads folder.
+Downloads folder. A package bigger than GitHub's 2 GB limit comes in numbered
+parts (.sau.001, .sau.002, ...) with one .sau.sha256 for the whole package;
+the parts are joined and checked before staging.
 Packages are signed; konkr-update refuses one whose signature doesn't verify.
 `apply` runs as root (steamos-arm-update.service) and reports its progress in
 /run/steamos-arm-update for steamos-update to pass on to Steam.
@@ -30,10 +32,22 @@ KONKR_UPDATE = "/usr/share/konkr-update/konkr-update.py"
 RUN = Path("/run/steamos-arm-update")
 CACHE = Path("/home/.steamos-arm-update")
 NAME = re.compile(r"^steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)\.sau$")
+PART = re.compile(r"^(?P<base>steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)\.sau)\.(?P<n>\d{3})$")
 
 
 def vkey(v):
     return tuple(int(x) for x in re.findall(r"\d+", v or "0"))
+
+
+def split_sets(names, soc):
+    """{package name: [part names in order]} for complete runs .001, .002, ..."""
+    runs = {}
+    for name in names:
+        m = PART.match(name)
+        if m and m["soc"] == soc:
+            runs.setdefault(m["base"], {})[int(m["n"])] = name
+    return {base: [parts[i] for i in sorted(parts)] for base, parts in runs.items()
+            if sorted(parts) == list(range(1, len(parts) + 1))}
 
 
 def status():
@@ -61,6 +75,15 @@ def github_candidates(soc):
                 sha = assets.get(name + ".sha256")
                 out.append({"version": m["version"], "source": "github", "url": a["browser_download_url"],
                             "size": a.get("size", 0), "sha256_url": sha["browser_download_url"] if sha else ""})
+        for base, parts in split_sets(assets, soc).items():
+            sha = assets.get(base + ".sha256")
+            if not sha:
+                continue                  # parts can't be checked as a whole: skip them
+            out.append({"version": NAME.match(base)["version"], "source": "github",
+                        "parts": [assets[n]["browser_download_url"] for n in parts],
+                        "part_sizes": [assets[n].get("size", 0) for n in parts],
+                        "size": sum(assets[n].get("size", 0) for n in parts),
+                        "sha256_url": sha["browser_download_url"]})
     return out
 
 
@@ -68,12 +91,22 @@ def media_candidates(soc):
     out = []
     # Downloads too: someone running from the microSD card has no second drive
     # to put it on, and that's where a browser saves it anyway.
-    for path in (glob.glob("/run/media/*/*/steamos-arm-*.sau") + glob.glob("/run/media/*/steamos-arm-*.sau")
-                 + glob.glob("/home/*/Downloads/steamos-arm-*.sau")):
-        m = NAME.match(os.path.basename(path))
-        if m and m["soc"] == soc:
-            out.append({"version": m["version"], "source": "drive", "path": path,
-                        "size": os.path.getsize(path)})
+    dirs = glob.glob("/run/media/*/*/") + glob.glob("/run/media/*/") + glob.glob("/home/*/Downloads/")
+    for d in dirs:
+        names = [os.path.basename(p) for p in glob.glob(os.path.join(d, "steamos-arm-*.sau*"))]
+        for name in names:
+            m = NAME.match(name)
+            if m and m["soc"] == soc:
+                path = os.path.join(d, name)
+                out.append({"version": m["version"], "source": "drive", "path": path,
+                            "size": os.path.getsize(path)})
+        for base, parts in split_sets(names, soc).items():
+            if base in names:
+                continue                  # already joined next to its parts
+            paths = [os.path.join(d, n) for n in parts]
+            out.append({"version": NAME.match(base)["version"], "source": "drive",
+                        "path": os.path.join(d, base), "parts": paths,
+                        "size": sum(os.path.getsize(p) for p in paths)})
     return out
 
 
@@ -112,17 +145,40 @@ def result(code, message):
     return code
 
 
-def fetch(url, dst, start, span):
-    req = urllib.request.Request(url, headers={"User-Agent": "steamos-arm-update"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as fh:
-        total = int(r.headers.get("Content-Length") or 0)
-        done, last = 0, 0.0
-        while chunk := r.read(1 << 20):
-            fh.write(chunk)
-            done += len(chunk)
-            if total and time.monotonic() - last > 0.5:
-                progress(start + span * done / total, "download")
-                last = time.monotonic()
+def fetch(url, fh, size, start, span):
+    """Append url to fh, resuming where a dropped connection left off."""
+    base, last = fh.tell(), 0.0
+    for attempt in range(6):
+        got = fh.tell() - base
+        if size and got >= size:
+            return
+        headers = {"User-Agent": "steamos-arm-update"}
+        if got:
+            headers["Range"] = f"bytes={got}-"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
+                if got and r.status != 206:   # no resume support: start this part over
+                    fh.seek(base); fh.truncate()
+                total = size or int(r.headers.get("Content-Length") or 0)
+                while chunk := r.read(1 << 20):
+                    fh.write(chunk)
+                    if total and time.monotonic() - last > 0.5:
+                        progress(start + span * (fh.tell() - base) / total, "download")
+                        last = time.monotonic()
+            if not size or fh.tell() - base >= size:
+                return
+        except OSError as exc:
+            if attempt == 5:
+                raise
+            print(f"update-agent: download interrupted ({exc}), resuming", file=sys.stderr)
+            time.sleep(3 * (attempt + 1))
+    raise OSError("download kept stopping before the end")
+
+
+def join(paths, fh):
+    for p in paths:
+        with open(p, "rb") as src:
+            shutil.copyfileobj(src, fh, 4 << 20)
 
 
 def apply():
@@ -139,11 +195,23 @@ def apply():
     progress(0, "download")
     try:
         if cand["source"] == "drive":
-            shutil.copyfile(cand["path"], pkg)
+            if cand.get("parts"):
+                with open(pkg, "wb") as fh:
+                    join(cand["parts"], fh)
+            else:
+                shutil.copyfile(cand["path"], pkg)
             sha_file = Path(cand["path"] + ".sha256")
             want = sha_file.read_text().split()[0] if sha_file.exists() else ""
+            if cand.get("parts") and not want:
+                return result(1, "split update without its .sha256 file")
         else:
-            fetch(cand["url"], pkg, 0, 70)
+            with open(pkg, "wb") as fh:
+                urls = cand.get("parts") or [cand["url"]]
+                sizes = cand.get("part_sizes") or [cand.get("size", 0)]
+                for i, (url, size) in enumerate(zip(urls, sizes)):
+                    fetch(url, fh, size, 70 * i / len(urls), 70 / len(urls))
+            if cand.get("parts") and not cand.get("sha256_url"):
+                return result(1, "split update without its .sha256 file")
             want = ""
             if cand.get("sha256_url"):
                 with urllib.request.urlopen(cand["sha256_url"], timeout=30) as r:
