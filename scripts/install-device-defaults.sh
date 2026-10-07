@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Per-device defaults worked out on the device itself, for every image:
 # the hostname from the model, and Desktop Mode's scale and touch mode from
-# the panel (run by sm8550-prepare-plasma on the first Desktop start).
+# the panel (run by sm8550-startplasma on the first Desktop start).
 #   install-device-defaults.sh <rootfs>
 set -euo pipefail
 R="${1:?usage: install-device-defaults.sh <rootfs>}"
