@@ -6,8 +6,9 @@
   update-agent apply   download (or copy) it, check it, and stage it with
                        konkr-update; it installs on the next restart
 
-Updates come from the project's GitHub releases, or from a microSD card or USB
-drive: any steamos-arm-<soc>-<version>.sau at the top of a mounted drive.
+Updates come from the project's GitHub releases, a microSD card or USB drive
+(any steamos-arm-<soc>-<version>.sau at the top of a mounted drive), or the
+Downloads folder.
 Packages are signed; konkr-update refuses one whose signature doesn't verify.
 `apply` runs as root (steamos-arm-update.service) and reports its progress in
 /run/steamos-arm-update for steamos-update to pass on to Steam.
@@ -65,7 +66,10 @@ def github_candidates(soc):
 
 def media_candidates(soc):
     out = []
-    for path in glob.glob("/run/media/*/*/steamos-arm-*.sau") + glob.glob("/run/media/*/steamos-arm-*.sau"):
+    # Downloads too: someone running from the microSD card has no second drive
+    # to put it on, and that's where a browser saves it anyway.
+    for path in (glob.glob("/run/media/*/*/steamos-arm-*.sau") + glob.glob("/run/media/*/steamos-arm-*.sau")
+                 + glob.glob("/home/*/Downloads/steamos-arm-*.sau")):
         m = NAME.match(os.path.basename(path))
         if m and m["soc"] == soc:
             out.append({"version": m["version"], "source": "drive", "path": path,
