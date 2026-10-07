@@ -406,7 +406,7 @@ class FanController:
             # is genuinely hot (that mean at 85 C, or one sensor at 95 C), not
             # when a single hotspot touches 82 for a moment.
             try:
-                follow = self.get_curve_temp()
+                follow = self.hw.get_curve_temp()
             except RuntimeError:
                 follow = raw_temp
             if time.monotonic() < self.settle_until and raw_temp < self.DANGER_C:
