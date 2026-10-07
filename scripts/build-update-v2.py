@@ -60,7 +60,10 @@ have, versions = set(), []
 for b in a.bases:
     base = json.loads(Path(b).read_text())
     versions.append(base['version'])
-    have |= {e['f'][4] for e in base['inventory'].values() if 'f' in e}
+    if 'inventory' in base:                         # <package>.inventory.json
+        have |= {e['f'][4] for e in base['inventory'].values() if 'f' in e}
+    else:                                           # a release's installed.json
+        have |= {v[2] for v in base['files'].values()}
 blobs = sorted(set(source) - have)
 
 with tempfile.TemporaryDirectory(prefix='sau-', dir=output.parent) as temp:
