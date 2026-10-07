@@ -56,7 +56,7 @@ def read_json(path: str) -> dict:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return {}
 
 
@@ -103,7 +103,7 @@ def write_thresholds(end: int, gap: int = 5) -> None:
              ("charge_control_end_threshold", end)]
     try:
         cur = int(open(f"{node}/charge_control_end_threshold").read().strip())
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         cur = 100
     if end > cur:
         pairs.reverse()
@@ -119,7 +119,7 @@ def capacity() -> int:
     node = charge_node()
     try:
         return int(open(f"{node}/capacity").read().strip()) if node else 0
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return 0
 
 
@@ -306,7 +306,7 @@ def main() -> int:
         if "charge_limit" not in own:
             try:
                 end = int(open(f"{charge_node()}/charge_control_end_threshold").read().strip())
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError):
                 end = 100
             own["charge_limit"] = end
             write_json(OWN_STATE, own)

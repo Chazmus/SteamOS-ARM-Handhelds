@@ -14,7 +14,9 @@ def rd(path, default=""):
     try:
         with open(path) as fh:
             return fh.read().strip()
-    except OSError:
+    # TypeError: the battery driver isn't up yet early in boot and the read
+    # comes back empty-handed; treat it like a missing file.
+    except (OSError, TypeError):
         return default
 
 

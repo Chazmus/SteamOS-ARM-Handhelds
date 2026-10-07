@@ -370,6 +370,10 @@ install_file "$OVL/etc/xdg/autostart/steamos-arm-desktop-portal-fix.desktop" \
 install_file "$OVL/usr/lib/steamos-arm/update-agent" "$R/usr/lib/steamos-arm/update-agent" 0755
 install_file "$OVL/usr/lib/systemd/system/steamos-arm-update.service" \
   "$R/usr/lib/systemd/system/steamos-arm-update.service" 0644
+install_file "$OVL/usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/10-steamos-arm-timeout.conf" \
+  "$R/usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/10-steamos-arm-timeout.conf" 0644
+install_file "$OVL/usr/lib/systemd/system/user@.service.d/20-steamos-arm-io.conf" \
+  "$R/usr/lib/systemd/system/user@.service.d/20-steamos-arm-io.conf" 0644
 install_file "$OVL/usr/lib/systemd/system/steamos-arm-update-cleanup.service" \
   "$R/usr/lib/systemd/system/steamos-arm-update-cleanup.service" 0644
 mkdir -p "$R/usr/lib/systemd/system/multi-user.target.wants"
