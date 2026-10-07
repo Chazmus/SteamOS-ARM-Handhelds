@@ -165,6 +165,10 @@ def entry_for(path):
     # overlayfs whiteouts in the /etc upper layer: a deleted file
     if S.S_ISCHR(st.st_mode) and st.st_rdev == 0: return {'w': []}
     if not S.S_ISREG(st.st_mode): raise ValueError(f'special file in managed tree: {path}')
+    return {'f': [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_size, digest(path), xattrs_of(path)]}
+
+
+def xattrs_of(path):
     xattrs = {}
     try:
         for name in os.listxattr(path, follow_symlinks=False):
@@ -172,7 +176,7 @@ def entry_for(path):
                 xattrs[name] = os.getxattr(path, name, follow_symlinks=False).hex()
     except OSError:
         pass
-    return {'f': [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_size, digest(path), xattrs]}
+    return xattrs
 
 
 def walk_managed(base_of, skip_etc=False):
@@ -281,6 +285,36 @@ def package_format(package):
     return FORMAT
 
 
+def private_copy(src, dst):
+    """A root-owned copy of the package to validate. When the source already
+    is one (update-agent's cache: root's, nobody else can write there) on the
+    same filesystem, a hard link does: copying 4 GB again took minutes."""
+    st, parent = os.lstat(src), os.lstat(src.parent)
+    if (not os.path.islink(src) and st.st_uid == 0 and st.st_nlink == 1
+            and parent.st_uid == 0 and not parent.st_mode & 0o022
+            and st.st_dev == os.lstat(dst.parent).st_dev):
+        os.link(src, dst)
+    else:
+        shutil.copyfile(src, dst)
+    os.chmod(dst, 0o600)
+
+
+def extract_members(package, dest, names):
+    """Pull a few members out without reading the rest of the archive (tar
+    reads to the end looking for more copies of them)."""
+    want = set(names)
+    with tarfile.open(package, 'r|gz') as tf:
+        for m in tf:
+            name = m.name.removeprefix('./')
+            if name not in want: continue
+            if not m.isfile(): raise ValueError(f'{name} in the update is not a file')
+            with tf.extractfile(m) as f, open(dest / name, 'wb') as out:
+                shutil.copyfileobj(f, out, 4 << 20)
+            want.discard(name)
+            if not want: return
+    raise ValueError(f'update is missing {", ".join(sorted(want))}')
+
+
 def stage(args):
     if os.geteuid() != 0: raise ValueError('staging needs administrator access')
     model = Path('/sys/firmware/devicetree/base/model').read_text().rstrip('\0\n')
@@ -306,7 +340,7 @@ def stage(args):
     try:
         # Validate and extract only a private, root-owned copy to avoid input races.
         package = work / 'package.tar.gz'
-        shutil.copyfile(source_package, package); os.chmod(package, 0o600)
+        private_copy(source_package, package)
         if expected and digest(package) != expected: raise ValueError('package SHA256 mismatch')
         if package_format(package) == FORMAT2:
             if mount_info('/var')['source'] != root_info['source']:
@@ -510,8 +544,9 @@ def make_plan(target, root, home, boot):
                 r = rec.get(key)
                 same = (r is not None and r[0] == size and r[1] == st.st_mtime_ns and r[2] == sha) or digest(p) == sha
             if not same: plan['write'].append(key)
-            elif key != 'boot/KERNEL' and entry_for(p)['f'][:3] != [mode, uid, gid]: plan['meta'].append(key)
-            elif key != 'boot/KERNEL' and entry_for(p)['f'][5] != _x: plan['meta'].append(key)
+            elif key != 'boot/KERNEL' and [S.S_IMODE(st.st_mode), st.st_uid, st.st_gid] != [mode, uid, gid]:
+                plan['meta'].append(key)
+            elif key != 'boot/KERNEL' and xattrs_of(p) != _x: plan['meta'].append(key)
     live.discard('root/' + INVENTORY)                 # rewritten after every update
     # Deleted: longest first, so a directory goes after what was in it.
     plan['delete'] = sorted(live - set(target), key=lambda k: (-k.count('/'), k))
@@ -668,7 +703,7 @@ def restore2(root, boot, home, work):
 def stage2(work, package, root_info, home_info, boot_info, model, pending):
     """Stage a signed format 2 package: plan against this system, keep only
     the contents the plan needs, back up only what it will change."""
-    run('tar', '-xzf', package, '-C', work, 'manifest.json', 'manifest.sig')
+    extract_members(package, work, ('manifest.json', 'manifest.sig'))
     verify_signature(work / 'manifest.json', work / 'manifest.sig')
     manifest = json.loads((work / 'manifest.json').read_text())
     if manifest.get('format') != FORMAT2 or manifest.get('architecture') != 'aarch64':
