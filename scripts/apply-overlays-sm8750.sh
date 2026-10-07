@@ -577,6 +577,32 @@ rm -rf "$HC_DST"; mkdir -p "$HC_DST/dist"
 install -m0644 "$HC_SRC/plugin.json" "$HC_SRC/main.py" "$HC_DST/"
 [[ -f "$HC_SRC/package.json" ]] && install -m0644 "$HC_SRC/package.json" "$HC_DST/"
 install -m0644 "$HC_SRC/dist/index.js" "$HC_DST/dist/"
+# Lossless Scaling frame generation, the same as the 8 Gen 3 / 8 Gen 2 images:
+# the lsfg-vk 2.0 ARM64 layer (registered as an implicit Vulkan layer, off
+# until the plugin turns it on for a game) and its Decky plugin, which starts
+# new profiles in performance mode.
+log "== lsfg-vk 2.0 (ARM layer + Decky plugin)"
+for prefix in "$R/usr" "$R/usr/local"; do
+  rm -f "$prefix/lib/liblsfg-vk.so" "$prefix/lib/liblsfg-vk-arm64.so" \
+    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json" \
+    "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json"
+done
+install_file "${ROOT}/sm8650-overlay/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so" 0644
+install_file "${ROOT}/sm8650-overlay/usr/lib/liblsfg-vk-layer-arm64.so.README" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README" 0644
+install_file "${ROOT}/sm8650-overlay/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation_arm64.json" \
+  "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation_arm64.json" 0644
+mkdir -p "$R/usr/share/licenses"
+cp -r --no-preserve=mode,ownership "${ROOT}/sm8650-overlay/usr/share/licenses/lsfg-vk" "$R/usr/share/licenses/"
+rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
+rm -f "$HOME_DST/.local/lib/liblsfg-vk.so" \
+  "$HOME_DST/.local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
+[[ -f "$HOME_DST/.config/lsfg-vk/conf.toml" ]] && sed -i 's|/home/steam/|/home/steamos/|g' "$HOME_DST/.config/lsfg-vk/conf.toml"
+# Decky starts the plugin's helpers; without this they outlive a stop and
+# hold up shutdown.
+install_file "$OVL/usr/share/steamos-odin/plugin_loader.service.d/fast-stop.conf" \
+  "$R/usr/lib/systemd/system/plugin_loader.service.d/fast-stop.conf" 0644
+[[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" && -f "$HOME_DST/homebrew/plugins/decky-lsfg-vk/plugin.json" ]] \
+  || die "lsfg-vk missing from the 8 Elite image"
 chown -R 1000:1000 "$HOME_DST/homebrew"
 # Loadout: emulators, PC game stores and apps (engine + Decky plugin).
 "${SCRIPT_DIR}/install-hub.sh" "$R" "$HOME_DST"
