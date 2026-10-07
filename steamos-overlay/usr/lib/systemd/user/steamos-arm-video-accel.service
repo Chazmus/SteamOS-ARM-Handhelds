@@ -2,7 +2,6 @@
 # Only the player's session: a root login starts a user manager for root too.
 ConditionUser=!root
 Description=Hardware video decoder for Flatpak apps (files and Firefox override)
-After=graphical-session-pre.target
 
 [Service]
 Type=oneshot
