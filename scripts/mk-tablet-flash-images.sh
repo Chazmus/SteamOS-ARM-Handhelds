@@ -201,8 +201,9 @@ FSTAB='# Lenovo Legion Y700: system and /home on userdata
 PARTLABEL=userdata  /      ext4  defaults,noatime,x-systemd.growfs  0 1
 '
 # super is a 512-byte-sector FAT on 4K-sector UFS: Linux mounts it only
-# through a loop device.
-[[ $DEV == tb321fu ]] && FSTAB+='/dev/disk/by-partlabel/super  /boot  vfat  loop,defaults,umask=0077,nofail  0 0
+# through a loop device. Readable by everyone (writable by root only): a
+# tester sends debug-logs from it with the file manager.
+[[ $DEV == tb321fu ]] && FSTAB+='/dev/disk/by-partlabel/super  /boot  vfat  loop,defaults,umask=0022,nofail  0 0
 '
 printf '%s' "$FSTAB" > "$U/etc/fstab"
 [[ -d "$U/var/lib/overlays/etc/upper" ]] && printf '%s' "$FSTAB" > "$U/var/lib/overlays/etc/upper/fstab"
