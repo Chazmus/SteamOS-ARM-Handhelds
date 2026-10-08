@@ -226,8 +226,14 @@ for svc in \
   adbd-post.service usb-gadget.target usb-gadget.service \
   usb-gadget-init.service 'usb-ncm-gadget@.service' \
   'usb-ncm-dnsmasq@.service' 'usb-ncm-gadget@usb0.service' \
-  'usb-ncm-dnsmasq@usb0.service'
+  'usb-ncm-dnsmasq@usb0.service' \
+  steamos-boot.service efi.mount esp.mount systemd-repart.service
 do
+  # The last four, as on the other chips (apply-overlays.sh): steamos-boot
+  # needs efi.mount, which waits 90 s for the Deck's EFI partition
+  # (by-partsets/self/efi), and systemd-repart adds a home partition in the
+  # card's free space at boot, which then leaves nothing for
+  # steamos-sm8550-expand-home to grow into.
   rm -f "$R/etc/systemd/system/multi-user.target.wants/${svc}" \
         "$R/etc/systemd/system/default.target.wants/${svc}" \
         "$R/etc/systemd/user/default.target.wants/${svc}" 2>/dev/null || true
