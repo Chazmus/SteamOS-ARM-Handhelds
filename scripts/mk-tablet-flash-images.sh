@@ -73,6 +73,16 @@ if [[ $DEV == tb321fu ]]; then
   mount "$FAT" "$W/super"
   S=$W/super
   cp -r "$B/EFI" "$S/"
+  # GRUB's first stage reads /boot/grub/grub.cfg (images built before
+  # stage-tb321fu-boot.sh wrote it only have EFI/BOOT/grub.cfg).
+  mkdir -p "$S/boot/grub"
+  if [[ -f "$B/boot/grub/grub.cfg" ]]; then
+    cp "$B/boot/grub/grub.cfg" "$S/boot/grub/grub.cfg"
+  else
+    sed '/^menuentry "Reboot"/,$d' "$S/EFI/BOOT/grub.cfg" | sed 's/^set timeout=.*/set timeout=0/' > "$S/boot/grub/grub.cfg"
+  fi
+  rm -f "$S/EFI/BOOT/grub.cfg"
+  grep -q 'chainloader /EFI/BOOT/QCOMRAMP.EFI' "$S/boot/grub/grub.cfg" || die "no first-stage GRUB config"
   cp "$B"/steamos-arm-boot-* "$S/"
   mkdir -p "$S/dtb"
   if [[ -n "$KO" ]]; then
@@ -84,7 +94,7 @@ if [[ $DEV == tb321fu ]]; then
   fi
   # Root is the userdata partition now, not the internal install's STORAGE or
   # the USB drive, and the boot files live on super.
-  for f in "$S/EFI/BOOT/grub.cfg" "$S/EFI/BOOT/qcomramp.cfg"; do
+  for f in "$S/EFI/BOOT/qcomramp.cfg"; do
     sed -i -e 's/ steamos\.usbimage=1//' \
       -e 's/root=PARTLABEL=STORAGE/root=PARTLABEL=userdata steamos.bootlabel=super/' "$f"
   done

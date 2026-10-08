@@ -54,28 +54,23 @@ cp "$CACHE/QCOMRAMP-CONFIGFILE.EFI" "$ESP/EFI/BOOT/QCOMRAMP.EFI"
 cp "$KOUT/boot/Image" "$ESP/Image"
 for p in $PANELS; do cp "$KOUT/dtbs/sm8650-lenovo-tb321fu-${p}.dtb" "$ESP/dtb/"; done
 
-# First stage: a moment to pick Reboot / Power off, then the direct boot.
-cat >"$ESP/EFI/BOOT/grub.cfg" <<CFG
-set timeout=2
+# First stage: BOOTAA64.EFI is GRUB with its prefix built in as /boot/grub,
+# so it reads /boot/grub/grub.cfg on its own partition (with no file there it
+# stops at a grub> prompt). It only chains to the second stage; it has no
+# reboot/halt modules, so no such entries.
+mkdir -p "$ESP/boot/grub"
+cat >"$ESP/boot/grub/grub.cfg" <<CFG
+set timeout=0
 set default=0
 set gfxpayload=keep
 search --no-floppy --file /$MARK --set=root
-
 menuentry "SteamOS ARM Port" {
     search --no-floppy --file /$MARK --set=root
     chainloader /EFI/BOOT/QCOMRAMP.EFI
     boot
 }
-
-menuentry "Reboot" {
-    reboot
-}
-
-menuentry "Power off" {
-    halt
-}
 CFG
-
+rm -f "$ESP/EFI/BOOT/grub.cfg"
 # Second stage (QCOMRAMP.EFI): the kernel with the memory map from the RAM
 # partition table, minus Android's carve-outs.
 reserved="qcomfdtmem disable-reserved"
