@@ -55,6 +55,13 @@ deb="$(echo "$W"/debs/y700-daily-rootfs-overlay_*_arm64.deb)"
 tar -C "$W/ov" -xJf "$W/debs/data.tar.xz" ./usr/lib/firmware
 O="$W/ov/usr/lib/firmware"
 cp -a "$O/qca/hmtnv20_Kirby_prc.bin" "$O/qca/hmtnv20_Kirby_row.bin" "$F/qca/"
+# The Kirby NVM only loads after the patch it was released with
+# (BTFW.HAMILTON.2.0.1-00355); with the newer shared hmtbtfw20.tlv the
+# controller rejects it (-52) and Bluetooth never comes up. The pair goes
+# to the tablet's own firmware path, searched first only on the tablet.
+mkdir -p "$F/steamos-arm/tb321fu/qca"
+cp -a "$O/qca/hmtbtfw20.tlv" "$O/qca/hmtnv20_Kirby_prc.bin" "$O/qca/hmtnv20_Kirby_row.bin" \
+  "$F/steamos-arm/tb321fu/qca/"
 cp -a "$O/qcom/sm8650/lenovo/tb321fu/novatek_ts_csot_fw.bin" \
   "$O/qcom/sm8650/lenovo/tb321fu/novatek_ts_csot_mp.bin" "$F/qcom/sm8650/lenovo/tb321fu/"
 
