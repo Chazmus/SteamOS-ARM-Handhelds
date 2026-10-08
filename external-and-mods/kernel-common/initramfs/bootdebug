@@ -10,6 +10,38 @@ out=/boot/debug-logs
 # Low priority for CPU and disk, so a game running meanwhile doesn't stutter.
 renice -n 19 -p $$ >/dev/null 2>&1
 ionice -c 3 -p $$ >/dev/null 2>&1
+
+# steamos.screenlog=1 (a debug boot.img for devices with no FAT partition
+# and no working USB host, like the Legion Y700 Gen 4): after 75 s stop the
+# login manager, so the text console gets the panel back, and keep a report
+# on screen for a photo. Never on a normal boot: it ends Game Mode.
+if grep -qw 'steamos.screenlog=1' /proc/cmdline; then
+  (
+    sleep 75
+    systemctl stop display-manager.service 2>/dev/null
+    sleep 3
+    chvt 1 2>/dev/null
+    exec </dev/null >/dev/tty1 2>&1
+    setterm --blank 0 --powerdown 0 --cursor off 2>/dev/null
+    while :; do
+      printf '\033[2J\033[H'
+      {
+        echo "=== SteamOS ARM debug report, uptime $(cut -d' ' -f1 /proc/uptime)s: take a photo ==="
+        echo "--- firmware copy"
+        journalctl -b -o cat -u steamos-arm-tablet-firmware.service | tail -n 14
+        echo "--- GPU"
+        journalctl -b -k -o cat | grep -iE 'adreno|a8xx|a7xx|zap|gmu|msm_dpu|msm_drm|drm.*(error|fail)' | tail -n 16
+        echo "--- Game Mode"
+        journalctl -b -o cat _UID=1000 | grep -iE 'gamescope|vulkan|vk_|drm|error|fail|fatal|crash' | grep -viE 'steamwebhelper|cef' | tail -n 30
+        echo "--- failed units"
+        systemctl --failed --no-legend --plain 2>/dev/null | cut -d' ' -f1 | tr '\n' ' '; echo
+        echo "--- panel"
+        for c in /sys/class/drm/card*-*; do [ -e "$c/status" ] && echo "${c##*/} $(cat $c/status) $(head -3 $c/modes 2>/dev/null | tr '\n' ' ')"; done
+      } 2>&1 | cut -c1-118
+      sleep 30
+    done
+  ) &
+fi
 mountpoint -q /boot || mount /boot 2>/dev/null
 # Some images mount BOOT read-only (the 8 Elite ones); the logs need it
 # writable, whichever unit started us.
@@ -36,6 +68,7 @@ if ! mountpoint -q /boot; then
   done
 fi
 mkdir -p "$out" || { echo "bootdebug: /boot isn't writable, no logs" >&2; exit 0; }
+
 # The boot before this one: after a freeze and a forced restart, that's the
 # one with the answer (the journal is persistent).
 journalctl -b -1 --no-pager -o short-monotonic > "$out/journal-previous-boot.txt" 2>&1

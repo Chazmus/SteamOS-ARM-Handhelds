@@ -313,7 +313,7 @@ def main():
 def console(msg):
     try:
         with open("/dev/kmsg", "w") as k:
-            k.write(f"<4>tablet-firmware: {msg}\n")
+            k.write(f"<3>tablet-firmware: {msg}\n")
     except OSError:
         pass
 
