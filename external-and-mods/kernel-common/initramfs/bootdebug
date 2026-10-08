@@ -16,6 +16,25 @@ mountpoint -q /boot || mount /boot 2>/dev/null
 if grep -qE '^[^ ]+ /boot [^ ]+ ro[, ]' /proc/mounts; then
   mount -o remount,rw /boot 2>/dev/null
 fi
+# No FAT boot partition (Lenovo Legion Y700 Gen 4 boots straight from
+# boot.img): the logs go to a USB stick (FAT32/exFAT) instead, if one is
+# plugged in within 2 minutes; otherwise to /boot/debug-logs on the system.
+if ! mountpoint -q /boot; then
+  usb=/run/steamos-arm-usblog
+  n=0
+  while [ "$n" -lt 24 ]; do
+    dev=$(lsblk -rpno NAME,FSTYPE,HOTPLUG 2>/dev/null | awk '$3 == 1 && ($2 == "vfat" || $2 == "exfat") { print $1; exit }')
+    if [ -n "$dev" ]; then
+      mkdir -p "$usb"
+      if mount -o rw "$dev" "$usb" 2>/dev/null; then
+        out="$usb/debug-logs"
+        echo "bootdebug: logs to the USB stick $dev"
+      fi
+      break
+    fi
+    n=$((n + 1)); sleep 5
+  done
+fi
 mkdir -p "$out" || { echo "bootdebug: /boot isn't writable, no logs" >&2; exit 0; }
 # The boot before this one: after a freeze and a forced restart, that's the
 # one with the answer (the journal is persistent).
