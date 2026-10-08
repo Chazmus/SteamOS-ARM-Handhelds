@@ -290,6 +290,22 @@ if grep -aqE "ayn,odin3|qcom,sm8750" /sys/firmware/devicetree/base/compatible 2>
   IS_ODIN3=1
 fi
 
+# Scanout format and buffer layout. The Legion Y700 Gen 4's display driver
+# showed Game Mode black (backlight on, gamescope running) with gamescope's
+# default 10-bit scanout, where its desktop runs 8-bit: 8 bpc there. The
+# kernel cmdline can override both, so a boot.img can try a variant without
+# touching the install: steamos.gamescope.8bit=0|1, steamos.gamescope.modifiers=0|1.
+if grep -aq "lenovo,elden" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+  export GAMESCOPE_PREFER_8BIT="${GAMESCOPE_PREFER_8BIT:-1}"
+fi
+for arg in $(cat /proc/cmdline 2>/dev/null); do
+  case "$arg" in
+    steamos.gamescope.8bit=*) export GAMESCOPE_PREFER_8BIT="${arg#*=}" ;;
+    steamos.gamescope.modifiers=0) export GAMESCOPE_DISABLE_MODIFIERS=1 ;;
+    steamos.gamescope.modifiers=1) unset GAMESCOPE_DISABLE_MODIFIERS ;;
+  esac
+done
+
 # DRM backend = Wayland compositor + Xwayland. Steam paints on X11 (:0 / xcb).
 # --backend wayland/sdl would nest inside another compositor and drop the panel.
 GAMESCOPE_ARGS=(
