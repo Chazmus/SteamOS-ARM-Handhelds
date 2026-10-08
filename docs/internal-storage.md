@@ -1,6 +1,6 @@
 # Internal storage
 
-Right now this is for the KONKR Pocket FIT and AYANEO Pocket S2 only. 8 Gen 2 devices run from the SD card for now.
+Supported on Snapdragon 8 Elite (AYN Odin 3), 8 Gen 3 (KONKR Pocket FIT, AYANEO Pocket S2), and 8 Gen 2 (AYN Odin 2 / Mini / Portal).
 
 Once it runs from the SD card, open **Easy UFS Installer** in Desktop Mode, pick how much space Android keeps, and choose whether your games come along. This erases Android's user data (Android itself stays and sets itself up again), and the old partition table is saved on the SD card so you can give the space back later.
 

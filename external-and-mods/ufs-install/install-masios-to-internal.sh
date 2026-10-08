@@ -78,11 +78,11 @@ grep -qx 'lenovo,tb321fu' <<<"$compat" && TABLET=tb321fu
 grep -qx 'lenovo,elden' <<<"$compat" && TABLET=elden
 [[ -n "$TABLET" ]] || grep -qxE 'qcom,sm8650|qcom,sm8550|qcom,sm8750' <<<"$compat" \
   || die "this installer is for SM8650, SM8550 and SM8750 devices (KONKR Pocket FIT / Pocket FIT Elite, AYANEO Pocket S2, AYN Odin 2 / Odin 2 Mini / Odin 2 Portal / Odin 3) and the Lenovo Legion Y700 Gen 3 / Gen 4"
-if [[ -z "$TABLET" ]] && grep -qx 'qcom,sm8750' <<<"$compat"; then
-  log "NOTE: internal install hasn't been tried on an 8 Elite handheld yet. The old"
+MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
+if [[ -z "$TABLET" ]] && grep -qx 'qcom,sm8750' <<<"$compat" && [[ "$MODEL" != *"Odin 3"* ]]; then
+  log "NOTE: internal install hasn't been tried on this 8 Elite model yet. The old"
   log "partition table is saved first; please report how it went."
 fi
-MODEL="$(tr -d '\0' </sys/firmware/devicetree/base/model)"
 
 # The initramfs carries no modules, so root on UFS needs the drivers built in.
 for m in ufshcd_core ufshcd_pltfrm ufs_qcom phy_qcom_qmp_ufs sd_mod; do
