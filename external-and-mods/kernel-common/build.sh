@@ -228,7 +228,9 @@ configure() {
   fi
   [[ -f "$cfg" ]] || die "missing base config $cfg"
   cp "$cfg" "${SRC}/.config"
-  local sc="${SRC}/scripts/config --file ${SRC}/.config"
+  # --keep-case: scripts/config upper-cases names otherwise, and options like
+  # FONT_TER16x32 then never get set.
+  local sc="${SRC}/scripts/config --file ${SRC}/.config --keep-case"
   # ROCKNIX embeds its own initramfs through this placeholder; ours goes
   # there too with EMBED_INITRAMFS (uncompressed: the whole Image is gzipped
   # for ABL anyway, and konkr-update can then find the recovery hook in it).
