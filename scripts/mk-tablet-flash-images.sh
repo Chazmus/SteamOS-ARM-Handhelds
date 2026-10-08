@@ -200,10 +200,16 @@ fi
 FSTAB='# Lenovo Legion Y700: system and /home on userdata
 PARTLABEL=userdata  /      ext4  defaults,noatime,x-systemd.growfs  0 1
 '
-[[ $DEV == tb321fu ]] && FSTAB+='PARTLABEL=super     /boot  vfat  defaults,umask=0077,nofail          0 2
+# super is a 512-byte-sector FAT on 4K-sector UFS: Linux mounts it only
+# through a loop device.
+[[ $DEV == tb321fu ]] && FSTAB+='/dev/disk/by-partlabel/super  /boot  vfat  loop,defaults,umask=0077,nofail  0 0
 '
 printf '%s' "$FSTAB" > "$U/etc/fstab"
 [[ -d "$U/var/lib/overlays/etc/upper" ]] && printf '%s' "$FSTAB" > "$U/var/lib/overlays/etc/upper/fstab"
+# /home is a folder on the system partition here. Without a /home line in
+# fstab, SteamOS's own home.mount takes over and waits for the Deck's home
+# partition (by-partsets/shared/home), and basic.target fails with it.
+ln -sfn /dev/null "$U/etc/systemd/system/home.mount"
 # /home is already the whole partition: the microSD image's first-boot grow
 # of its home partition must not run.
 mkdir -p "$U/var/lib/steamos-sm8550"; touch "$U/var/lib/steamos-sm8550/home-expanded"

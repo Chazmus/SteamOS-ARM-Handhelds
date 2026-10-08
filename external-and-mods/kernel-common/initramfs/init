@@ -152,7 +152,10 @@ snap() {
   sync
 }
 
-if [ -n "$bootdev" ] && mount -t vfat "$bootdev" /boot; then
+# A 512-byte-sector FAT on a 4K-sector disk (the Lenovo Gen 3's super on UFS)
+# only mounts through a loop device, which has 512-byte sectors.
+if [ -n "$bootdev" ] && { mount -t vfat "$bootdev" /boot 2>/dev/null ||
+     mount -t vfat -o loop "$bootdev" /boot; }; then
   logdir=/boot
   [ -e /boot/debug ] || [ -e /boot/debug.txt ] && debug=1
   n=0

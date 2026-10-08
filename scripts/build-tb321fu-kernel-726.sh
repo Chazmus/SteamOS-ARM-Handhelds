@@ -11,7 +11,8 @@
 #
 # OUT_DIR gets the layout mk-tablet-flash-images.sh takes as KERNEL_OUT:
 # boot/Image, dtbs/sm8650-lenovo-tb321fu-{boe,csot}.dtb, modules/<kver>/,
-# config-<kver>. Runs as root in the build VM (docker, fedora:43).
+# config-<kver>. Runs as root in the build VM (docker, fedora:43). FAST=1
+# reuses the last build tree (only the config fragment changed).
 set -euo pipefail
 OUT="${1:?output dir}"; CPIO="$(readlink -f "${2:?initrd.cpio}")"
 SRC_COMMIT=1cfa907237d190c03db9392cd858de2208eb7892
@@ -48,10 +49,12 @@ CONFIG_LOCALVERSION="-tb321fu"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_FONTS=y
 CONFIG_FONT_TER16x32=y
+# The startup code has no modules and mounts the /etc overlay itself.
+CONFIG_OVERLAY_FS=y
 EOF
 
 docker run --rm -v "$P:/src" -v "$W/out:/work/out" -v "$W/cache:/cache" -w /src \
-  -e KBUILD_BUILD_USER=steamos -e KBUILD_BUILD_HOST=builder \
+  -e KBUILD_BUILD_USER=steamos -e KBUILD_BUILD_HOST=builder -e FAST="${FAST:-}" \
   fedora:43 bash -c '
     set -e
     dnf -q -y install gcc binutils make bc bison flex openssl-devel elfutils-libelf-devel \
