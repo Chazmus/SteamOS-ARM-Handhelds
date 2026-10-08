@@ -10,6 +10,12 @@ mounts the Android partitions that hold firmware read-only, finds every file
 by size and SHA-256 (names differ between Android and Linux), and copies the
 matches to DEST/<path>. Nothing on the Android side is written.
 
+The hashes come from one Android release. Another release (an OTA, another
+region) signs the same files differently, so what no hash finds is then
+taken by name from the tablet's own Android, active slot first: its own
+files are the ones signed for it. Split firmware (X.mdt) brings its X.bNN
+segments along.
+
 Partitions searched: the firmware ones by name (modem, bluetooth, dsp,
 persist is left alone), and vendor / odm / vendor_dlkm from the dynamic
 "super" partition, read from its LP metadata. Exits 0 with the missing
@@ -43,15 +49,48 @@ def by_partlabel():
     return out
 
 
-def slot_names(labels, name):
-    """name_a / name_b / name, the active slot's first when we can tell."""
-    suffix = ""
+def active_suffix(labels):
+    """_a or _b. The kernel's cmdline is built in, so the bootloader's
+    androidboot.slot_suffix never arrives: read the slot state from the GPT
+    attributes of boot_a / boot_b instead (bit 50: active)."""
     try:
         for arg in Path("/proc/cmdline").read_text().split():
             if arg.startswith("androidboot.slot_suffix="):
-                suffix = arg.split("=", 1)[1]
+                return arg.split("=", 1)[1]
     except OSError:
         pass
+    for s in ("_a", "_b"):
+        dev = labels.get("boot" + s)
+        if not dev:
+            continue
+        part = Path(dev).name
+        try:
+            num = Path(f"/sys/class/block/{part}/partition").read_text().strip()
+            disk = "/dev/" + Path(f"/sys/class/block/{part}").resolve().parent.name
+            out = subprocess.run(["sfdisk", "--part-attrs", disk, num],
+                                 capture_output=True, text=True).stdout
+        except OSError:
+            continue
+        bits = set()
+        for word in out.replace(" ", ",").split(","):
+            word = word.removeprefix("GUID:")
+            if word.isdigit():
+                bits.add(int(word))
+        if 50 in bits:
+            return s
+    return ""
+
+
+SUFFIX = None
+
+
+def slot_names(labels, name):
+    """name_a / name_b / name, the active slot's first when we can tell."""
+    global SUFFIX
+    if SUFFIX is None:
+        SUFFIX = active_suffix(by_partlabel())
+        log(f"active slot: {SUFFIX or 'unknown'}")
+    suffix = SUFFIX
     order = [name + suffix] if suffix else []
     order += [name + "_a", name + "_b", name]
     seen = []
@@ -194,25 +233,29 @@ def main():
     copied = 0
     try:
         trees = [Path(p) for p in a.also]
-        for name in PLAIN:
-            for label in slot_names(labels, name)[:1]:
-                mp = m.mount(labels[label], label)
-                if mp:
-                    trees.append(mp)
-                    log(f"searching {label}")
+        android = []  # the tablet's own partitions, active slot first
+        for rank in (0, 1):
+            for name in PLAIN:
+                for label in slot_names(labels, name)[rank:rank + 1]:
+                    mp = m.mount(labels[label], label)
+                    if mp:
+                        android.append(mp)
+                        log(f"searching {label}")
         for label in slot_names(labels, "super")[:1]:
             try:
                 parts = lp_partitions(labels[label])
             except (OSError, ValueError, struct.error) as e:
                 log(f"super: {e}")
                 parts = {}
-            for name in IN_SUPER:
-                for pname in slot_names(parts, name)[:1]:
-                    dev = m.from_super(labels[label], pname, parts[pname])
-                    mp = m.mount(dev, pname) if dev else None
-                    if mp:
-                        trees.append(mp)
-                        log(f"searching {pname} (super)")
+            for rank in (0, 1):
+                for name in IN_SUPER:
+                    for pname in slot_names(parts, name)[rank:rank + 1]:
+                        dev = m.from_super(labels[label], pname, parts[pname])
+                        mp = m.mount(dev, pname) if dev else None
+                        if mp:
+                            android.append(mp)
+                            log(f"searching {pname} (super)")
+        trees += android
         for tree in trees:
             for root, _dirs, files in os.walk(tree):
                 for fn in files:
@@ -227,6 +270,7 @@ def main():
                         found[d] = p
             if len(found) == len(wanted):
                 break
+        byname = by_name(android, [r for d, r in wanted.items() if d not in found])
         for d, r in wanted.items():
             src = found.get(d)
             t = dest / r["path"]
@@ -238,13 +282,84 @@ def main():
                 fo.write(fi.read())
             os.replace(tmp, t)
             copied += 1
+        renamed = 0
+        for path, srcs in byname.items():
+            for src, rel in srcs:
+                t = dest / rel
+                if t.is_file() and t.stat().st_size == src.stat().st_size and sha256(t) == sha256(src):
+                    continue
+                t.parent.mkdir(parents=True, exist_ok=True)
+                tmp = t.with_name(t.name + ".part")
+                with open(src, "rb") as fi, open(tmp, "wb") as fo:
+                    fo.write(fi.read())
+                os.replace(tmp, t)
+                renamed += 1
+            log(f"{path}: this tablet's own copy (another Android release), from {srcs[0][0]}")
     finally:
         m.close()
 
-    missing = [r["path"] for d, r in wanted.items() if d not in found]
-    log(f"{len(wanted) - len(missing)}/{len(wanted)} files in {dest} ({copied} copied now)")
+    covered = {rel for srcs in byname.values() for _s, rel in srcs}
+    missing = [r["path"] for d, r in wanted.items() if d not in found and r["path"] not in covered]
+    summary = (f"{len(wanted) - len(missing)}/{len(wanted)} files in {dest} "
+               f"({copied} copied now, {len(byname)} by name, {renamed} written)")
+    log(summary)
     for p in missing:
         log(f"missing: {p}")
+    # On screen during boot too: on the tablets that is the only log a tester sees.
+    console(f"tablet firmware: {len(wanted) - len(missing)}/{len(wanted)}, by name {len(byname)}"
+            + (f", missing: {' '.join(missing)}" if missing else ""))
+
+
+def console(msg):
+    try:
+        with open("/dev/kmsg", "w") as k:
+            k.write(f"<4>tablet-firmware: {msg}\n")
+    except OSError:
+        pass
+
+
+def by_name(trees, rows):
+    """{manifest path: [(source, dest path)]} for files no hash found: the
+    file of the same name in the tablet's own Android, from the first tree
+    (active slot first) that has exactly one, or one under a folder named
+    like the Linux path's (ath12k/PEACH/... -> .../peach/...). X.mdt brings
+    its X.bNN segments."""
+    want = {}
+    for r in rows:
+        want.setdefault(Path(r["path"]).name.lower(), []).append(r)
+    hits = {}  # name -> {tree index: [paths]}
+    for i, tree in enumerate(trees):
+        for root, _dirs, files in os.walk(tree):
+            for fn in files:
+                if fn.lower() in want:
+                    p = Path(root) / fn
+                    if p.is_file() and not p.is_symlink():
+                        hits.setdefault(fn.lower(), {}).setdefault(i, []).append(p)
+    out = {}
+    for name, rs in want.items():
+        for r in rs:
+            hint = [x.lower() for x in Path(r["path"]).parts[:-1]]
+            pick = None
+            for i in sorted(hits.get(name, {})):
+                cands = hits[name][i]
+                if len(cands) > 1:
+                    cands = [c for c in cands if any(h in (x.lower() for x in c.parts) for h in hint)]
+                if len(cands) == 1:
+                    pick = cands[0]
+                    break
+            if pick is None:
+                continue
+            srcs = [(pick, r["path"])]
+            if pick.suffix.lower() == ".mdt":
+                stem = pick.stem
+                for seg in sorted(pick.parent.iterdir()):
+                    if seg.stem == stem and len(seg.suffix) == 4 and seg.suffix[1].lower() == "b" \
+                            and seg.suffix[2:].isdigit():
+                        srcs.append((seg, str(Path(r["path"]).parent / seg.name)))
+            out[r["path"]] = srcs
+    # Segments a .mdt already brings along aren't separate picks.
+    brought = {rel for srcs in out.values() for _s, rel in srcs[1:]}
+    return {k: v for k, v in out.items() if k not in brought}
 
 
 if __name__ == "__main__":
