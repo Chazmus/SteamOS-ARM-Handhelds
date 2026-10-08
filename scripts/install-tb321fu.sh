@@ -106,6 +106,27 @@ if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx
 fi
 ENV
 
+# Touch and pen report the panel's native portrait coordinates. gamescope only
+# rotates touch for I2C (internal) or USB (external) devices and these are on
+# SPI, so it maps them unrotated: taps land in the wrong place in Game Mode.
+# Rotate them in libinput (the matrix for DT rotation 90, "right-up").
+install -Dm0644 /dev/stdin "$R/usr/lib/udev/rules.d/90-steamos-arm-tb321fu-touch.rules" <<'RULES'
+# Lenovo Legion Y700 Gen 3: the touch panel reports portrait coordinates, the session runs landscape.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitiveTouchScreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitivePen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
+RULES
+# KWin already maps touch to the rotated output, so Desktop Mode undoes the
+# udev matrix. Appended: other devices' groups in the file stay as they are.
+mkdir -p "$R/etc/xdg"
+grep -qs 'NVTCapacitiveTouchScreen' "$R/etc/xdg/kcminputrc" || cat >> "$R/etc/xdg/kcminputrc" <<'KCM'
+# Lenovo Legion Y700 Gen 3 touch: udev rotates it for gamescope, KWin rotates it itself.
+[Libinput][0][0][NVTCapacitiveTouchScreen]
+CalibrationMatrix=1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+
+[Libinput][0][0][NVTCapacitivePen]
+CalibrationMatrix=1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+KCM
+
 # The Adreno 750's GMU fails to come back from runtime suspend on this tablet
 # (Armada TB321FU notes): keep it powered until that is understood.
 install -Dm0644 /dev/stdin "$R/usr/lib/systemd/system/steamos-arm-tb321fu-gpu-on.service" <<'UNIT'
