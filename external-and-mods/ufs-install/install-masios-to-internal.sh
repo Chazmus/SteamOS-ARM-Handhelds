@@ -104,6 +104,10 @@ fi
 "${BOOTIMG[@]}" check /boot/KERNEL >/dev/null \
   || die "the SD's KERNEL can't boot from a partition label; update the SD image first"
 
+# /boot is mounted read-only by default on some targets (e.g. SM8750);
+# remount it read-write so the GPT backup can be saved before repartitioning.
+mount -o remount,rw /boot 2>/dev/null || true
+
 if [[ -z "$DISK" ]]; then
   for d in /dev/sd[a-z]; do
     [[ -b "$d" && "$d" != "$ROOT_DISK" ]] || continue
