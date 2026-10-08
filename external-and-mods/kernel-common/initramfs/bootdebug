@@ -24,19 +24,25 @@ if grep -qw 'steamos.screenlog=1' /proc/cmdline; then
     exec </dev/null >/dev/tty1 2>&1
     setterm --blank 0 --powerdown 0 --cursor off 2>/dev/null
     while :; do
+      # Two pages in turn, 30 s each: firmware and GPU, then Game Mode's
+      # display setup (its first lines: connector, mode, format, rotation).
       printf '\033[2J\033[H'
       {
-        echo "=== SteamOS ARM debug report, uptime $(cut -d' ' -f1 /proc/uptime)s: take a photo ==="
+        echo "=== SteamOS ARM debug report 1/2, uptime $(cut -d' ' -f1 /proc/uptime)s: take a photo ==="
         echo "--- firmware copy"
-        journalctl -b -o cat -u steamos-arm-tablet-firmware.service | tail -n 14
-        echo "--- GPU"
-        journalctl -b -k -o cat | grep -iE 'adreno|a8xx|a7xx|zap|gmu|msm_dpu|msm_drm|drm.*(error|fail)' | tail -n 16
-        echo "--- Game Mode"
-        journalctl -b -o cat _UID=1000 | grep -iE 'gamescope|vulkan|vk_|drm|error|fail|fatal|crash' | grep -viE 'steamwebhelper|cef' | tail -n 30
+        journalctl -b -o cat -u steamos-arm-tablet-firmware.service | grep -vE 'searching|own copy' | tail -n 8
+        echo "--- display and GPU (kernel)"
+        journalctl -b -k -o cat | grep -iE 'dpu|dsi|dsc|panel|adreno|a8xx|zap|gmu|drm' | grep -viE 'sync_state|request_fw. loaded' | tail -n 40
         echo "--- failed units"
         systemctl --failed --no-legend --plain 2>/dev/null | cut -d' ' -f1 | tr '\n' ' '; echo
         echo "--- panel"
-        for c in /sys/class/drm/card*-*; do [ -e "$c/status" ] && echo "${c##*/} $(cat $c/status) $(head -3 $c/modes 2>/dev/null | tr '\n' ' ')"; done
+        for c in /sys/class/drm/card*-*; do [ -e "$c/status" ] && echo "${c##*/} $(cat $c/status) $(tr '\n' ' ' <$c/modes 2>/dev/null)"; done
+      } 2>&1 | cut -c1-118
+      sleep 30
+      printf '\033[2J\033[H'
+      {
+        echo "=== SteamOS ARM debug report 2/2: take a photo ==="
+        journalctl -b -o cat _UID=1000 | grep -iE 'gamescope|drm|vulkan|vk_|wsi|xwayland' | grep -viE 'steamvr|openvr|pipewire' | head -n 75
       } 2>&1 | cut -c1-118
       sleep 30
     done
