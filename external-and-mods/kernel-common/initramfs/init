@@ -26,6 +26,7 @@ debug=0
 usbshell=0
 usbimage=0
 steamosroot=""
+bootlabel=ROCKNIX
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
     konkr.bootlog_wait=*) extra="${arg#*=}" ;;
@@ -33,6 +34,9 @@ for arg in $(cat /proc/cmdline); do
     steamos.usbshell=1) usbshell=1 ;;
     steamos.usbimage=1) usbimage=1 ;;
     steamos.root=*) steamosroot="${arg#steamos.root=}" ;;
+    # The FAT partition with the boot files, logs and the debug switch: ROCKNIX
+    # on internal handheld installs, super on the Lenovo tablets.
+    steamos.bootlabel=*) bootlabel="${arg#steamos.bootlabel=}" ;;
     root=*) rootarg="${arg#root=}" ;;
   esac
 done
@@ -122,7 +126,7 @@ case "$rootarg" in
       fi
       sleep 0.5
     done
-    [ -n "$bootdev" ] || bootdev="$(by_partlabel ROCKNIX)"
+    [ -n "$bootdev" ] || bootdev="$(by_partlabel "$bootlabel")"
     ;;
   *)
     for i in $(seq 1 60); do
