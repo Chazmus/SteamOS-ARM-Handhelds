@@ -7,7 +7,11 @@ ConditionPathExists=/sys/firmware/devicetree/base/model
 ConditionUser=!root
 
 [Service]
-ExecCondition=/bin/sh -c 'grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model'
+# Pocket FIT only. The Pocket S2 has the same card, but its speakers don't
+# follow the WSA digital volume, so with softVolumes held at 1.0 the bar
+# barely changed anything there (issue #47). It gets PipeWire's own software
+# volume instead (api.alsa.soft-mixer in 53-konkr-audio.conf).
+ExecCondition=/bin/sh -c 'grep -qa "KONKR Pocket FIT" /sys/firmware/devicetree/base/model'
 ExecStart=/usr/lib/konkr/konkr-volume
 Restart=always
 RestartSec=2
