@@ -4,6 +4,10 @@
 # (no CONFIG_CRYPTO_USER_API_HASH / SKCIPHER).
 # Do not nmcli connect/reconnect here: that flaps wlan0 and Steam stays
 # on the library spinner (Lost device / AppStore Send failed).
+# The image ships /usr/lib/NetworkManager/conf.d/40-sm8550-wifi.conf with
+# exactly BODY, so this never rewrites it on a clean install: anything under
+# /usr that changes at runtime no longer matches the release's installed.json
+# and delta updates refuse to install.
 set -u
 
 BODY='[connection]

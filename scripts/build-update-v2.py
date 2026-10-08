@@ -6,8 +6,9 @@
       --output steamos-arm-sm8650-1.3.0.sau [--from 1.2.9.inventory.json ...]
 
 Without --from it is a full package (every file's contents). With --from it
-is a delta that installs on any of those releases and carries only contents
-none of them had. Next to the package it writes <output>.inventory.json,
+is a delta that installs on any of those releases. It carries the contents of
+every path that isn't already the same in all of them: the device only takes
+contents from the package, it doesn't reuse an identical file at another path. Next to the package it writes <output>.inventory.json,
 what a later release's delta is built --from, and <output>.sha256.
 """
 import argparse
@@ -56,15 +57,16 @@ for key, e in inventory.items():
     if 'f' in e:
         source.setdefault(e['f'][4], a.kernel if key == 'boot/KERNEL' else base_of(key))
 
-have, versions = set(), []
+bases, versions = [], []                             # per base: path -> sha
 for b in a.bases:
     base = json.loads(Path(b).read_text())
     versions.append(base['version'])
     if 'inventory' in base:                         # <package>.inventory.json
-        have |= {e['f'][4] for e in base['inventory'].values() if 'f' in e}
+        bases.append({k: e['f'][4] for k, e in base['inventory'].items() if 'f' in e})
     else:                                           # a release's installed.json
-        have |= {v[2] for v in base['files'].values()}
-blobs = sorted(set(source) - have)
+        bases.append({k: v[2] for k, v in base['files'].items()})
+blobs = sorted({e['f'][4] for k, e in inventory.items() if 'f' in e and (
+    not bases or any(m.get(k) != e['f'][4] for m in bases))})
 
 with tempfile.TemporaryDirectory(prefix='sau-', dir=output.parent) as temp:
     stage = Path(temp)
