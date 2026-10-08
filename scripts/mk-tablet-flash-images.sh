@@ -9,8 +9,8 @@
 #   boot.img       Gen 3 -> boot_a: GUF296's UEFI loader (from the image's
 #                  tablet/). Gen 4 -> the active boot slot: our kernel, DTB,
 #                  cmdline and startup code in one header v4 image.
-#   super.img      Gen 3 only -> super: 256 MiB FAT with GRUB, our boot menu,
-#                  Image and DTBs. The startup code mounts it as /boot
+#   super.img      Gen 3 only -> super: GUF296's 256 MiB GRUB template with our
+#                  one-stage menu, Image and DTBs. The startup code mounts it as /boot
 #                  (steamos.bootlabel=super), logs go there too. Android's
 #                  system partitions are replaced, so Android is gone;
 #                  Lenovo's rescue tool (LMSA) puts it back. The Gen 4 keeps
@@ -66,25 +66,19 @@ case "$DEV" in
 esac
 
 if [[ $DEV == tb321fu ]]; then
-  log "super.img (256 MiB FAT)"
-  truncate -s 256M "$OUT/super.img"
-  mkfs.vfat -F 32 -n Y700BOOT "$OUT/super.img" >/dev/null
+  log "super.img (GRUB template, one-stage menu)"
+  source "$(dirname "$0")/../external-and-mods/tb321fu-boot/release.env"
+  tmpl="${CACHE:-/work/cache}/tb321fu-boot/super-template.img"
+  mkdir -p "$(dirname "$tmpl")"
+  if ! echo "$TB321FU_SUPER_TEMPLATE_SHA256  $tmpl" | sha256sum -c --quiet >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -o "$tmpl" "$TB321FU_SUPER_TEMPLATE_URL"
+    echo "$TB321FU_SUPER_TEMPLATE_SHA256  $tmpl" | sha256sum -c --quiet || die "super template hash mismatch"
+  fi
+  cp "$tmpl" "$OUT/super.img"
   FAT=$(losetup -f --show "$OUT/super.img")
   mount "$FAT" "$W/super"
   S=$W/super
-  cp -r "$B/EFI" "$S/"
-  # GRUB's first stage reads /boot/grub/grub.cfg (images built before
-  # stage-tb321fu-boot.sh wrote it only have EFI/BOOT/grub.cfg).
-  mkdir -p "$S/boot/grub"
-  if [[ -f "$B/boot/grub/grub.cfg" ]]; then
-    cp "$B/boot/grub/grub.cfg" "$S/boot/grub/grub.cfg"
-  else
-    sed '/^menuentry "Reboot"/,$d' "$S/EFI/BOOT/grub.cfg" | sed 's/^set timeout=.*/set timeout=0/' > "$S/boot/grub/grub.cfg"
-  fi
-  rm -f "$S/EFI/BOOT/grub.cfg"
-  grep -q 'chainloader /EFI/BOOT/QCOMRAMP.EFI' "$S/boot/grub/grub.cfg" || die "no first-stage GRUB config"
-  cp "$B"/steamos-arm-boot-* "$S/"
-  mkdir -p "$S/dtb"
+  rm -f "$S/Image" "$S"/dtb/*
   if [[ -n "$KO" ]]; then
     cp "$KO/boot/Image" "$S/Image"
     cp "$KO"/dtbs/sm8650-lenovo-tb321fu-{boe,csot}.dtb "$S/dtb/"
@@ -92,41 +86,100 @@ if [[ $DEV == tb321fu ]]; then
     cp "$B/Image" "$S/Image"
     cp "$B"/dtb/sm8650-lenovo-tb321fu-{boe,csot}.dtb "$S/dtb/"
   fi
-  # Root is the userdata partition now, not the internal install's STORAGE or
-  # the USB drive, and the boot files live on super.
-  for f in "$S/EFI/BOOT/qcomramp.cfg"; do
-    sed -i -e 's/ steamos\.usbimage=1//' \
-      -e 's/root=PARTLABEL=STORAGE/root=PARTLABEL=userdata steamos.bootlabel=super/' "$f"
-  done
-  grep -q 'root=PARTLABEL=userdata steamos.bootlabel=super' "$S/EFI/BOOT/qcomramp.cfg" || die "boot menu not rewritten"
-  ! grep -q 'usbimage' "$S"/EFI/BOOT/*.cfg || die "USB image fallback still in the boot menu"
-  # A "boot text" copy of each panel entry: kernel and systemd messages on
-  # screen, so a photo shows where a boot stops (the logs on super can't be
-  # read from a PC). The UEFI framebuffer stays on and its memory reserved, so
-  # the text starts before the display driver loads; the normal entries keep
-  # the quiet bring-up setup.
-  awk '
-    /^menuentry "SteamOS ARM Port \(.* panel\)"/ { inblk = 1; blk = "" }
-    { print }
-    inblk { blk = blk $0 "\n" }
-    inblk && /^}/ {
-      inblk = 0
-      sub(/ panel\)"/, " panel, boot text)\"", blk)
-      gsub(/ \/reserved-memory\/splash-region/, "", blk)
-      gsub(/ video=efifb:off| drm_client_lib\.active=none| quiet| loglevel=0| systemd\.show_status=0| rd\.udev\.log_level=0| logo\.nologo| vt\.global_cursor_default=0/, "", blk)
-      sub(/ rw rootwait/, " loglevel=7 console=tty0 systemd.show_status=1 rw rootwait", blk)
-      extra = extra "\n" blk
-    }
-    END { printf "%s", extra }
-  ' "$S/EFI/BOOT/qcomramp.cfg" > "$W/qcomramp.cfg"
-  cp "$W/qcomramp.cfg" "$S/EFI/BOOT/qcomramp.cfg"
-  [[ $(grep -c 'boot text)' "$S/EFI/BOOT/qcomramp.cfg") = 2 ]] || die "boot text entries missing"
-  ! grep -A8 'boot text)' "$S/EFI/BOOT/qcomramp.cfg" | grep -q -E ' quiet|efifb:off' || die "boot text entries still quiet"
-  # Beta: logs on every boot (bootlog.txt, debug-logs/), readable in Desktop
-  # Mode under /boot or over SSH. Delete /boot/debug to stop them.
+  # The template's BOOTAA64.EFI reads boot/grub/grub.cfg on this FAT and sets
+  # $root to it. One stage: the DTB and the kernel through its EFI stub, no
+  # initrd (the startup code is in the Image). The kernel prints on the panel
+  # (beta), its logs go to this FAT (steamos.bootlabel=super), and the Logs
+  # entries show them, since nothing can read super from a PC.
+  opts="root=PARTLABEL=userdata rw rootwait rootfstype=ext4 steamos.bootlabel=super"
+  opts+=" firmware_class.path=/usr/lib/firmware/steamos-arm/tb321fu efi=novamap"
+  opts+=" console=tty1 fbcon=map:0 console=tty0 loglevel=4 allow_mismatched_32bit_el0"
+  opts+=" fw_devlink.strict=1 pcie_ports=compat cgroup.memory=nokmem,nosocket swiotlb=8192"
+  opts+=" irqaffinity=0-1 mem_sleep_default=s2idle"
+  {
+    printf 'set timeout=-1\nset default=0\nset gfxpayload=keep\n'
+    for p in csot boe; do
+      printf '\nmenuentry "SteamOS ARM Port (%s panel)" {\n' "${p^^}"
+      printf '    devicetree /dtb/sm8650-lenovo-tb321fu-%s.dtb\n    linux /Image %s\n}\n' "$p" "$opts"
+    done
+    cat <<'CFG'
+
+menuentry "Logs 1: list the log files" {
+    insmod ls
+    insmod sleep
+    ls -l /
+    echo "--- debug-logs:"
+    ls -l /debug-logs/
+    echo "(hold Power ~15 s to leave)"
+    sleep 900
+}
+
+menuentry "Logs 2: boot log (end of it)" {
+    insmod cat
+    insmod sleep
+    cat /bootlog.txt
+    echo "(hold Power ~15 s to leave)"
+    sleep 900
+}
+
+menuentry "Logs 3: live kernel log after the handover (end of it)" {
+    insmod cat
+    insmod sleep
+    cat /bootlog-live-0.txt
+    echo "=== that was live-0, live-1 follows in 20 s"
+    sleep 20
+    cat /bootlog-live-1.txt
+    echo "(hold Power ~15 s to leave)"
+    sleep 900
+}
+
+menuentry "Logs 4: system partition (did Linux start?)" {
+    insmod ls
+    insmod sleep
+    insmod part_gpt
+    insmod ext2
+    insmod search_label
+    search --no-floppy --label userdata --set=ud
+    echo "system partition: $ud"
+    echo "--- /var/log:"
+    ls -l ($ud)/var/log/
+    echo "--- journal:"
+    ls -l ($ud)/var/log/journal/
+    echo "--- steamos-arm-boot:"
+    ls -l ($ud)/var/log/steamos-arm-boot/
+    echo "--- /var/lib/systemd:"
+    ls -l ($ud)/var/lib/systemd/
+    echo "(hold Power ~15 s to leave)"
+    sleep 900
+}
+
+menuentry "Logs 5: system partition boot log (end of it)" {
+    insmod cat
+    insmod sleep
+    insmod part_gpt
+    insmod ext2
+    insmod search_label
+    search --no-floppy --label userdata --set=ud
+    cat ($ud)/var/log/steamos-arm-boot/bootlog.txt
+    echo "(hold Power ~15 s to leave)"
+    sleep 900
+}
+CFG
+  } > "$S/boot/grub/grub.cfg"
+  echo 'configfile /boot/grub/grub.cfg' > "$S/EFI/BOOT/grub.cfg"
+  [[ $(grep -c '^menuentry "SteamOS ARM Port' "$S/boot/grub/grub.cfg") = 2 ]] || die "boot entries missing"
+  ! grep -q -E 'usbimage|STORAGE' "$S/boot/grub/grub.cfg" || die "old root or USB fallback in the menu"
+  # Beta: logs on every boot (bootlog.txt, debug-logs/). Delete /boot/debug to stop them.
   : > "$S/debug"
   sync; umount "$S"; losetup -d "$FAT"; FAT=""
   fsck.fat -n "$OUT/super.img" | tail -1
+fi
+# SUPER_ONLY=1 (Gen 3): just boot.img and super.img, to try a new kernel
+# against the system already on the tablet.
+if [[ ${SUPER_ONLY:-0} == 1 ]]; then
+  (cd "$OUT" && sha256sum boot.img super.img > SHA256SUMS && cat SHA256SUMS)
+  log "done (super only)"
+  exit 0
 fi
 
 log "userdata.img (ext4: system and /home)"
