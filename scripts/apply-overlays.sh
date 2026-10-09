@@ -926,10 +926,11 @@ if [[ -n "${MESA_STACK:-}" ]]; then
       || die "MESA_STACK has no $a build"
   done
   ANDROID_VENDOR="usr/share/guestos/android/vendor/lib64"
-  [[ -f "$MESA_STACK/android/$ANDROID_VENDOR/hw/vulkan.freedreno.so" ]] \
-    || die "MESA_STACK has no android build (Lepton)"
   PDB="$R/usr/lib/holo/pacmandb/local"
-  for pkg in deckard-mesa-linux-aarch64 deckard-mesa-linux-x86_64 deckard-mesa-android-aarch64; do
+  # Android (Lepton) keeps Valve's own Mesa: with ours its display service
+  # (surfaceflinger) crashed as it started and Android never came up on 1.3,
+  # where 1.2 ran it on Valve's. Only the Linux side gets our Mesa.
+  for pkg in deckard-mesa-linux-aarch64 deckard-mesa-linux-x86_64; do
     list="$(ls -d "$PDB/${pkg}"-[0-9]*/files 2>/dev/null | head -1)"
     [[ -n "$list" ]] || continue
     grep -v -e '^%' -e '/$' "$list" | grep -E '(\.so[.0-9]*|\.json)$' \
@@ -948,10 +949,10 @@ if [[ -n "${MESA_STACK:-}" ]]; then
   cp -a "$MESA_STACK/x86_64/usr/share/." "$GUEST/usr/share/"
   cp -a "$MESA_STACK/i386/usr/lib32/." "$GUEST/usr/lib32/"
   cp -a "$MESA_STACK/i386/usr/share/vulkan/." "$GUEST/usr/share/vulkan/"
-  # Lepton (Android apps): same files and names as Valve's Android Mesa.
-  mkdir -p "$R/$ANDROID_VENDOR"
-  cp -a "$MESA_STACK/android/$ANDROID_VENDOR/." "$R/$ANDROID_VENDOR/"
-  chown -R root:root "$R/$ANDROID_VENDOR"
+  # Earlier images put our Android Mesa over Valve's: put Valve's back.
+  if [[ -d "$STOCK/$ANDROID_VENDOR" ]]; then
+    cp -a "$STOCK/$ANDROID_VENDOR/." "$R/$ANDROID_VENDOR/"
+  fi
   chown -R root:root "$R/usr/lib/dri" "$GUEST/usr/lib/dri" "$GUEST/usr/lib32/dri"
   # mangoapp runs on the system Turnip (it matches our zink), no pin.
   rm -rf "$R/usr/lib/steamos-sm8650/frame-turnip" \
@@ -966,7 +967,7 @@ if [[ -n "${MESA_STACK:-}" ]]; then
     >"$R/usr/lib/environment.d/60-sm8550-zink.conf"
   chmod 0644 "$R/usr/lib/environment.d/60-sm8550-zink.conf"
   for f in "$R/usr/lib/libgallium-"*.so "$GUEST/usr/lib/libgallium-"*.so \
-           "$GUEST/usr/lib32/libgallium-"*.so "$R/$ANDROID_VENDOR/libgallium_dri.so"; do
+           "$GUEST/usr/lib32/libgallium-"*.so; do
     log "   ${f#$R}: $(grep -a -o -m1 'Mesa [0-9][0-9.]*' "$f" || echo '?')"
   done
 elif [[ -n "$MESA_SO" ]]; then
