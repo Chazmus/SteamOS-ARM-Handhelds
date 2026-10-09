@@ -167,6 +167,10 @@ while [ "$i" -lt 10 ]; do
     echo "--- sessions"; loginctl list-sessions --no-pager
     echo "--- drm"; for c in /sys/class/drm/card*-*; do echo "$c $(cat $c/status 2>/dev/null) $(head -1 $c/modes 2>/dev/null)"; done
     echo "--- backlight"; for b in /sys/class/backlight/*; do echo "$b $(cat $b/brightness)/$(cat $b/max_brightness)"; done
+    # Charging: what the charger negotiated (USB-C PD or plain 5 V) and how
+    # much goes in, for slow-charging reports.
+    echo "--- power supplies"; for p in /sys/class/power_supply/*; do echo "[${p##*/}]"; cat "$p/uevent" 2>/dev/null | sed 's/^POWER_SUPPLY_/  /'; done
+    echo "--- usb-c"; for t in /sys/class/typec/*; do [ -e "$t" ] || continue; echo "${t##*/}: $(for a in data_role power_role power_operation_mode orientation; do [ -r "$t/$a" ] && printf '%s=%s ' "$a" "$(cat "$t/$a")"; done)"; done
     echo "--- gpu"; ls /sys/class/devfreq/ 2>&1; dmesg | grep -i -E "adreno|msm_dpu|a7xx|gmu|zap|drm" | tail -40
   } > "$out/summary.txt" 2>&1
   dmesg > "$out/dmesg.txt" 2>&1
