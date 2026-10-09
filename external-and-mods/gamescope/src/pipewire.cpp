@@ -13,6 +13,7 @@
 #include "main.hpp"
 #include "pipewire.hpp"
 #include "log.hpp"
+uint64_t get_time_in_nanos(); // steamcompmgr.cpp
 
 #include <spa/debug/format.h>
 
@@ -728,9 +729,14 @@ bool init_pipewire(void)
 
 	state->running = true;
 	ret = 0;
+	// This runs on the main thread before the Wayland server starts. A PipeWire
+	// that never answers (seen on the Y700 Gen 4) used to hang
+	// gamescope here forever: black screen, Steam waiting on gamescope-0. Wait a
+	// bounded time, then let run_pipewire pick the node ID up whenever it comes.
+	const uint64_t deadline = get_time_in_nanos() + 5'000'000'000ull;
 	pw_loop_enter(state->loop);
-	while (state->stream_node_id == SPA_ID_INVALID) {
-		ret = pw_loop_iterate(state->loop, -1);
+	while (state->stream_node_id == SPA_ID_INVALID && get_time_in_nanos() < deadline) {
+		ret = pw_loop_iterate(state->loop, 100);
 		if (ret < 0)
 			break;
 	}
@@ -741,7 +747,10 @@ bool init_pipewire(void)
 		return false;
 	}
 
-	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
+	if (state->stream_node_id == SPA_ID_INVALID)
+		pwr_log.errorf("no stream node ID after 5s, PipeWire isn't answering; screen capture comes up when it does");
+	else
+		pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
 
 	std::thread thread(run_pipewire, state);
 	thread.detach();
