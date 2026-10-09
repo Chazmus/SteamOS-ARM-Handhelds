@@ -387,7 +387,11 @@ def cmd_apply(a) -> None:
     ensure_idle(a.disk)
 
     bdir = Path(a.backup_dir)
-    bdir.mkdir(parents=True, exist_ok=True)
+    try:
+        bdir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        subprocess.run(["mount", "-o", "remount,rw", "/boot"], capture_output=True)
+        bdir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = bdir / f"ufs-gpt-{stamp}.sfdisk"
     backup.write_text(sh("sfdisk", "--dump", a.disk))
