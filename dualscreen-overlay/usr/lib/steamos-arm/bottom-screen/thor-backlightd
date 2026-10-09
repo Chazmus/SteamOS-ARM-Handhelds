@@ -135,8 +135,13 @@ class Panel:
             try:
                 with open(f"{self.d}/bl_power", "w", encoding="utf-8") as fh:
                     fh.write(want)
+                self.power_err = None
             except OSError as exc:
-                log(f"bl_power: {exc}")
+                # The panel refuses it while it powers up (EINVAL): log once,
+                # keep trying on the next pass.
+                if str(exc) != getattr(self, "power_err", None):
+                    log(f"bl_power: {exc}")
+                self.power_err = str(exc)
 
 
 class Daemon:
@@ -265,6 +270,21 @@ class Daemon:
                 except OSError:
                     pass
 
+    def follow_top(self) -> bool:
+        """Steam's slider now reaches the top panel through gamescope (its
+        brightness atom), not through the file above: nothing changed for the
+        bottom panel and the slider seemed to do nothing there. Take a top
+        level we didn't write as Steam's new level."""
+        if not game_mode():
+            return False
+        cur = self.top.read()
+        if cur < 0 or self.top.last < 0 or cur == self.top.last:
+            return False
+        with self.lock:
+            self.top.last = cur
+            self.write_steam_file(round(cur / max(self.top.max, 1) * self.steam_max))
+        return True
+
     def run(self) -> None:
         threading.Thread(target=self.serve, daemon=True).start()
         self.apply(force=True)
@@ -272,6 +292,7 @@ class Daemon:
         next_enforce = time.monotonic() + ENFORCE_S
         while True:
             time.sleep(POLL_S)
+            self.follow_top()
             try:
                 m = os.stat(STEAM_FILE).st_mtime_ns
             except OSError:
