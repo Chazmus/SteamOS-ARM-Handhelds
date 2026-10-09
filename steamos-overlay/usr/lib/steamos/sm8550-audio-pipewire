@@ -18,8 +18,12 @@ fi
 # switch between their own profiles, no mixers and no pro-audio. WirePlumber
 # alone never left "HiFi (Headphones, Speaker)" for "HiFi (HDMI0, Speaker)"
 # (same priority, both "available"), so a TV or monitor got no sound.
+# The Legion Y700 Gen 3 has its own UCM routes too (and no Odin 2 codec
+# controls): the Odin 2 policy below put it on pro-audio, which played into
+# PCMs no route was set up for, so it was silent.
 UCM_ONLY=0
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null \
+   || tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,tb321fu'; then
   UCM_ONLY=1
 fi
 
@@ -170,7 +174,9 @@ persist() {
 }
 
 # The card's own HiFi profile without DisplayPort/HDMI (the device's local
-# outputs), for UCM_ONLY devices.
+# outputs), for UCM_ONLY devices. One with the speakers in it first: where
+# speakers and headphones are separate profiles (Legion Y700 Gen 3), the
+# headphone one can still list as available with nothing in the jack.
 local_profile() {
   pactl_ok list cards | awk -v c="$1" '
     /^Card #/ {incard=0}
@@ -178,7 +184,10 @@ local_profile() {
     incard && /^\tProfiles:/ {inprof=1; next}
     incard && inprof && /^\t[A-Z]/ {inprof=0}
     incard && inprof && /HiFi/ && !/(DisplayPort|HDMI)/ && !/available: no/ {
-      sub(/^\t+/, ""); sub(/: .*/, ""); print; exit }'
+      sub(/^\t+/, ""); sub(/: .*/, "")
+      if ($0 ~ /Speaker/) { print; found=1; exit }
+      if (first == "") first = $0 }
+    END { if (!found && first != "") print first }'
 }
 
 apply_policy() {

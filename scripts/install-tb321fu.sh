@@ -78,6 +78,9 @@ rm -rf "$U/LenovoY700TB321" "$U/Qualcomm/sm8650/TB321FU"
 rm -f "$U/conf.d/snd_soc_sc8280xp/Lenovo-Y700-TB321FU.conf" "$U/conf.d/snd_soc_sc8280xp/Lenovo-QRD-2.0.conf"
 mkdir -p "$U/Qualcomm/sm8650" "$U/conf.d/sm8650"
 cp -a "$A/Qualcomm/sm8650/TB321FU" "$U/Qualcomm/sm8650/"
+# Our HiFi verb over the tree's: speakers on PCM 0 through Secondary TDM,
+# the route heard on a tablet (the tree's PCM 1 route stayed silent).
+install -m0644 "${HERE}/../external-and-mods/tb321fu-boot/ucm/HiFi.conf" "$U/Qualcomm/sm8650/TB321FU/HiFi.conf"
 # Some Lenovo firmware names the card Lenovo-QRD-2.0.
 for n in Lenovo-Y700-TB321FU Lenovo-QRD-2.0; do
   install -m0644 "$A/conf.d/sm8650/$n.conf" "$U/conf.d/sm8650/$n.conf"
@@ -93,10 +96,10 @@ done
 # FIT's rules in /etc (53-konkr-audio, 54-konkr-quantum) match every
 # platform-sound card and sort after a 5x name: they set 960-frame periods
 # and ask for a "HiFi (Headphones, Speaker)" profile this card doesn't have
-# (its mics are part of every HiFi profile), so WirePlumber fell back to
-# pro-audio, which plays raw PCMs without the UCM speaker and mic sequences:
-# one "Built-in Audio" output, no sound and no microphone. This file sorts
-# after them and is matched by the card name, so no other device sees it.
+# (speakers and headphones share PCM 0 and exclude each other, and the mics
+# are part of every profile). This file sorts after them and is matched by
+# the card name, so no other device sees it. Headphones first: their profile
+# is only available with something in the jack.
 rm -f "$R/usr/share/wireplumber/wireplumber.conf.d/51-lenovo-tb321fu-alsa.conf"
 install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/90-lenovo-tb321fu-alsa.conf" <<'CONF'
 # Lenovo Legion Y700 Gen 3: its own profile order and the buffer sizes the
@@ -111,7 +114,7 @@ monitor.alsa.rules = [
       update-props = {
         api.acp.auto-profile = true
         api.acp.auto-port = true
-        device.profile = "HiFi (Headphones, Mic1, Speaker)"
+        device.profile = "HiFi (Mic1, Speaker)"
         api.alsa.period-size = 1024
         api.alsa.period-num = 4
         api.alsa.headroom = 0
@@ -130,8 +133,10 @@ device.profile.priority.rules = [
     actions = {
       update-props = {
         priorities = [
-          "HiFi (Headphones, Mic1, Speaker)"
-          "HiFi (Headphones, Headset, Speaker)"
+          "HiFi (Headphones, Headset)"
+          "HiFi (Headphones, Mic1)"
+          "HiFi (Mic1, Speaker)"
+          "HiFi (Headset, Speaker)"
           "HiFi"
           "pro-audio"
         ]
