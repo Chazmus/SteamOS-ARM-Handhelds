@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
 # Our aya-keys gpio-keys node (kernel-sm8550/dts/qcs8550-ayaneo-pocketevo.dts.append)
-# sends these codes; LC/RC are L4/R4 like on the Pocket FIT, the menu button L5.
+# sends these codes; LC/RC are L4/R4 like on the Pocket FIT. The button next
+# to the AYANEO button is the Steam button (it was L5, which opened nothing).
 version: 2
 kind: CapabilityMap
 name: AYANEO Pocket EVO side keys
@@ -15,7 +16,7 @@ mapping:
   target_event:
     gamepad:
       button: QuickAccess
-- name: Menu -> L5
+- name: Menu -> Steam
   source_events:
   - evdev:
       event_type: KEY
@@ -23,7 +24,7 @@ mapping:
       value_type: button
   target_event:
     gamepad:
-      button: LeftPaddle2
+      button: Guide
 - name: LC -> L4
   source_events:
   - evdev:
