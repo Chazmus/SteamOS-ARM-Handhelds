@@ -94,6 +94,9 @@ ONLY_UFS=1 STEAMOS_HOME="$R/home/steamos" "${ROOT}/scripts/install-vendor-apps.s
 # Merge SM8750 firmware
 cp -a "$KOUT/firmware/." "$R/usr/lib/firmware/"
 
+# Bluetooth and display settings pages for Desktop Mode (not in Valve's repos).
+"${SCRIPT_DIR}/install-kde-extras.sh" "$R"
+
 # ---------------------------------------------------------------------------
 # 2. Gamescope (SM8750 aarch64 build)
 # ---------------------------------------------------------------------------
