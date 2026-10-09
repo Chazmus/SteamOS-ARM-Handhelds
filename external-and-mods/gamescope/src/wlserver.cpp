@@ -3049,6 +3049,18 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 		}
 	}
 
+	// Nothing to focus (on wake, before any window is back): wlroots asserts
+	// on a null surface in notify_enter, which took Game Mode down. Clear the
+	// focus instead.
+	if ( surface == nullptr )
+	{
+		wlr_seat_keyboard_notify_clear_focus( wlserver.wlr.seat );
+		wlserver.kb_focus_surface = nullptr;
+		if ( bConstrain )
+			wlserver_constrain_cursor( nullptr );
+		return;
+	}
+
 	assert( wlserver.wlr.virtual_keyboard_device != nullptr );
 	wlr_seat_set_keyboard( wlserver.wlr.seat, wlserver.wlr.virtual_keyboard_device );
 
