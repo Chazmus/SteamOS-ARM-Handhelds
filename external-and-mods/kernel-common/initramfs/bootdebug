@@ -67,6 +67,43 @@ if grep -qw 'steamos.screenlog=1' /proc/cmdline; then
     done
   ) &
 fi
+# Desktop Mode debug boot (steamos.session=plasma) on a device with no way to
+# copy files off: once the tester has Wi-Fi, upload the previous boot's
+# journal (the Game Mode boot that went wrong) with Steam's own logs, and
+# leave the link on the desktop.
+if grep -qw 'steamos.session=plasma' /proc/cmdline; then
+  (
+    d=/home/steamos/Desktop; mkdir -p "$d"; chown steamos:steamos "$d" 2>/dev/null
+    printf 'Waiting for Wi-Fi to upload the logs. Connect to Wi-Fi from the taskbar.\n' > "$d/LOG-LINK.txt"
+    n=0
+    until curl -fsI -m 10 https://gofile.io >/dev/null 2>&1; do
+      n=$((n + 1)); [ "$n" -gt 120 ] && exit 0; sleep 10
+    done
+    w=$(mktemp -d)
+    # The latest earlier boot where Game Mode ran (the tester may have booted
+    # Desktop Mode more than once).
+    b=-1
+    for i in 1 2 3 4 5 6; do
+      journalctl -b -$i -q -o cat _UID=1000 2>/dev/null | grep -q 'gamescope version' && { b=-$i; break; }
+    done
+    journalctl -b $b --no-pager -o short-monotonic > "$w/journal-gamemode-boot.txt" 2>&1
+    journalctl -b $b --no-pager -o short-monotonic _UID=1000 > "$w/journal-gamemode-user.txt" 2>&1
+    journalctl --list-boots --no-pager > "$w/boots.txt" 2>&1; echo "game mode boot: $b" >> "$w/boots.txt"
+    journalctl -b --no-pager -o short-monotonic > "$w/journal-this-boot.txt" 2>&1
+    cp -r /home/steamos/.local/share/Steam/logs "$w/steam-logs" 2>/dev/null
+    cp /home/steamos/.steam/steam/logs/bootstrap_log.txt "$w/" 2>/dev/null
+    ls -la /home/steamos/.local/share/Steam /home/steamos/.steam > "$w/steam-dirs.txt" 2>&1
+    tar -C "$w" -czf /run/steamos-arm-logs.tgz . && rm -rf "$w"
+    link=$(curl -fsS -m 300 -F file=@/run/steamos-arm-logs.tgz https://upload.gofile.io/uploadfile 2>&1 |
+      sed -n 's/.*"downloadPage":"\([^"]*\)".*/\1/p')
+    if [ -n "$link" ]; then
+      printf 'Logs uploaded, send this link:\n\n%s\n' "$link" > "$d/LOG-LINK.txt"
+    else
+      printf 'Upload failed, reboot to Desktop Mode to try again.\n' > "$d/LOG-LINK.txt"
+    fi
+    chown steamos:steamos "$d/LOG-LINK.txt" 2>/dev/null
+  ) &
+fi
 mountpoint -q /boot || mount /boot 2>/dev/null
 # Some images mount BOOT read-only (the 8 Elite ones); the logs need it
 # writable, whichever unit started us.
