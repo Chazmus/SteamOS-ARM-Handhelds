@@ -93,6 +93,22 @@ if grep -qw 'steamos.session=plasma' /proc/cmdline; then
     cp -r /home/steamos/.local/share/Steam/logs "$w/steam-logs" 2>/dev/null
     cp /home/steamos/.steam/steam/logs/bootstrap_log.txt "$w/" 2>/dev/null
     ls -la /home/steamos/.local/share/Steam /home/steamos/.steam > "$w/steam-dirs.txt" 2>&1
+    # Whether PipeWire answers, and where its threads sit in the kernel if not.
+    {
+      ls -la /dev/video* /dev/media* /dev/snd 2>&1
+      for p in $(pgrep -x 'pipewire|wireplumber|pipewire-pulse'); do
+        echo "=== $p $(cat /proc/$p/comm)"
+        for t in /proc/$p/task/*; do
+          echo "--- ${t##*/} $(cat $t/comm) $(cut -d' ' -f3 $t/stat) $(cat $t/wchan)"
+          cat $t/stack 2>/dev/null
+        done
+        ls -l /proc/$p/fd 2>/dev/null | grep -E 'video|media|snd|v4l'
+      done
+      echo "=== pw-cli info 0"
+      runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 timeout 10 pw-cli info 0 2>&1
+      echo "=== wpctl status"
+      runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 timeout 10 wpctl status 2>&1
+    } > "$w/pipewire-state.txt" 2>&1
     tar -C "$w" -czf /run/steamos-arm-logs.tgz . && rm -rf "$w"
     link=$(curl -fsS -m 300 -F file=@/run/steamos-arm-logs.tgz https://upload.gofile.io/uploadfile 2>&1 |
       sed -n 's/.*"downloadPage":"\([^"]*\)".*/\1/p')

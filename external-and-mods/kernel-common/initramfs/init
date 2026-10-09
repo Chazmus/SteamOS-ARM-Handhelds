@@ -196,6 +196,21 @@ if [ -n "$rootdev" ] && mount -t ext4 -o rw "$rootdev" /newroot; then
   else
     rm -f "$f"
   fi
+  # Test builds can carry fixed root files (/hotfix). They are bind-mounted
+  # over the installed ones on boots from this image only, so the root stays
+  # as released and updates still apply to it. New files can only go to /etc.
+  if [ -d /hotfix ]; then
+    h=/newroot/var/lib/steamos-arm/hotfix
+    rm -rf "$h" && mkdir -p "$h" && cp -a /hotfix/. "$h/"
+    (cd "$h" && find . -type f) | while read -r p; do
+      p=${p#./}
+      if [ -f "/newroot/$p" ]; then
+        mount -o bind "$h/$p" "/newroot/$p" && snap "hotfix $p"
+      elif [ "${p%%/*}" = etc ]; then
+        mkdir -p "/newroot/${p%/*}" && cp -a "$h/$p" "/newroot/$p" && snap "hotfix new $p"
+      fi
+    done
+  fi
   if [ "$debug" = 1 ]; then
     # Log collector (see bootdebug), only for this boot's root.
     d=/newroot/usr/lib/steamos-arm
