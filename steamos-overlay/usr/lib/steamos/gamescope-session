@@ -357,11 +357,20 @@ if [[ "${GAMESCOPE_SESSION_TARGET}" != "gamescope-session.target" ]]; then
   WATCH_SERVICE="steamvr-nested-desktop.service"
 fi
 
+# mangoapp sizes its text in pixels for the Deck's 800 lines, so on the
+# tablets (1904 lines on the Legion Y700 Gen 4) the performance overlay was
+# a sliver in the corner. Scale it to the panel; read_cfg keeps Steam's
+# preset file (MANGOHUD_CONFIGFILE) in use, which MANGOHUD_CONFIG alone skips.
+if [[ "$MANGOAPP" == 1 && -z "${MANGOHUD_CONFIG:-}" && "$H" -gt 1200 ]]; then
+  MANGOHUD_CONFIG="read_cfg,font_scale=$(awk -v h="$H" 'BEGIN { printf "%.1f", h / 800 }')"
+  export MANGOHUD_CONFIG
+fi
+
 # Steam (steam.service) does not inherit this script's environment, and the
 # gamescope-onready import races Steam's start: Steam then has no refresh-rate
 # slider (only 144/n frame limits) and no STEAM_USE_MANGOAPP. Hand the Steam
 # session vars over through a file steam.service reads at start.
-env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE)=' \
+env | grep -E '^(STEAM_DISPLAY_REFRESH_LIMITS|STEAM_USE_MANGOAPP|STEAM_MANGOAPP_[A-Z_]+|STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND|GAMESCOPE_MANGOAPP_SOCKET_DISABLE|MANGOHUD_CONFIGFILE|MANGOHUD_CONFIG)=' \
   >"$XDG_RUNTIME_DIR/gamescope-steam.env" 2>/dev/null || true
 
 echo >&2 "gamescope-session: output=$OUTPUT panel=${PANEL_W}x${PANEL_H} nested=${W}x${H}@${REFRESH_HZ} max=${MAX_HZ} mangoapp=${MANGOAPP} kms_rotation=${KMS_ROTATION} ignore_touch=${GAMESCOPE_IGNORE_TOUCH:-} bottom=${GAMESCOPE_LEASE_CONNECTOR:-none} orientation=${PANEL_ORIENT:-auto}"
