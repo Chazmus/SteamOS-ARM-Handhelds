@@ -201,6 +201,9 @@ pre() {
   wifi_mark
   x=$(xhci_off)
   if light; then
+    # Wake sources too: left on, the charger's and DSPs' notifications and
+    # PCI devices woke the device at random while it slept.
+    wake_sources
     sync
     u=$(ufs_off)
     log "pre: kernel handles the devices, ufs unbound=${u:-none}${x:+, usb unbound=$x}"
