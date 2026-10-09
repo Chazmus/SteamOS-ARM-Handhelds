@@ -81,6 +81,8 @@ class MainWindow(Gtk.Window):
     def __init__(self) -> None:
         super().__init__(title=APP_NAME)
         self.set_default_size(640, 720)
+        # No closing halfway through an install.
+        self.connect("delete-event", lambda *_a: self._busy)
         self.set_border_width(14)
         self._busy = False
         self._info: dict[str, str] = {}
@@ -297,6 +299,7 @@ class MainWindow(Gtk.Window):
         self._busy = True
         self.install_btn.set_sensitive(False)
         self.status.set_text(f"Installing with --android-gb {android_gb} (this takes a while)…")
+        progress = self._progress_dialog()
 
         fingerprint = self._info.get("TABLE_FINGERPRINT", "")
         home_mode = self.home_combo.get_active_id() or "all"
@@ -310,6 +313,8 @@ class MainWindow(Gtk.Window):
 
             def done() -> None:
                 self._busy = False
+                GLib.source_remove(progress.pulse_id)
+                progress.destroy()
                 self.install_btn.set_sensitive(False)
                 if out:
                     self._append(out[-8000:])
@@ -324,6 +329,30 @@ class MainWindow(Gtk.Window):
             GLib.idle_add(done)
 
         threading.Thread(target=worker, daemon=True).start()
+
+
+    def _progress_dialog(self) -> Gtk.Dialog:
+        """A window over everything until the install ends. A line in the
+        status label was easy to miss on a small screen, and people closed the
+        installer or restarted halfway, leaving internal storage half done."""
+        dialog = Gtk.Dialog(title="Installing SteamOS", transient_for=self, modal=True)
+        dialog.set_deletable(False)
+        dialog.connect("delete-event", lambda *_a: True)
+        box = dialog.get_content_area()
+        box.set_spacing(12)
+        box.set_border_width(18)
+        label = Gtk.Label()
+        label.set_markup(
+            "<span size='large'><b>Installing SteamOS to internal storage</b></span>\n\n"
+            "This takes about 5 to 10 minutes. Don't close this window, restart or\n"
+            "turn the device off until it says the install has finished.")
+        label.set_line_wrap(True)
+        box.pack_start(label, False, False, 0)
+        bar = Gtk.ProgressBar()
+        box.pack_start(bar, False, False, 0)
+        dialog.pulse_id = GLib.timeout_add(150, lambda: (bar.pulse(), True)[1])
+        dialog.show_all()
+        return dialog
 
 
 def main() -> int:
