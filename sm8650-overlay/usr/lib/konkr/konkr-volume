@@ -113,7 +113,11 @@ class Volume:
             if not nid:
                 return
             if force or self.last != (steps, soft):
-                run("amixer", "-c", CARD, "-q", "cset", f"name={PA}", PA_LEVEL)
+                # The amp gain only when (re)applying everything: writing it
+                # on every volume step cut the sound for a moment each press.
+                # The periodic check puts it back if something changes it.
+                if force:
+                    run("amixer", "-c", CARD, "-q", "cset", f"name={PA}", PA_LEVEL)
                 for ctl in DIGITAL:
                     run("amixer", "-c", CARD, "-q", "cset", f"name={ctl}", str(steps))
             cur = self.soft(nid)
