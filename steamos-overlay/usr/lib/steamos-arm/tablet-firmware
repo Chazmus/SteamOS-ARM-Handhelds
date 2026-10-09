@@ -218,6 +218,8 @@ def main():
 
     rows = [r for r in json.load(open(a.manifest))["files"] if not r.get("generated")]
     sizes = {r["size"] for r in rows}
+    # Searched by content; several paths can share one (the Wi-Fi's tmel.bin
+    # is Bluetooth's tmel_peach_20.elf), and each of them gets written.
     wanted = {r["sha256"]: r for r in rows}
     found = {}
     dest = Path(a.dest)
@@ -270,11 +272,13 @@ def main():
                         found[d] = p
             if len(found) == len(wanted):
                 break
-        byname = by_name(android, [r for d, r in wanted.items() if d not in found])
-        for d, r in wanted.items():
-            src = found.get(d)
+        byname = by_name(android, [r for r in rows if r["sha256"] not in found])
+        for r in rows:
+            src = found.get(r["sha256"])
             t = dest / r["path"]
             if src is None or src == t:
+                continue
+            if t.is_file() and t.stat().st_size == r["size"] and sha256(t) == r["sha256"]:
                 continue
             t.parent.mkdir(parents=True, exist_ok=True)
             tmp = t.with_name(t.name + ".part")
@@ -299,14 +303,14 @@ def main():
         m.close()
 
     covered = {rel for srcs in byname.values() for _s, rel in srcs}
-    missing = [r["path"] for d, r in wanted.items() if d not in found and r["path"] not in covered]
-    summary = (f"{len(wanted) - len(missing)}/{len(wanted)} files in {dest} "
+    missing = [r["path"] for r in rows if r["sha256"] not in found and r["path"] not in covered]
+    summary = (f"{len(rows) - len(missing)}/{len(rows)} files in {dest} "
                f"({copied} copied now, {len(byname)} by name, {renamed} written)")
     log(summary)
     for p in missing:
         log(f"missing: {p}")
     # On screen during boot too: on the tablets that is the only log a tester sees.
-    console(f"tablet firmware: {len(wanted) - len(missing)}/{len(wanted)}, by name {len(byname)}"
+    console(f"tablet firmware: {len(rows) - len(missing)}/{len(rows)}, by name {len(byname)}"
             + (f", missing: {' '.join(missing)}" if missing else ""))
 
 
