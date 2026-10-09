@@ -111,7 +111,11 @@ export GAMESCOPE_DISABLE_ASYNC_FLIPS=1
 # `konkrctl`-managed flag /var/lib/konkrd/kms-rotation, which lets gamescope
 # scan games out directly instead of compositing every frame. Two failed
 # starts in a row turn the flag off again.
-export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-1}"
+# A monitor on USB-C/HDMI takes over Game Mode while it's connected (like the
+# Deck): before, the panel was forced and an external screen stayed black in
+# Game Mode, which also left HDMI/DP audio silent (no stream to carry it).
+# GAMESCOPE_FORCE_INTERNAL=1 keeps the panel.
+export GAMESCOPE_FORCE_INTERNAL="${GAMESCOPE_FORCE_INTERNAL:-0}"
 # Same physical size the working SM8550 session advertises (not connector mm).
 export GAMESCOPE_FAKE_OUTPUT_MM="${GAMESCOPE_FAKE_OUTPUT_MM:-177x100}"
 if [[ "$MANGOAPP" != 1 ]]; then
@@ -312,7 +316,7 @@ GAMESCOPE_ARGS=(
   --backend drm
   --prefer-output "$OUTPUT"
 )
-if [[ "$IS_ODIN3" != 1 ]]; then
+if [[ "$GAMESCOPE_FORCE_INTERNAL" == 1 ]]; then
   GAMESCOPE_ARGS+=(--force-internal)
 fi
 GAMESCOPE_ARGS+=(

@@ -1129,30 +1129,31 @@ static uint32_t connector_mode_area( gamescope::CDRMConnector *pConnector )
 	return uint32_t( pModeConnector->modes[0].hdisplay ) * uint32_t( pModeConnector->modes[0].vdisplay );
 }
 
+// External screens (DP over USB-C, HDMI) only stay out with --force-internal
+// / GAMESCOPE_FORCE_INTERNAL=1 (or Steam's own "use the internal display"
+// switch). Otherwise a connected monitor takes over, as on the Deck.
 static bool drm_skip_external_connectors( struct drm_t *drm )
 {
 	if ( env_to_bool( getenv( "GAMESCOPE_ALLOW_HDMI" ) ) || env_to_bool( getenv( "GAMESCOPE_ALLOW_EXTERNAL" ) ) )
 		return false;
-	if ( g_bForceInternal )
-		return true;
-	for ( auto &iter : drm->connectors )
-	{
-		gamescope::CDRMConnector *pConnector = &iter.second;
-		if ( pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL &&
-			 pConnector->GetModeConnector()->connection == DRM_MODE_CONNECTED )
-			return true;
-	}
-	return false;
+	return g_bForceInternal;
 }
 
 static bool connector_better_than( struct drm_t *drm, gamescope::CDRMConnector *pCandidate, gamescope::CDRMConnector *pBest )
 {
+	// A monitor with modes beats the panel (--prefer-output names the panel,
+	// so this goes first). One that reports connected without any mode (a
+	// USB-C dock or adapter with nothing behind it) never takes the screen.
+	if ( pCandidate->GetScreenType() != pBest->GetScreenType() )
+	{
+		gamescope::CDRMConnector *pExternal = pCandidate->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL ? pCandidate : pBest;
+		const bool bExternalUsable = pExternal->GetModeConnector()->count_modes > 0;
+		return ( pCandidate == pExternal ) == bExternalUsable;
+	}
 	const int nCandidatePriority = get_connector_priority( drm, pCandidate->GetName() );
 	const int nBestPriority = get_connector_priority( drm, pBest->GetName() );
 	if ( nCandidatePriority != nBestPriority )
 		return nCandidatePriority < nBestPriority;
-	if ( pCandidate->GetScreenType() != pBest->GetScreenType() )
-		return pCandidate->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
 	return connector_mode_area( pCandidate ) > connector_mode_area( pBest );
 }
 
