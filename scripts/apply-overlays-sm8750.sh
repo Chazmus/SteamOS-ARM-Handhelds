@@ -507,6 +507,9 @@ cat <<'UNIT' >"$R/etc/systemd/system/sm8750-audio-setup.service"
 [Unit]
 Description=AYN Odin 3 Audio Setup
 After=sound.target
+# Its card match (SM8750) also takes the Legion Y700 Gen 4's card, which has
+# its own profile and no Odin 3 routes.
+ConditionFirmware=!device-tree-compatible(lenovo,elden)
 
 [Service]
 Type=oneshot

@@ -63,4 +63,39 @@ CalibrationMatrix=1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
 [Libinput][0][0][NVTCapacitivePen]
 CalibrationMatrix=1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
 KCM
+# The cameras have no working driver here (/dev/video* fail with ENOMEM) and
+# WirePlumber's v4l2 hook never completes on them, which stalls its event
+# queue: PipeWire stops answering from boot, so Steam's menus have no sound,
+# games freeze until it does, the volume keys do nothing and Desktop Mode's
+# settings hang. Same as the Gen 3. A profile can't be scoped to a device, so
+# a unit gated on the tablet puts the override into /etc.
+install -Dm0644 /dev/stdin "$R/usr/share/steamos-arm/elden/52-elden.conf" <<'CONF'
+# Lenovo Legion Y700 Gen 4 (steamos-arm-elden-setup.service): the cameras
+# stall WirePlumber, and Game Mode has no xdg-desktop-portal.
+wireplumber.profiles = {
+  main = {
+    monitor.v4l2 = disabled
+    monitor.libcamera = disabled
+    support.portal-permissionstore = disabled
+  }
+}
+CONF
+install -Dm0644 /dev/stdin "$R/usr/lib/systemd/system/steamos-arm-elden-setup.service" <<'UNIT'
+[Unit]
+Description=Lenovo Legion Y700 Gen 4: audio server settings for this tablet
+ConditionFirmware=device-tree-compatible(lenovo,elden)
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/install -Dm0644 /usr/share/steamos-arm/elden/52-elden.conf /etc/wireplumber/wireplumber.conf.d/52-elden.conf
+
+[Install]
+WantedBy=sysinit.target
+UNIT
+mkdir -p "$R/usr/lib/systemd/system/sysinit.target.wants"
+ln -sfn ../steamos-arm-elden-setup.service "$R/usr/lib/systemd/system/sysinit.target.wants/steamos-arm-elden-setup.service"
 echo "[elden] firmware manifest, topology and audio profile installed"

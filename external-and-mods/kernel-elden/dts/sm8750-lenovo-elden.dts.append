@@ -10,3 +10,26 @@
 &usb {
 	role-switch-default-mode = "host";
 };
+
+/*
+ * The GPU only slowed down at 105 C (the SoC's own junction limit), so in a
+ * game it sat at 99-101 C and the back of the tablet got uncomfortably hot.
+ * Android keeps it far cooler with skin sensors this tree doesn't have, so
+ * start throttling the GPU at 90 C instead.
+ */
+&gpuss0_alert0 { temperature = <90000>; };
+&gpuss0_passive { temperature = <90000>; };
+&gpuss1_alert0 { temperature = <90000>; };
+&gpuss1_passive { temperature = <90000>; };
+&gpuss2_alert0 { temperature = <90000>; };
+&gpuss2_passive { temperature = <90000>; };
+&gpuss3_alert0 { temperature = <90000>; };
+&gpuss3_passive { temperature = <90000>; };
+&gpuss4_alert0 { temperature = <90000>; };
+&gpuss4_passive { temperature = <90000>; };
+&gpuss5_alert0 { temperature = <90000>; };
+&gpuss5_passive { temperature = <90000>; };
+&gpuss6_alert0 { temperature = <90000>; };
+&gpuss6_passive { temperature = <90000>; };
+&gpuss7_alert0 { temperature = <90000>; };
+&gpuss7_passive { temperature = <90000>; };
