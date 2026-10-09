@@ -65,8 +65,27 @@ for b in a.bases:
         bases.append({k: e['f'][4] for k, e in base['inventory'].items() if 'f' in e})
     else:                                           # a release's installed.json
         bases.append({k: v[2] for k, v in base['files'].items()})
+
+
+def stale_pyc(key):
+    """A .pyc older than its source: Python rewrites it on the device the
+    first time that module is imported as root (the UFS installer's, in 1.3.0),
+    and an updater from before drop_stale_pycache refuses the delta over it."""
+    parts = key.split('/')
+    if len(parts) < 3 or parts[-2] != '__pycache__' or not key.endswith('.pyc'):
+        return False
+    src = base_of('/'.join(parts[:-2] + [parts[-1].split('.')[0] + '.py']))
+    try:
+        head = base_of(key).read_bytes()[:16]
+        st = src.stat()
+    except OSError:
+        return False
+    flags, mtime, size = (int.from_bytes(head[i:i + 4], 'little') for i in (4, 8, 12))
+    return flags == 0 and (mtime != int(st.st_mtime) & 0xFFFFFFFF or size != st.st_size & 0xFFFFFFFF)
+
+
 blobs = sorted({e['f'][4] for k, e in inventory.items() if 'f' in e and (
-    not bases or any(m.get(k) != e['f'][4] for m in bases))})
+    not bases or any(m.get(k) != e['f'][4] for m in bases) or stale_pyc(k))})
 
 with tempfile.TemporaryDirectory(prefix='sau-', dir=output.parent) as temp:
     stage = Path(temp)
