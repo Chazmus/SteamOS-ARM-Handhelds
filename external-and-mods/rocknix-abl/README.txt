@@ -9,13 +9,12 @@ or newer.
 You need Android's "run script as root" option (in the device's settings).
 
 1. In Android, copy this whole rocknix_abl folder from the microSD card's
-   BOOT drive to Android's internal storage.
-2. Open the folder for your chip: @SOC@. Don't use another chip's folder;
-   the scripts check and refuse, but don't rely on that.
-3. Run flash_abl.sh as root. It first saves your current ABL as abl_a.img
-   and abl_b.img in the same folder, then writes the new one to both slots
-   and checks it. Copy the two .img files to a PC and keep them.
-4. Restart holding Volume Down. In the menu (Volume to move, Power to
+   BOOT drive to the top of Android's internal storage, so it ends up as
+   /sdcard/rocknix_abl (the scripts look for it there).
+2. Run flash_abl.sh as root. It first saves your current ABL as abl_a.img
+   and abl_b.img in the same folder, then writes ROCKNIX ABL to both slots.
+   Copy the two .img files to a PC and keep them.
+3. Restart holding Volume Down. In the menu (Volume to move, Power to
    select): set your device model, choose Linux as the boot mode, Start.
 
 To go back to the ABL you had: run restore_abl.sh as root from the same

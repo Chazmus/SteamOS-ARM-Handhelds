@@ -1,7 +1,7 @@
 #!/bin/bash
 # stage-rocknix-abl.sh BOOT_DIR SOC
 # Put ROCKNIX ABL for SOC (sm8550, sm8650, sm8750) and its flash/backup/
-# restore scripts into BOOT_DIR/rocknix_abl/<SOC>/, from the release pinned
+# restore scripts into BOOT_DIR/rocknix_abl/, from the release pinned
 # in external-and-mods/rocknix-abl/release.env. The download is cached in
 # $STEAMOS_WORK/cache and every file is checked against the pinned hashes.
 set -euo pipefail
@@ -36,15 +36,20 @@ elf=$(find "$tmp" -name "abl_signed-$soc.elf" | head -1)
 [[ -f $elf ]] || die "abl_signed-$soc.elf not in the release"
 [[ "$(sha256sum "$elf" | cut -d' ' -f1)" == "$want" ]] || die "abl_signed-$soc.elf hash mismatch"
 
-out=$BOOT/rocknix_abl/$soc
+# Flat, like ROCKNIX's own image: users copy the folder to /sdcard and the
+# scripts use /sdcard/rocknix_abl directly. Android's "run script as root"
+# runs them with a bare shell, where the earlier scripts' checks ($0, id,
+# getprop) failed and nothing was written.
+out=$BOOT/rocknix_abl
+rm -rf "$out"
 mkdir -p "$out"
 install -m0644 "$elf" "$out/abl_signed-$soc.elf"
 echo "$want  abl_signed-$soc.elf" > "$out/abl_signed-$soc.elf.sha256"
 fill() { sed -e "s|@SOC@|$soc|g" -e "s|@PLATFORM@|$platform|g" -e "s|@MODELS@|$models|g" \
              -e "s|@VERSION@|$ABL_VERSION|g" -e "s|@DEVICES@|$devices|g"; }
 for s in flash_abl backup_abl restore_abl; do
-  cat "$SRC/abl-common.sh" "$SRC/$s.sh" | fill > "$out/$s.sh"
+  fill < "$SRC/$s.sh" > "$out/$s.sh"
 done
-fill < "$SRC/README.txt" | sed 's/$/\r/' > "$BOOT/rocknix_abl/README.txt"
+fill < "$SRC/README.txt" | sed 's/$/\r/' > "$out/README.txt"
 grep -q '@' "$out"/*.sh && die "unfilled placeholder in the scripts"
 echo "ROCKNIX ABL $ABL_VERSION for $soc staged in $out"
