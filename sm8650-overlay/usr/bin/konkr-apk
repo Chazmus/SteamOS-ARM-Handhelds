@@ -92,6 +92,16 @@ patch("liblepton/mounting.sh",
       '    if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" && -n "$(get_app_id)" ]]; then\n'
       '        PERSISTENT_DATA_PATH=')
 
+# Lepton removes the context's data overlay on every exit, and the shared
+# Android's overlay is its /data: every stop (idle, restart, shutdown) wiped
+# installed apps and the Google sign-in. Keep it unless the cleanup is wanted.
+patch("liblepton/liblepton.sh",
+      '    if [[ -n "${LEPTON_PREFIX:-}" ]]; then\n'
+      '        prepare_baked_data_for_removal\n',
+      '    if [[ -n "${LEPTON_PREFIX:-}" ]]; then\n'
+      '        # konkr-apk: keep the shared Android\'s /data\n'
+      '        [[ "${LEPTON_NO_CLEANUP:-false}" != "false" ]] || prepare_baked_data_for_removal\n')
+
 # Gamepads: the host's live /dev/input, which konkr-apk links pads from
 # (Waydroid only forwards touch/keyboard/mouse from Wayland). Steam
 # recreates its virtual pads, so per-node mounts would go stale.
@@ -117,46 +127,26 @@ patch("liblepton/mounting.sh",
 
 # gamescope gives the shared Android window to the Steam title only when its
 # Wayland client sits in konkr-android.service's cgroup. Rootless podman
-# moves the container into its own libpod scope; split keeps it under the
-# service (which delegates its cgroup for this).
+# moves the container into its own libpod scope; without cgroups of its own
+# it stays in the service's.
 patch("liblepton/mounting.sh",
-      '    # namespaces\n',
-      '    # namespaces\n'
+      '    podman_cmdline --pid=private --ipc=private --uts=private\n',
       '    # konkr-apk: container stays in konkr-android.service\n'
       '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-      '        podman_cmdline --cgroups=split\n'
-      '    fi\n')
+      '        podman_cmdline --cgroups=disabled\n'
+      '    fi\n'
+      '    podman_cmdline --pid=private --ipc=private --uts=private\n')
 
 # Extra rootfs overlay (restored framework services, Play Store); Steam's
 # own Android games keep Valve's image.
-patch("liblepton/mounting.sh",
-      '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
-      '    # konkr-apk: extra overlay\n'
-      '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n')
-# Lepton 3.0.5 quotes the two names.
 patch("liblepton/mounting.sh",
       '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}"; do\n',
       '    # konkr-apk: extra overlay\n'
       '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${KONKR_LEPTON_OVERLAY:-}; do\n')
 
-# Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
+# Lepton writes model/manufacturer into its runtime waydroid.prop on
 # every start. Match the certified identity from props_overlay, or Google
 # sees a Pixel 5 fingerprint on a "Valve Lepton" and refuses it again.
-patch("liblepton/properties.sh",
-      '    props_echo "ro.product.brand=Steam Frame"\n'
-      '    props_echo "ro.product.model=Lepton"\n'
-      '    props_echo "ro.product.manufacturer=Valve"\n',
-      '    # konkr-apk: certified identity\n'
-      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
-      '        props_echo "ro.product.brand=google"\n'
-      '        props_echo "ro.product.model=Pixel 5"\n'
-      '        props_echo "ro.product.manufacturer=Google"\n'
-      '    else\n'
-      '    props_echo "ro.product.brand=Steam Frame"\n'
-      '    props_echo "ro.product.model=Lepton"\n'
-      '    props_echo "ro.product.manufacturer=Valve"\n'
-      '    fi\n')
-# Lepton 3.0.5 no longer writes the brand.
 patch("liblepton/properties.sh",
       '    props_echo "ro.product.model=Lepton"\n'
       '    props_echo "ro.product.manufacturer=Valve"\n',
@@ -326,8 +316,9 @@ overlay_dirs() {
 # --- titles -----------------------------------------------------------------
 
 add_title() {
-  local pkg="$1" path apk meta label activity desktop icon="${SYS}/icons/${pkg}.png"
-  path="$(asx "pm path $pkg" | sed -n 's/^package://p' | grep -m1 '\.apk$' || true)"
+  local pkg="$1" paths path apk meta label activity desktop icon="${SYS}/icons/${pkg}.png"
+  paths="$(asx "pm path $pkg" | sed -n 's/^package://p' | grep '\.apk$' || true)"
+  path="$(head -n1 <<<"$paths")"
   [[ -n "$path" ]] || return 0
   # Read it through Android: installs aren't reliably visible in the host
   # side of Lepton's /data overlay.
@@ -335,8 +326,15 @@ add_title() {
   asx "cat '$path'" >"$apk" || true
   mkdir -p "${SYS}/icons"
   mapfile -t meta < <(python3 "$APK_INFO" "$apk" "$icon" 2>/dev/null || true)
+  # Split apps (Chrome) can keep the icon in a split.
+  while [[ ! -f "$icon" ]] && read -r path; do
+    asx "cat '$path'" >"$apk" || continue
+    python3 "$APK_INFO" "$apk" "$icon" >/dev/null 2>&1 || true
+  done < <(tail -n +2 <<<"$paths")
   rm -f "$apk"
   activity="${meta[2]:-}"
+  # The launcher entry can live outside the base manifest too: ask Android.
+  [[ -n "$activity" ]] || activity="$(asx "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER $pkg" | tail -n1 | grep / || true)"
   [[ -n "$activity" ]] || return 0   # nothing to open (services, libraries)
   label="${meta[1]:-$pkg}"
   [[ -f "$icon" ]] || icon=android-package-archive
@@ -531,16 +529,18 @@ cmd_install() (
   ensure_android
   apks=("$tmp/base.apk")
   for f in "$tmp"/*.apk; do [[ "$f" == "$tmp/base.apk" ]] || apks+=("$f"); done
-  # Stream into a PackageInstaller session (works for splits too).
+  # Stream into a PackageInstaller session (works for splits too). Through
+  # cmd_real: Lepton's cmd wrapper treats every install as its one Steam app
+  # and moves it onto a per-launch overlay, so it was gone after a restart.
   size=0
   for f in "${apks[@]}"; do size=$((size + $(stat -c %s "$f"))); done
-  sid="$(asx "pm install-create -r -g -S $size" | sed -n 's/.*\[\([0-9]*\)\].*/\1/p' || true)"
+  sid="$(asx "cmd_real package install-create -r -g -S $size" | sed -n 's/.*\[\([0-9]*\)\].*/\1/p' || true)"
   [[ -n "$sid" ]] || die "Android refused to install $(basename "$src")"
   for f in "${apks[@]}"; do
-    asx "pm install-write -S $(stat -c %s "$f") $sid $((n++)).apk -" <"$f" >/dev/null ||
+    asx "cmd_real package install-write -S $(stat -c %s "$f") $sid $((n++)).apk -" <"$f" >/dev/null ||
       die "copying $(basename "$src") into Android failed"
   done
-  asx "pm install-commit $sid" | grep -q Success || die "Android couldn't install $(basename "$src")"
+  asx "cmd_real package install-commit $sid" | grep -q Success || die "Android couldn't install $(basename "$src")"
   if [[ -d "$tmp/obb" ]]; then
     asx "mkdir -p /sdcard/Android/obb/$pkg" || true
     for f in "$tmp"/obb/*.obb; do
