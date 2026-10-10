@@ -23,7 +23,7 @@ except (OSError, ValueError):
 if not re.fullmatch(r"\d+(?:\.\d+)*", version or ""):
     sys.exit(0)                           # images before v1.3 don't record their release
 
-want = {"PRETTY_NAME": f'"SteamOS ARM {version}"', "VERSION": f'"{version}"'}
+want = {"PRETTY_NAME": f'"Unofficial SteamOS ARM {version}"', "VERSION": f'"{version}"'}
 for rel in ("etc/os-release", "usr/lib/os-release"):
     path = root / rel
     if not path.is_file() or (rel == "usr/lib/os-release" and str(root) == "/"):
