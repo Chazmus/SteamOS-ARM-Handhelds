@@ -121,6 +121,11 @@ patch("liblepton/mounting.sh",
       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY}; do\n',
       '    # konkr-apk: extra overlay\n'
       '    for OVERLAY in ${LEPTON_OVERLAY} ${GUESTOS_OVERLAY} ${KONKR_LEPTON_OVERLAY:-}; do\n')
+# Lepton 3.0.5 quotes the two names.
+patch("liblepton/mounting.sh",
+      '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}"; do\n',
+      '    # konkr-apk: extra overlay\n'
+      '    for OVERLAY in "${LEPTON_OVERLAY}" "${GUESTOS_OVERLAY}" ${KONKR_LEPTON_OVERLAY:-}; do\n')
 
 # Lepton writes brand/model/manufacturer into its runtime waydroid.prop on
 # every start. Match the certified identity from props_overlay, or Google
