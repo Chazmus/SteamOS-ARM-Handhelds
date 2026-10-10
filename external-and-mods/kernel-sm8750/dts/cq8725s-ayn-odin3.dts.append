@@ -56,3 +56,23 @@
 &display_panel {
 	steamos-arm,dither-8bpc;
 };
+
+/*
+ * The Wi-Fi/BT power unit's supplies stay on across sleep: turning them back
+ * on at resume could hang the SoC, and Wi-Fi didn't come back without them.
+ */
+&vreg_s4d_0p85 {
+	regulator-always-on;
+};
+
+&vreg_s5f_0p85 {
+	regulator-always-on;
+};
+
+&vreg_l2f_1p2 {
+	regulator-always-on;
+};
+
+&vreg_l3f_1p8 {
+	regulator-always-on;
+};

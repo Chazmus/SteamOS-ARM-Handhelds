@@ -46,3 +46,22 @@
 		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 	};
 };
+
+/*
+ * The RTC offset (the PMIC counter runs from its own power-on, not 1970) was
+ * meant to come from a UEFI variable these boards can't reach, so the clock
+ * started wrong on every boot until the network set it. Keep it in a PMIC
+ * SDAM cell instead, like the Qualcomm laptops do: the kernel writes it when
+ * the time is set and reads it back at boot, power-off included.
+ */
+&pmk8550_rtc {
+	/delete-property/ qcom,uefi-rtc-info;
+	nvmem-cells = <&rtc_offset>;
+	nvmem-cell-names = "offset";
+};
+
+&pmk8550_sdam_2 {
+	rtc_offset: rtc-offset@bc {
+		reg = <0xbc 0x4>;
+	};
+};
