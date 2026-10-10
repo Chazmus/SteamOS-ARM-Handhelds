@@ -11,6 +11,9 @@ Updates come from the project's GitHub releases, a microSD card or USB drive
 Downloads folder. A package bigger than GitHub's 2 GB limit comes in numbered
 parts (.sau.001, .sau.002, ...) with one .sau.sha256 for the whole package;
 the parts are joined and checked before staging.
+A release can also carry steamos-arm-<soc>-<version>-full.sau, every file, for
+a system the delta doesn't fit ("this system differs"). The agent falls back
+to it by itself; agents before 1.3.3 don't see it.
 Packages are signed; konkr-update refuses one whose signature doesn't verify.
 `apply` runs as root (steamos-arm-update.service) and reports its progress in
 /run/steamos-arm-update for steamos-update to pass on to Steam.
@@ -31,8 +34,8 @@ REPO = "hashtagbasit/SteamOS-ARM-Port"
 KONKR_UPDATE = "/usr/share/konkr-update/konkr-update.py"
 RUN = Path("/run/steamos-arm-update")
 CACHE = Path("/home/.steamos-arm-update")
-NAME = re.compile(r"^steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)\.sau$")
-PART = re.compile(r"^(?P<base>steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)\.sau)\.(?P<n>\d{3})$")
+NAME = re.compile(r"^steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)(?P<full>-full)?\.sau$")
+PART = re.compile(r"^(?P<base>steamos-arm-(?P<soc>sm\d{4})-(?P<version>\d+(?:\.\d+)*)(?:-full)?\.sau)\.(?P<n>\d{3})$")
 
 
 def vkey(v):
@@ -73,13 +76,15 @@ def github_candidates(soc):
             m = NAME.match(name)
             if m and m["soc"] == soc:
                 sha = assets.get(name + ".sha256")
-                out.append({"version": m["version"], "source": "github", "url": a["browser_download_url"],
+                out.append({"version": m["version"], "full": bool(m["full"]), "source": "github",
+                            "url": a["browser_download_url"],
                             "size": a.get("size", 0), "sha256_url": sha["browser_download_url"] if sha else ""})
         for base, parts in split_sets(assets, soc).items():
             sha = assets.get(base + ".sha256")
             if not sha:
                 continue                  # parts can't be checked as a whole: skip them
-            out.append({"version": NAME.match(base)["version"], "source": "github",
+            out.append({"version": NAME.match(base)["version"], "full": bool(NAME.match(base)["full"]),
+                        "source": "github",
                         "parts": [assets[n]["browser_download_url"] for n in parts],
                         "part_sizes": [assets[n].get("size", 0) for n in parts],
                         "size": sum(assets[n].get("size", 0) for n in parts),
@@ -98,13 +103,14 @@ def media_candidates(soc):
             m = NAME.match(name)
             if m and m["soc"] == soc:
                 path = os.path.join(d, name)
-                out.append({"version": m["version"], "source": "drive", "path": path,
+                out.append({"version": m["version"], "full": bool(m["full"]), "source": "drive", "path": path,
                             "size": os.path.getsize(path)})
         for base, parts in split_sets(names, soc).items():
             if base in names:
                 continue                  # already joined next to its parts
             paths = [os.path.join(d, n) for n in parts]
-            out.append({"version": NAME.match(base)["version"], "source": "drive",
+            out.append({"version": NAME.match(base)["version"], "full": bool(NAME.match(base)["full"]),
+                        "source": "drive",
                         "path": os.path.join(d, base), "parts": paths,
                         "size": sum(os.path.getsize(p) for p in paths)})
     return out
@@ -117,9 +123,16 @@ def newest(installed, soc):
     except Exception as exc:              # offline: drives still count
         print(f"update-agent: GitHub: {exc}", file=sys.stderr)
     newer = [c for c in found if vkey(c["version"]) > vkey(installed)]
-    # a drive wins over a download of the same version
-    newer.sort(key=lambda c: (vkey(c["version"]), c["source"] == "drive"))
-    return newer[-1] if newer else {}
+    # a drive wins over a download of the same version, and the smaller delta
+    # over the full package, which stays as the fallback
+    newer.sort(key=lambda c: (vkey(c["version"]), c["source"] == "drive", not c.get("full")))
+    if not newer:
+        return {}
+    best = dict(newer[-1])
+    full = [c for c in newer if c["version"] == best["version"] and c.get("full")]
+    if not best.get("full") and full:
+        best["fallback"] = full[-1]
+    return best
 
 
 def check():
@@ -181,6 +194,51 @@ def join(paths, fh):
             shutil.copyfileobj(src, fh, 4 << 20)
 
 
+def download(cand, pkg, start, span):
+    """Copy or download cand to pkg and check it; returns an error or ''."""
+    if cand["source"] == "drive":
+        if cand.get("parts"):
+            with open(pkg, "wb") as fh:
+                join(cand["parts"], fh)
+        else:
+            shutil.copyfile(cand["path"], pkg)
+        sha_file = Path(cand["path"] + ".sha256")
+        want = sha_file.read_text().split()[0] if sha_file.exists() else ""
+        if cand.get("parts") and not want:
+            return "split update without its .sha256 file"
+    else:
+        with open(pkg, "wb") as fh:
+            urls = cand.get("parts") or [cand["url"]]
+            sizes = cand.get("part_sizes") or [cand.get("size", 0)]
+            for i, (url, size) in enumerate(zip(urls, sizes)):
+                fetch(url, fh, size, start + span * i / len(urls), span / len(urls))
+        if cand.get("parts") and not cand.get("sha256_url"):
+            return "split update without its .sha256 file"
+        want = ""
+        if cand.get("sha256_url"):
+            with urllib.request.urlopen(cand["sha256_url"], timeout=30) as r:
+                want = r.read().decode().split()[0]
+    progress(start + span + 2, "verify")
+    if want:
+        h = hashlib.sha256()
+        with open(pkg, "rb") as fh:
+            for chunk in iter(lambda: fh.read(4 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != want:
+            return "the download is damaged (checksum mismatch)"
+    return ""
+
+
+def stage(pkg):
+    """konkr-update checks the signature, the device and the space, and backs
+    up what it changes before anything is touched. Returns an error or ''."""
+    out = subprocess.run([sys.executable, KONKR_UPDATE, "stage", str(pkg)], capture_output=True, text=True)
+    if out.returncode == 0:
+        return ""
+    text = (out.stderr or out.stdout).strip()
+    return text.splitlines()[-1] if text else "staging failed"
+
+
 def apply():
     for f in ("progress", "result"):
         (RUN / f).unlink(missing_ok=True)
@@ -192,44 +250,26 @@ def apply():
         return result(7, "no update available")
     CACHE.mkdir(mode=0o700, exist_ok=True)
     pkg = CACHE / f"steamos-arm-{st['soc']}-{cand['version']}.sau"
+    fallback = cand.get("fallback")
     progress(0, "download")
     try:
-        if cand["source"] == "drive":
-            if cand.get("parts"):
-                with open(pkg, "wb") as fh:
-                    join(cand["parts"], fh)
-            else:
-                shutil.copyfile(cand["path"], pkg)
-            sha_file = Path(cand["path"] + ".sha256")
-            want = sha_file.read_text().split()[0] if sha_file.exists() else ""
-            if cand.get("parts") and not want:
-                return result(1, "split update without its .sha256 file")
-        else:
-            with open(pkg, "wb") as fh:
-                urls = cand.get("parts") or [cand["url"]]
-                sizes = cand.get("part_sizes") or [cand.get("size", 0)]
-                for i, (url, size) in enumerate(zip(urls, sizes)):
-                    fetch(url, fh, size, 70 * i / len(urls), 70 / len(urls))
-            if cand.get("parts") and not cand.get("sha256_url"):
-                return result(1, "split update without its .sha256 file")
-            want = ""
-            if cand.get("sha256_url"):
-                with urllib.request.urlopen(cand["sha256_url"], timeout=30) as r:
-                    want = r.read().decode().split()[0]
-        progress(72, "verify")
-        if want:
-            h = hashlib.sha256()
-            with open(pkg, "rb") as fh:
-                for chunk in iter(lambda: fh.read(4 << 20), b""):
-                    h.update(chunk)
-            if h.hexdigest() != want:
-                return result(1, "the download is damaged (checksum mismatch)")
-        progress(75, "stage")
-        # konkr-update checks the signature, the device and the space, and
-        # backs up what it changes before anything is touched
-        out = subprocess.run([sys.executable, KONKR_UPDATE, "stage", str(pkg)], capture_output=True, text=True)
-        if out.returncode != 0:
-            return result(1, (out.stderr or out.stdout).strip().splitlines()[-1] if (out.stderr or out.stdout) else "staging failed")
+        err = download(cand, pkg, 0, 35 if fallback else 70)
+        if err:
+            return result(1, err)
+        progress(40 if fallback else 75, "stage")
+        err = stage(pkg)
+        if err and "differs" in err and fallback:
+            # files changed on this system that the delta has no contents for:
+            # the full package has all of them
+            print(f"update-agent: {err}; trying the full package", file=sys.stderr)
+            pkg.unlink(missing_ok=True)
+            progress(42, "download")
+            err = download(fallback, pkg, 42, 40)
+            if not err:
+                progress(85, "stage")
+                err = stage(pkg)
+        if err:
+            return result(1, err)
         progress(100, "done")
         return result(0, f"update {cand['version']} staged: restart to install it")
     except Exception as exc:
