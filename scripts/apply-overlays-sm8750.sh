@@ -684,6 +684,14 @@ install_file "$OVL/usr/lib/systemd/system/steamos-arm-os-release.service" \
   "$R/usr/lib/systemd/system/steamos-arm-os-release.service" 0644
 ln -sfn ../steamos-arm-os-release.service \
   "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-os-release.service"
+# Panel refresh calibration (RP6, Odin 3): the tool, and the unit that puts
+# the saved frame lengths back at boot.
+install_file "$OVL/usr/lib/steamos-arm/panel-calibrate" "$R/usr/lib/steamos-arm/panel-calibrate" 0755
+ln -sfn ../lib/steamos-arm/panel-calibrate "$R/usr/bin/steamos-arm-panel-calibrate"
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-panel-calibration.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-panel-calibration.service" 0644
+ln -sfn ../steamos-arm-panel-calibration.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-panel-calibration.service"
 # The updater itself (the other images get it with the vendor apps).
 install -d -m0755 "$R/usr/share/konkr-update"
 install -m0644 "$ROOT/external-and-mods/konkr-update/konkr-update.py" "$R/usr/share/konkr-update/konkr-update.py"

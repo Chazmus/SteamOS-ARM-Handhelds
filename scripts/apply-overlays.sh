@@ -390,6 +390,14 @@ install_file "$OVL/usr/lib/systemd/system/steamos-arm-os-release.service" \
   "$R/usr/lib/systemd/system/steamos-arm-os-release.service" 0644
 ln -sfn ../steamos-arm-os-release.service \
   "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-os-release.service"
+# Panel refresh calibration (RP6, Odin 3): the tool, and the unit that puts
+# the saved frame lengths back at boot.
+install_file "$OVL/usr/lib/steamos-arm/panel-calibrate" "$R/usr/lib/steamos-arm/panel-calibrate" 0755
+ln -sfn ../lib/steamos-arm/panel-calibrate "$R/usr/bin/steamos-arm-panel-calibrate"
+install_file "$OVL/usr/lib/systemd/system/steamos-arm-panel-calibration.service" \
+  "$R/usr/lib/systemd/system/steamos-arm-panel-calibration.service" 0644
+ln -sfn ../steamos-arm-panel-calibration.service \
+  "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-panel-calibration.service"
 # Store plugins that break on the Steam client we ship, fixed where Decky
 # installs them (SteamGridDB 1.7.1's footer glyph lookup for now).
 install_file "$OVL/usr/lib/steamos-arm/decky-plugin-fixes" "$R/usr/lib/steamos-arm/decky-plugin-fixes" 0755
