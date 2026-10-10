@@ -1,6 +1,6 @@
 #!/bin/bash
 # stage-rocknix-abl.sh BOOT_DIR SOC
-# Put ROCKNIX ABL for SOC (sm8550, sm8650, sm8750) and its flash/backup/
+# Put ROCKNIX ABL for SOC (sm8250, sm8550, sm8650, sm8750) and its flash/backup/
 # restore scripts into BOOT_DIR/rocknix_abl/, from the release pinned
 # in external-and-mods/rocknix-abl/release.env. The download is cached in
 # $STEAMOS_WORK/cache and every file is checked against the pinned hashes.
@@ -13,6 +13,7 @@ SRC="$ROOT/external-and-mods/rocknix-abl"
 die() { echo "stage-rocknix-abl: $*" >&2; exit 1; }
 
 case $soc in
+  SM8250) platform=kona;      models="SM8250";          devices="Retroid Pocket 5 / Flip 2 / Mini / Mini V2, AYN Thor Lite, MANGMI Air Y Pro / Pocket Max, AYANEO Pocket MICRO 2" ;;
   SM8550) platform=kalama;    models="SM8550 QCS8550";  devices="AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova" ;;
   SM8650) platform=pineapple; models="SM8650";          devices="KONKR Pocket FIT, AYANEO Pocket S2" ;;
   SM8750) platform=sun;       models="SM8750 CQ8725S";  devices="AYN Odin 3, KONKR Pocket FIT Elite" ;;

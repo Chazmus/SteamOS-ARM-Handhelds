@@ -25,7 +25,7 @@ import glob
 import os
 
 # Watts the TDP slider spans per chip; the top of the range means no limit.
-TDP_RANGE = {"sm8350": (3, 12), "sm8550": (4, 15), "sm8650": (4, 18), "sm8750": (5, 22)}
+TDP_RANGE = {"sm8250": (3, 10), "sm8350": (3, 12), "sm8550": (4, 15), "sm8650": (4, 18), "sm8750": (5, 22)}
 
 
 def _rd(path: str, default: str = "") -> str:

@@ -41,6 +41,7 @@ TRANSFORM = {"normal": "Normal", "upside-down": "Rotated180",
 # Second-panel touchscreens by model (same names gamescope-session ignores).
 SECONDARY_TOUCH = {
     "AYN Thor": "bottom_touchscreen",
+    "AYN Thor Lite": "bottom_touchscreen",
     "AYANEO Pocket DS": "Goodix Capacitive TouchScreen",
 }
 

@@ -823,11 +823,22 @@ for f in usr/lib/systemd/zram-generator.conf.d/60-steamos-arm-zram.conf \
 done
 IMG_OVL="${ROOT}/sm8550-image-overlay"
 mapfile -t _img_files < <(cd "$IMG_OVL" && find usr -type f)
-if [[ "${SOC:-sm8650}" == sm8550 ]]; then
+# The 865 image takes them too (same UFS, Frame CPU masks, mic loopback).
+if [[ "${SOC:-sm8650}" == sm8550 || "${SOC:-sm8650}" == sm8250 ]]; then
   log "== SM8550 image-only files (${#_img_files[@]})"
   for f in "${_img_files[@]}"; do install -D -m0644 "$IMG_OVL/$f" "$R/$f"; done
 else
   for f in "${_img_files[@]}"; do rm -f "$R/$f"; done
+fi
+# 865 (SM8250) handhelds: audio, controller and device files, only on that
+# image (and taken off a reused rootfs by the others).
+S8250_OVL="${ROOT}/sm8250-overlay"
+mapfile -t _s8250_files < <(cd "$S8250_OVL" && find etc usr -type f)
+if [[ "${SOC:-sm8650}" == sm8250 ]]; then
+  log "== SM8250 files (${#_s8250_files[@]})"
+  for f in "${_s8250_files[@]}"; do install -D -m0644 "$S8250_OVL/$f" "$R/$f"; done
+else
+  for f in "${_s8250_files[@]}"; do rm -f "$R/$f"; done
 fi
 # Log collector behind the BOOT "debug" file, also for kernels that don't
 # run our initramfs (it is the same script our initramfs installs).

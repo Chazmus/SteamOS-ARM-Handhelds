@@ -37,10 +37,11 @@ fi
 
 export XCURSOR_THEME="${XCURSOR_THEME:-steam}"
 
-# SM8550: GL through zink, else Xwayland has no glamor/GLX. mangoapp was
-# off here because it needs GLX; with zink it has it again (the mangoapp
-# wrapper leaves it on the image's own A740 Turnip).
-if grep -aq "qcom,sm8550" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
+# SM8550 / SM8250: GL through zink, else Xwayland has no glamor/GLX. mangoapp
+# was off here because it needs GLX; with zink it has it again (the mangoapp
+# wrapper leaves it on the image's own Turnip). Both images carry our
+# Turnip-only Mesa, which has no native GL driver.
+if grep -aq -e "qcom,sm8550" -e "qcom,sm8250" /sys/firmware/devicetree/base/compatible 2>/dev/null; then
   export MESA_LOADER_DRIVER_OVERRIDE=zink
 fi
 
@@ -209,6 +210,12 @@ MIN_HZ=60
 MAX_HZ="$(/usr/lib/steamos/panel-modes --max "$OUTPUT" 2>/dev/null)"
 [[ "$MAX_HZ" =~ ^[0-9]+$ ]] || MAX_HZ=60
 (( MAX_HZ >= 60 )) || MAX_HZ=60
+# Retroid Pocket 5 / Flip 2 with the CH13726A OLED: 60 Hz only, the faster
+# modes its driver lists don't hold on these panels (the Visionox versions do
+# 120). Same limit as the other 865 Linux ports.
+case "$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)" in
+  "Retroid Pocket 5"|"Retroid Pocket Flip2") MAX_HZ=60; PANEL_60_ONLY=1 ;;
+esac
 # Start the Steam UI at 60 Hz: at 144 it redraws menus 144x/s, which roughly
 # doubles UI GPU/CPU load (heat, fan, sluggishness). Steam's refresh slider
 # (STEAM_DISPLAY_REFRESH_LIMITS) still reaches MAX_HZ per game.
@@ -219,6 +226,7 @@ REFRESH_HZ="${REFRESH_HZ:-60}"
 # 60,90,120,144 -> limits 30/60/90/120/144). Only a panel that lists a single
 # rate above 60 Hz gets the old 60-to-max range, so it still has a slider.
 PANEL_RATES="$(/usr/lib/steamos/panel-modes --rates "$OUTPUT" 2>/dev/null)"
+[[ -n "${PANEL_60_ONLY:-}" ]] && PANEL_RATES=60
 if [[ "$PANEL_RATES" =~ ^[0-9]+(,[0-9]+)+$ ]]; then
   export STEAM_DISPLAY_REFRESH_LIMITS="${STEAM_DISPLAY_REFRESH_LIMITS:-${PANEL_RATES}}"
 elif (( MAX_HZ > 60 )); then
@@ -239,6 +247,11 @@ case "$DEVICE_MODEL" in
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen,path:/1-0038/}"
     # Top panel is DSI-2 on dsi1 (ae96000), the bottom DSI-1 on dsi0 (ae94000),
     # same as Armada's Thor. Beta 7 had these the other way round.
+    TOP_BACKLIGHT=/sys/class/backlight/ae96000.dsi.0 ;;
+  "AYN Thor Lite")
+    # Same layout as the Thor on the 865: top panel on dsi1 (ae96000), the
+    # bottom one on dsi0 (ae94000), touchscreens labelled like ROCKNIX's Thor.
+    export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-bottom_touchscreen}"
     TOP_BACKLIGHT=/sys/class/backlight/ae96000.dsi.0 ;;
   "AYANEO Pocket DS")
     export GAMESCOPE_IGNORE_TOUCH="${GAMESCOPE_IGNORE_TOUCH:-Goodix Capacitive TouchScreen}"

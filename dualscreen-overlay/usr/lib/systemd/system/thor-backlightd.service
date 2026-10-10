@@ -1,9 +1,11 @@
 [Unit]
-Description=One brightness slider for both AYN Thor screens
+Description=One brightness slider for both AYN Thor / Thor Lite screens
 # Steam's Game Mode slider writes the first backlight it finds, the Thor's
 # bottom panel. This covers that file before Game Mode starts and drives
 # both panels from it (thor-backlightd explains the rest).
-ConditionFirmware=device-tree-compatible(ayn,thor)
+# Thor and Thor Lite (same panel layout).
+ConditionFirmware=|device-tree-compatible(ayn,thor)
+ConditionFirmware=|device-tree-compatible(ayn,thor-lite)
 After=systemd-udev-settle.service local-fs.target
 Before=display-manager.service graphical.target
 

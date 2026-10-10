@@ -60,7 +60,7 @@ APPS = HOME / "Applications"
 PLUGINS = HOME / "homebrew" / "plugins"
 DESKTOP_DIR = DATA / "applications"
 ICON_DIR = DATA / "icons" / "hicolor" / "256x256" / "apps"
-CHIPS = ("sm8350", "sm8550", "sm8650", "sm8750")
+CHIPS = ("sm8250", "sm8350", "sm8550", "sm8650", "sm8750")
 FEED_TTL_S = 900           # release feeds are asked at most every 15 minutes
 UA = "steamos-arm-hub/1 (+https://github.com/hashtagbasit)"
 FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -143,7 +143,7 @@ def device() -> dict:
 
 
 def chip_rank(chip: str) -> int:
-    return CHIPS.index(chip) if chip in CHIPS else 1
+    return CHIPS.index(chip if chip in CHIPS else "sm8550")
 
 
 def fits(when: dict | None, dev: dict) -> bool:

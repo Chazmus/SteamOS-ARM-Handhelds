@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Build a flashable SteamOS ARM image for one SoC (SOC=sm8650 default, or sm8550):
+# Build a flashable SteamOS ARM image for one SoC (SOC=sm8650 default, sm8550 or sm8250):
 #   sm8650: KONKR Pocket FIT / AYANEO Pocket S2
 #   sm8550: AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS /
 #           EVO / S 1K / S 2K, Retroid Pocket 6 / Nova
+#   sm8250: Retroid Pocket 5 / Flip 2 / Mini / Mini V2, AYN Thor Lite,
+#           MANGMI Air Y Pro / Pocket Max, AYANEO Pocket MICRO 2
 # The rootfs is shared; only the kernel on p1 (and its modules/firmware,
 # installed by apply-overlays) is per SoC.
 #   p1 vfat BOOT  — ABL KERNEL
@@ -30,14 +32,16 @@ case "$SOC" in
     else
       _kdef="${WORKDIR}/kernel-sm8550/output/current"
     fi ;;
-  *) echo "ERROR: unknown SOC=${SOC} (sm8650|sm8550)" >&2; exit 1 ;;
+  sm8250) _kdef="${WORKDIR}/kernel-sm8250/output/current" ;;
+  *) echo "ERROR: unknown SOC=${SOC} (sm8650|sm8550|sm8250)" >&2; exit 1 ;;
 esac
 # KOUT: this image's kernel. KERNEL_OUT (apply-overlays) may list several
 # kernels so the same rootfs carries every SoC's modules.
 KOUT="${IMAGE_KERNEL_OUT:-${_kdef}}"
 export KERNEL_OUT="${KERNEL_OUT:-${KOUT}}"
-# 8 Gen 2: our Mesa with the Adreno 740 fixes (scripts/build-mesa.sh).
-if [[ "$SOC" == sm8550 ]]; then
+# 8 Gen 2: our Mesa with the Adreno 740 fixes (scripts/build-mesa.sh). The
+# 865 (Adreno 650) takes the same build.
+if [[ "$SOC" == sm8550 || "$SOC" == sm8250 ]]; then
   export MESA_STACK="${MESA_STACK:-${WORKDIR}/mesa/out}"
 fi
 BOX64_SRC="${BOX64_SRC:-${MOD}/BOX64/box64}"
@@ -89,7 +93,7 @@ Usage: $0 [options]
   --image-only      Only pack the .img from the current rootfs
   --img PATH        Output image (default: ${IMG})
 
-Env: SOC (sm8650|sm8550) BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS
+Env: SOC (sm8650|sm8550|sm8250) BOOT_MIB ROOT_MIB HOME_MIB STEAMOS_SM8650_IMG STEAMOS_ROOTFS
      IMAGE_KERNEL_OUT (this image's kernel) KERNEL_OUT (kernels for the rootfs)
      empty ROOT_MIB/HOME_MIB = auto (tight pack; home grows on first boot)
 EOF
