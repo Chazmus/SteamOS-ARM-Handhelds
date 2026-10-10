@@ -1,0 +1,21 @@
+{
+  "file_format_version": "1.0.0",
+  "layer": {
+    "name": "VK_LAYER_LS_frame_generation_classic_arm64",
+    "type": "GLOBAL",
+    "api_version": "1.4.313",
+    "library_path": "/usr/lib/liblsfg-vk-classic-arm64.so",
+    "implementation_version": "1",
+    "description": "Lossless Scaling frame generation, lsfg-vk 1.x (aarch64)",
+    "functions": {
+      "vkGetInstanceProcAddr": "layer_vkGetInstanceProcAddr",
+      "vkGetDeviceProcAddr": "layer_vkGetDeviceProcAddr"
+    },
+    "enable_environment": {
+      "LSFG_CLASSIC": "1"
+    },
+    "disable_environment": {
+      "DISABLE_LSFG": "1"
+    }
+  }
+}

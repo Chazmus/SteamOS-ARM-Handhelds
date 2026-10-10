@@ -604,9 +604,22 @@ install_file "${ROOT}/sm8650-overlay/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/
 install_file "${ROOT}/sm8650-overlay/usr/lib/liblsfg-vk-layer-arm64.so.README" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README" 0644
 install_file "${ROOT}/sm8650-overlay/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation_arm64.json" \
   "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation_arm64.json" 0644
+# lsfg-vk 1.x next to it for the Frame Gen Classic plugin (see its README).
+for f in liblsfg-vk-classic-arm64.so liblsfg-vk-classic-arm64.so.README; do
+  install_file "${ROOT}/sm8650-overlay/usr/lib/$f" "$R/usr/lib/$f" 0644
+done
+install_file "${ROOT}/sm8650-overlay/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_classic_arm64.json" \
+  "$R/usr/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_classic_arm64.json" 0644
 mkdir -p "$R/usr/share/licenses"
-cp -r --no-preserve=mode,ownership "${ROOT}/sm8650-overlay/usr/share/licenses/lsfg-vk" "$R/usr/share/licenses/"
+cp -r --no-preserve=mode,ownership "${ROOT}/sm8650-overlay/usr/share/licenses/lsfg-vk" \
+  "${ROOT}/sm8650-overlay/usr/share/licenses/lsfg-vk-classic" "$R/usr/share/licenses/"
 rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
+# Frame Gen Classic (lsfg-vk 1.x) also goes in the system: updates can't
+# carry a new home plugin folder, so decky-plugin-fixes installs it from here.
+mkdir -p "$R/usr/share/steamos-arm/decky-plugins"
+rm -rf "$R/usr/share/steamos-arm/decky-plugins/decky-lsfg-vk-classic"
+cp -r --no-preserve=ownership "${MOD}/Decky/Plug-ins/homebrew/plugins/decky-lsfg-vk-classic" \
+  "$R/usr/share/steamos-arm/decky-plugins/"
 rm -f "$HOME_DST/.local/lib/liblsfg-vk.so" \
   "$HOME_DST/.local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
 [[ -f "$HOME_DST/.config/lsfg-vk/conf.toml" ]] && sed -i 's|/home/steam/|/home/steamos/|g' "$HOME_DST/.config/lsfg-vk/conf.toml"
@@ -614,7 +627,8 @@ rm -f "$HOME_DST/.local/lib/liblsfg-vk.so" \
 # hold up shutdown.
 install_file "$OVL/usr/share/steamos-odin/plugin_loader.service.d/fast-stop.conf" \
   "$R/usr/lib/systemd/system/plugin_loader.service.d/fast-stop.conf" 0644
-[[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" && -f "$HOME_DST/homebrew/plugins/decky-lsfg-vk/plugin.json" ]] \
+[[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" && -f "$HOME_DST/homebrew/plugins/decky-lsfg-vk/plugin.json" \
+   && -r "$R/usr/lib/liblsfg-vk-classic-arm64.so" && -f "$HOME_DST/homebrew/plugins/decky-lsfg-vk-classic/plugin.json" ]] \
   || die "lsfg-vk missing from the 8 Elite image"
 chown -R 1000:1000 "$HOME_DST/homebrew"
 # Loadout: emulators, PC game stores and apps (engine + Decky plugin).

@@ -584,7 +584,8 @@ if [[ ! -f "$R/usr/lib/lv2/dpl.lv2/dpl.so" ]]; then
 fi
 cp -r --no-preserve=mode,ownership "$SM8650_OVL/." "$R/"
 chmod 0755 "$R/usr/lib/konkr/pocket-s2-controller"
-chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README"
+chmod 0644 "$R/usr/lib/liblsfg-vk-layer-arm64.so" "$R/usr/lib/liblsfg-vk-layer-arm64.so.README" \
+  "$R/usr/lib/liblsfg-vk-classic-arm64.so" "$R/usr/lib/liblsfg-vk-classic-arm64.so.README"
 # Steam (Frame client) launches every game with
 # VK_INSTANCE_LAYERS=VK_LAYER_VALVE_rpo:VK_LAYER_VALVE_fdm_injection: the
 # headset's renderpass optimizer (rewrites shaders, tuned for the Frame's
@@ -911,6 +912,8 @@ for prefix in "$R/usr" "$R/usr/local"; do
     "$prefix/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation_arm64.json"
 done
 [[ -r "$R/usr/lib/liblsfg-vk-layer-arm64.so" ]] || die "missing LSFG v2 ARM layer"
+# lsfg-vk 1.x next to it for the Frame Gen Classic plugin (see its README).
+[[ -r "$R/usr/lib/liblsfg-vk-classic-arm64.so" ]] || die "missing LSFG classic ARM layer"
 
 # ---------------------------------------------------------------------------
 # Mesa Turnip
@@ -1015,6 +1018,12 @@ mkdir -p "$HOME_DST"
 # .local/lib/liblsfg-vk.so is a link to the SM8550 builder's host library;
 # skip it (decky-lsfg-vk installs its own copy).
 rsync -a --copy-links --exclude '.local/lib/liblsfg-vk.so' "${MOD}/Decky/Plug-ins/" "$HOME_DST/"
+# Frame Gen Classic (lsfg-vk 1.x) also goes in the system: updates can't
+# carry a new home plugin folder, so decky-plugin-fixes installs it from here.
+mkdir -p "$R/usr/share/steamos-arm/decky-plugins"
+rm -rf "$R/usr/share/steamos-arm/decky-plugins/decky-lsfg-vk-classic"
+cp -r --no-preserve=ownership "${MOD}/Decky/Plug-ins/homebrew/plugins/decky-lsfg-vk-classic" \
+  "$R/usr/share/steamos-arm/decky-plugins/"
 # Decky itself. Upstream left it to a first-boot installer in ARM-Manager
 # that most people never found — no Decky, so no KONKR Control either.
 # v3.2.9's bundled Python is missing http.server, socketserver and

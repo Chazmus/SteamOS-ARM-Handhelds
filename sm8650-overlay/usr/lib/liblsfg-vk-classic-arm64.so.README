@@ -1,0 +1,16 @@
+lsfg-vk 1.x for the Frame Gen Classic plugin: the aarch64 build from
+https://github.com/hashtagbasit/lsfg-vk-arm64 (release v1.0), which is
+xXJSONDeruloXx/lsfg-vk tag fp16-test-2 (what decky-lsfg-vk 0.12.x pins) with
+two fixes: it skips Wine's helper processes, and it keeps the next layer's
+functions per instance and device (one global pointer crashed Proton ARM64
+games at launch).
+sha256 6409b8a138b29139b2f46da6a7ebcd3f3eaa65cc49960018a67294c156362ac3
+
+Why both: lsfg-vk 2.0 (liblsfg-vk-layer-arm64.so, the Frame Gen 2 plugin)
+draws garbage blocks in some games on Adreno where 1.x is clean, and 1.x
+does better in others. They load under different layer names and configs:
+1.x only into games started with ~/lsfg-classic (LSFG_CLASSIC=1, its config in
+~/.config/lsfg-vk-classic), which also turns 2.0 off for that game
+(DISABLE_LSFGVK=1), so the two never stack.
+
+Licence: lsfg-vk 1.x is MIT, see /usr/share/licenses/lsfg-vk-classic.
