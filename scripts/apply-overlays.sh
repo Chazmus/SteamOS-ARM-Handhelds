@@ -562,6 +562,7 @@ install_file "$OVL/usr/lib/environment.d/62-steamos-arm-no-wsi-dialogs.conf" \
 install_file "$OVL/etc/profile.d/sm8550-gamepad.sh" \
   "$R/etc/profile.d/sm8550-gamepad.sh" 0644
 "${SCRIPT_DIR}/install-inputplumber-sm8550.sh" "$R"
+"${SCRIPT_DIR}/install-qcom-gyro-sm8550.sh" "$R"
 # Bluetooth and display settings pages for Desktop Mode (not in Valve's repos).
 "${SCRIPT_DIR}/install-kde-extras.sh" "$R"
 
