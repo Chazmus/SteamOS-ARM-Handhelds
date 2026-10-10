@@ -115,6 +115,18 @@ patch("liblepton/mounting.sh",
       '        podman_cmdline --ulimit stack=-1:-1\n'
       '    fi\n')
 
+# gamescope gives the shared Android window to the Steam title only when its
+# Wayland client sits in konkr-android.service's cgroup. Rootless podman
+# moves the container into its own libpod scope; split keeps it under the
+# service (which delegates its cgroup for this).
+patch("liblepton/mounting.sh",
+      '    # namespaces\n',
+      '    # namespaces\n'
+      '    # konkr-apk: container stays in konkr-android.service\n'
+      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+      '        podman_cmdline --cgroups=split\n'
+      '    fi\n')
+
 # Extra rootfs overlay (restored framework services, Play Store); Steam's
 # own Android games keep Valve's image.
 patch("liblepton/mounting.sh",
@@ -141,6 +153,19 @@ patch("liblepton/properties.sh",
       '        props_echo "ro.product.manufacturer=Google"\n'
       '    else\n'
       '    props_echo "ro.product.brand=Steam Frame"\n'
+      '    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n'
+      '    fi\n')
+# Lepton 3.0.5 no longer writes the brand.
+patch("liblepton/properties.sh",
+      '    props_echo "ro.product.model=Lepton"\n'
+      '    props_echo "ro.product.manufacturer=Valve"\n',
+      '    # konkr-apk: certified identity\n'
+      '    if [[ -n "${KONKR_LEPTON_OVERLAY:-}" ]]; then\n'
+      '        props_echo "ro.product.brand=google"\n'
+      '        props_echo "ro.product.model=Pixel 5"\n'
+      '        props_echo "ro.product.manufacturer=Google"\n'
+      '    else\n'
       '    props_echo "ro.product.model=Lepton"\n'
       '    props_echo "ro.product.manufacturer=Valve"\n'
       '    fi\n')

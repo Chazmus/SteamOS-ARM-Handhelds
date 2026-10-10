@@ -9,3 +9,6 @@ ExecStart=/usr/bin/konkr-apk daemon
 # SIGTERM only to konkr-apk, which has Lepton kill its container cleanly.
 KillMode=mixed
 TimeoutStopSec=30
+# konkr-apk runs the container with --cgroups=split under this service, so
+# gamescope can tell its window apart.
+Delegate=yes
