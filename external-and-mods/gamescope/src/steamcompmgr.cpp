@@ -7697,8 +7697,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayForceInternal )
 	{
-		// --force-internal / GAMESCOPE_FORCE_INTERNAL locks the handheld panel.
-		// Ignore Steam's "use TV" atom so HDMI/DP cannot steal the DSI screen.
+		// GAMESCOPE_FORCE_INTERNAL / --force-internal lock the choice either way.
+		// Steam's atom only counts when the session left it unset.
 		if ( !g_bForceInternalLocked )
 		{
 			g_bForceInternal = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayForceInternal, 0 );

@@ -891,9 +891,11 @@ int main(int argc, char **argv)
 
 	// Print this after the re-exec, so we only announce ourselves once.
 	gamescope::PrintVersion();
-	if ( !g_bForceInternalLocked && env_to_bool( getenv( "GAMESCOPE_FORCE_INTERNAL" ) ) )
+	// Set either way, the session decides: Steam sets its "force internal"
+	// atom on handhelds it doesn't know, which kept monitors black in Game Mode.
+	if ( !g_bForceInternalLocked && getenv( "GAMESCOPE_FORCE_INTERNAL" ) && *getenv( "GAMESCOPE_FORCE_INTERNAL" ) )
 	{
-		g_bForceInternal = true;
+		g_bForceInternal = env_to_bool( getenv( "GAMESCOPE_FORCE_INTERNAL" ) );
 		g_bForceInternalLocked = true;
 	}
 
