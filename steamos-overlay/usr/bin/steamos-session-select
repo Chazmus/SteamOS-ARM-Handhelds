@@ -8,8 +8,9 @@ session="${1:-gamescope}"
 # Lenovo Legion Y700 Gen 4: handing the panel from gamescope to KWin (or
 # back) in one boot jams its display controller and the screen stays on the
 # last frame. Starting either session at boot works, so switch by restarting
-# into it; the session stays the default until switched back.
-if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,elden'; then
+# into it; the session stays the default until switched back. The Gen 5
+# (same panel family, Switch to Desktop reported broken there) does the same.
+if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qxE 'lenovo,(elden|baldur)'; then
   case "$session" in
     plasma|plasma-persistent)
       /usr/lib/steamos/sm8550-prepare-plasma

@@ -240,7 +240,7 @@ function Content() {
         jsxs(DFL.PanelSection, { title: "Display", children: [
             st.has_dualboot ? row(jsx(DFL.ButtonItem, {
                 layout: "below",
-                description: "SteamOS runs from the microSD card. This restarts into ZUXOS; to come back, run fastboot set_active b",
+                description: st.dualboot_text,
                 onClick: () => bootAndroid(),
                 children: "Restart into ZUXOS",
             })) : null,

@@ -50,8 +50,15 @@ SOCK_PATH = f"{SOCK_DIR}/request"
 
 PROFILES = ("silent", "balanced", "turbo")
 # Fanless tablets (Lenovo Legion Y700 Gen 4).
-FANLESS = "lenovo,elden" in open("/sys/firmware/devicetree/base/compatible", "rb").read().decode(errors="replace").split("\0") \
-    if os.path.exists("/sys/firmware/devicetree/base/compatible") else False
+def _compatible():
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as fh:
+            return fh.read().decode(errors="replace").split("\0")
+    except OSError:
+        return []
+
+
+FANLESS = any(c in ("lenovo,elden", "lenovo,baldur") for c in _compatible())
 
 # Default fan curves (Temp °C -> PWM 0..255)
 DEFAULT_CURVES = {

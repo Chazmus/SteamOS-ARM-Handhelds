@@ -24,6 +24,16 @@ BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
 FLIP = "/etc/steamos-arm/flip-screen"
 
 
+def gen5() -> bool:
+    """Lenovo Legion Y700 Gen 5 (its bootloader can't be unlocked: Android and
+    SteamOS take turns in boot_a)."""
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as fh:
+            return "lenovo,baldur" in fh.read().decode(errors="replace").split("\0")
+    except OSError:
+        return False
+
+
 def tablet() -> bool:
     """Lenovo Legion Y700 Gen 3 / Gen 4."""
     try:
@@ -31,7 +41,7 @@ def tablet() -> bool:
             compat = fh.read().decode(errors="replace").split("\0")
     except OSError:
         return False
-    return "lenovo,tb321fu" in compat or "lenovo,elden" in compat
+    return any(c in compat for c in ("lenovo,tb321fu", "lenovo,elden", "lenovo,baldur"))
 PROFILES = ("silent", "balanced", "turbo")
 ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "game", "none")
 
@@ -183,6 +193,8 @@ class Plugin:
             "has_flip": tablet(),
             "flip": os.path.exists(FLIP),
             "has_dualboot": tablet() and subprocess.run(["sh", "-c", "findmnt -no SOURCE / | grep -q mmcblk"]).returncode == 0,
+            "dualboot_text": ("SteamOS runs from the microSD card. This restarts into ZUXOS; to come back, "
+                              + ("use Switch to SteamOS in KernelSU" if gen5() else "run fastboot set_active b")),
             "has_motors": any("HID_ID=0003:00004001:00000428" in rd(f"{d}/device/uevent")
                               for d in glob.glob("/sys/class/hidraw/hidraw*")),
             "buttons": st["buttons"],
@@ -284,7 +296,9 @@ class Plugin:
     async def boot_android(self, **_: Any) -> bool:
         """Dual boot (SteamOS on the microSD card, ZUXOS on slot A): make slot A
         active and restart into ZUXOS."""
-        r = await asyncio.to_thread(subprocess.run, ["/usr/lib/steamos-arm/tablet-slot", "android"])
+        # Gen 5: copy Android's boot image back into boot_a. Gen 4: make slot A active.
+        tool = ["/usr/lib/steamos-arm/gen5-android"] if gen5() else ["/usr/lib/steamos-arm/tablet-slot", "android"]
+        r = await asyncio.to_thread(subprocess.run, tool)
         return r.returncode == 0
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
