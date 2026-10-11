@@ -30,6 +30,7 @@ const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
 const setFlip = callable("set_flip");
+const bootAndroid = callable("boot_android");
 const setMenuClicks = callable("set_menu_clicks");
 const setBypass = callable("set_bypass");
 const setButton = callable("set_button");
@@ -237,6 +238,12 @@ function Content() {
             })) : null,
         ] }),
         jsxs(DFL.PanelSection, { title: "Display", children: [
+            st.has_dualboot ? row(jsx(DFL.ButtonItem, {
+                layout: "below",
+                description: "SteamOS runs from the microSD card. This restarts into ZUXOS; to come back, run fastboot set_active b",
+                onClick: () => bootAndroid(),
+                children: "Restart into ZUXOS",
+            })) : null,
             st.has_flip ? row(jsx(DFL.ToggleField, {
                 label: "Flip screen",
                 description: "Turn Game Mode the other way up, for controllers that plug into the short side. Applies the next time Game Mode starts (restart the tablet)",

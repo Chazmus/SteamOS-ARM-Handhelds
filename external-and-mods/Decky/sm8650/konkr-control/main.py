@@ -182,6 +182,7 @@ class Plugin:
             "menu_clicks": st["menu_clicks"],
             "has_flip": tablet(),
             "flip": os.path.exists(FLIP),
+            "has_dualboot": tablet() and subprocess.run(["sh", "-c", "findmnt -no SOURCE / | grep -q mmcblk"]).returncode == 0,
             "has_motors": any("HID_ID=0003:00004001:00000428" in rd(f"{d}/device/uevent")
                               for d in glob.glob("/sys/class/hidraw/hidraw*")),
             "buttons": st["buttons"],
@@ -279,6 +280,12 @@ class Plugin:
             os.remove(FLIP)
         await asyncio.to_thread(subprocess.run, ["udevadm", "trigger", "--subsystem-match=input", "--action=change"])
         return os.path.exists(FLIP)
+
+    async def boot_android(self, **_: Any) -> bool:
+        """Dual boot (SteamOS on the microSD card, ZUXOS on slot A): make slot A
+        active and restart into ZUXOS."""
+        r = await asyncio.to_thread(subprocess.run, ["/usr/lib/steamos-arm/tablet-slot", "android"])
+        return r.returncode == 0
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
         st = load()

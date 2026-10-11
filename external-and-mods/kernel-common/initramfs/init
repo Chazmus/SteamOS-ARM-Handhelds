@@ -131,6 +131,15 @@ case "$rootarg" in
     done
     [ -n "$bootdev" ] || bootdev="$(by_partlabel "$bootlabel")"
     ;;
+  /dev/*)
+    # A device by name: the Legion Y700 Gen 4's microSD dual boot uses
+    # root=/dev/mmcblk0, the system written to the whole card.
+    for i in $(seq 1 60); do
+      [ -b "$rootarg" ] && rootdev="$rootarg" && break
+      sleep 0.5
+    done
+    bootdev="$(by_partlabel "$bootlabel")"
+    ;;
   *)
     for i in $(seq 1 60); do
       for p in /sys/class/block/mmcblk*p1; do
