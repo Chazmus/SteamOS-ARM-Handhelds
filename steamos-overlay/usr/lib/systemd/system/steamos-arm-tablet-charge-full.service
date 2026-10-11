@@ -1,0 +1,12 @@
+[Unit]
+Description=Lenovo tablets: charge to full (drop the limit Android leaves)
+ConditionFirmware=|device-tree-compatible(lenovo,tb321fu)
+ConditionFirmware=|device-tree-compatible(lenovo,elden)
+Before=upower.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/steamos-arm/tablet-charge-full
+
+[Install]
+WantedBy=multi-user.target

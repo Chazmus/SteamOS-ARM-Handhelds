@@ -49,6 +49,9 @@ SOCK_DIR = "/run/odin3"
 SOCK_PATH = f"{SOCK_DIR}/request"
 
 PROFILES = ("silent", "balanced", "turbo")
+# Fanless tablets (Lenovo Legion Y700 Gen 4).
+FANLESS = "lenovo,elden" in open("/sys/firmware/devicetree/base/compatible", "rb").read().decode(errors="replace").split("\0") \
+    if os.path.exists("/sys/firmware/devicetree/base/compatible") else False
 
 # Default fan curves (Temp °C -> PWM 0..255)
 DEFAULT_CURVES = {
@@ -485,7 +488,9 @@ class PowerManager:
             # policy6 is the two Oryon Prime cores (cpus 6, 7)
             is_prime = ("6" in cpus or "7" in cpus)
 
-            if profile == "turbo" and is_prime and "performance" in avail:
+            # Not on a fanless tablet (Legion Y700 Gen 4): pinned prime cores
+            # heat it into GPU throttling and Turbo ran slower than Balanced.
+            if profile == "turbo" and is_prime and "performance" in avail and not FANLESS:
                 gov = "performance"
             elif "schedutil" in avail:
                 gov = "schedutil"

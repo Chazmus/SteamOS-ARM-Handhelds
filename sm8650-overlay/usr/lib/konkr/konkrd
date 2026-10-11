@@ -448,11 +448,20 @@ def apply_gpu(profile: str) -> None:
         wr(f"{d}/polling_interval", 16)
 
 
+def fanless() -> bool:
+    """Tablets (Lenovo Legion Y700 Gen 3 / Gen 4) have no fan: pinning the big
+    cores there only heats the chip into GPU throttling, and Turbo ran games
+    slower than Balanced."""
+    compat = rd("/sys/firmware/devicetree/base/compatible").split("\0")
+    return "lenovo,tb321fu" in compat or "lenovo,elden" in compat
+
+
 def apply_cpu(profile: str) -> None:
     """schedutil everywhere (the ROCKNIX default is `performance`, which
     holds all eight cores — little A520s included — at max clock: heat for
-    nothing). Turbo pins only the big clusters to `performance`."""
-    big = big_cpus()
+    nothing). Turbo pins only the big clusters to `performance`, except on a
+    fanless tablet, where Turbo keeps only its higher GPU floor."""
+    big = set() if fanless() else big_cpus()
     for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
         govs = rd(f"{pol}/scaling_available_governors")
         cpus = {int(c) for c in rd(f"{pol}/related_cpus").split() if c.isdigit()}

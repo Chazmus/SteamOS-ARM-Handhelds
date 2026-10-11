@@ -28,8 +28,12 @@ def num(path):
 
 
 def battery():
+    # Controllers and pens show up as batteries too (scope "Device") and some
+    # sort before the device's own: the Legion Y700 Gen 4 then showed a pad's
+    # charge in Game Mode. Take the system's battery.
     for d in sorted(glob.glob("/sys/class/power_supply/*")):
-        if rd(f"{d}/type") == "Battery" and rd(f"{d}/present", "1") == "1":
+        if rd(f"{d}/type") == "Battery" and rd(f"{d}/present", "1") == "1" \
+                and rd(f"{d}/scope", "System") != "Device":
             return d
     return None
 

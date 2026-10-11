@@ -114,7 +114,7 @@ monitor.alsa.rules = [
       update-props = {
         api.acp.auto-profile = true
         api.acp.auto-port = true
-        device.profile = "HiFi (Mic1, Speaker)"
+        device.profile = "pro-audio"
         api.alsa.period-size = 1024
         api.alsa.period-num = 4
         api.alsa.headroom = 0
@@ -133,13 +133,94 @@ device.profile.priority.rules = [
     actions = {
       update-props = {
         priorities = [
-          "HiFi (Headphones, Headset)"
-          "HiFi (Headphones, Mic1)"
-          "HiFi (Mic1, Speaker)"
-          "HiFi (Headset, Speaker)"
-          "HiFi"
           "pro-audio"
         ]
+      }
+    }
+  }
+]
+CONF
+
+# The card's HiFi profiles never opened under PipeWire on test 6 (the sink
+# was auto_null, no sound or mic), while the same routes set with alsaucm and
+# played through pro-audio work (a tester's script, confirmed by others). So
+# play through pro-audio and let a user service set the routes: the speakers,
+# or the headphones while something is in the jack, plus the microphones.
+install -Dm0755 /dev/stdin "$R/usr/lib/steamos-arm/tb321fu-audio" <<'SH'
+#!/bin/bash
+# Lenovo Legion Y700 Gen 3 sound (steamos-arm-tb321fu-audio.service, per user).
+CARD=LenovoY700TB321
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/steamos-arm/tb321fu-audio"
+sink() { pactl list short sinks 2>/dev/null | awk '/platform-sound\.pro-output-0/ {print $2; exit}'; }
+jack() { amixer -c "$CARD" cget "iface=CARD,name='Headphone Jack'" 2>/dev/null | grep -q ': values=on'; }
+route() {  # speakers or headphones, and the microphone that goes with them
+  if jack; then
+    alsaucm -c "hw:$CARD" set _verb HiFi set _enadev Headphones set _enadev Headset >/dev/null 2>&1
+  else
+    alsaucm -c "hw:$CARD" set _verb HiFi set _enadev Speaker set _enadev Mic1 >/dev/null 2>&1
+  fi
+}
+start() {
+  for _ in $(seq 30); do pactl list short cards 2>/dev/null | grep -q platform-sound && break; sleep 1; done
+  route
+  # Open the PCMs again after the routes are set.
+  pactl set-card-profile alsa_card.platform-sound off 2>/dev/null
+  pactl set-card-profile alsa_card.platform-sound pro-audio 2>/dev/null || return 1
+  for _ in $(seq 10); do [ -n "$(sink)" ] && break; sleep 0.5; done
+  s="$(sink)"; [ -n "$s" ] || return 1
+  pactl set-default-sink "$s"
+  src="$(pactl list short sources 2>/dev/null | awk '/platform-sound\.pro-input-2/ {print $2; exit}')"
+  [ -n "$src" ] && pactl set-default-source "$src"
+  # First start only: a sane volume. After that, PipeWire keeps the user's.
+  if [ ! -e "$STATE" ]; then
+    pactl set-sink-volume "$s" 40%; pactl set-sink-mute "$s" 0
+    mkdir -p "${STATE%/*}"; : >"$STATE"
+  fi
+}
+start || exit 1
+last="$(jack && echo hp || echo spk)"
+while sleep 1; do
+  now="$(jack && echo hp || echo spk)"
+  if [ "$now" != "$last" ]; then route; last="$now"; fi
+  # The card came back (PipeWire or WirePlumber restarted): set it up again.
+  [ -n "$(sink)" ] || { sleep 2; start; }
+done
+SH
+install -Dm0644 /dev/stdin "$R/usr/lib/systemd/user/steamos-arm-tb321fu-audio.service" <<'UNIT'
+[Unit]
+Description=Lenovo Legion Y700 Gen 3: speaker, headphone and microphone routes
+ConditionFirmware=device-tree-compatible(lenovo,tb321fu)
+After=wireplumber.service pipewire-pulse.service
+Wants=wireplumber.service pipewire-pulse.service
+
+[Service]
+ExecStart=/usr/lib/steamos-arm/tb321fu-audio
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+UNIT
+mkdir -p "$R/usr/lib/systemd/user/default.target.wants"
+ln -sfn ../steamos-arm-tb321fu-audio.service "$R/usr/lib/systemd/user/default.target.wants/steamos-arm-tb321fu-audio.service"
+# Quiet settings were inaudible (25 % on test 5): +6 dB into x42's peak
+# limiter on the card's output. Speakers and headphones share it, hence less
+# than the Pocket FIT's +8.
+install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/91-lenovo-tb321fu-speaker.conf" <<'CONF'
+# Lenovo Legion Y700 Gen 3 output: +6 dB into a peak limiter (install-tb321fu.sh).
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_output.platform-sound.pro-output-0.*" alsa.card_name = "Lenovo-Y700-TB321FU" } ]
+    actions = {
+      update-props = {
+        audioconvert.filter-graph.0 = {
+          nodes = [
+            { type = lv2 name = lim plugin = "http://gareus.org/oss/lv2/dpl#stereo"
+              control = { "gain" = 6.0 "threshold" = -1.0 "release" = 0.01 "truepeak" = 1 } }
+          ]
+          inputs = [ "lim:inL" "lim:inR" ]
+          outputs = [ "lim:outL" "lim:outR" ]
+        }
       }
     }
   }
@@ -165,6 +246,9 @@ install -Dm0644 /dev/stdin "$R/usr/lib/udev/rules.d/90-steamos-arm-tb321fu-touch
 # Lenovo Legion Y700 Gen 3: the touch panel reports portrait coordinates, the session runs landscape.
 ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitiveTouchScreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
 ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitivePen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
+# Screen flipped 180 degrees (Handheld Control, /etc/steamos-arm/flip-screen): the other landscape.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitiveTouchScreen", TEST=="/etc/steamos-arm/flip-screen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitivePen", TEST=="/etc/steamos-arm/flip-screen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
 RULES
 # KWin already maps touch to the rotated output, so Desktop Mode undoes the
 # udev matrix. Appended: other devices' groups in the file stay as they are.
@@ -347,4 +431,10 @@ O="${HERE}/../steamos-overlay"
 install -Dm0755 "$O/usr/lib/steamos-arm/tablet-boot-ok" "$R/usr/lib/steamos-arm/tablet-boot-ok"
 install -Dm0644 "$O/usr/lib/systemd/system/steamos-arm-tablet-boot-ok.service" "$R/usr/lib/systemd/system/steamos-arm-tablet-boot-ok.service"
 ln -sfn ../steamos-arm-tablet-boot-ok.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-boot-ok.service"
+# Charge to 100 % (the battery firmware keeps Android's battery-care limit).
+O="${HERE}/../steamos-overlay"
+install -Dm0755 "$O/usr/lib/steamos-arm/tablet-charge-full" "$R/usr/lib/steamos-arm/tablet-charge-full"
+install -Dm0644 "$O/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service" "$R/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service"
+ln -sfn ../steamos-arm-tablet-charge-full.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-charge-full.service"
+[[ -f "$R/usr/lib/lv2/dpl.lv2/manifest.ttl" ]] || die "dpl.lv2 (the output limiter) missing from the rootfs"
 log "firmware and audio profile installed"

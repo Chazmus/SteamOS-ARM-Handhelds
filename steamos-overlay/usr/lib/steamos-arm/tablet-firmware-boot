@@ -35,4 +35,14 @@ if [[ ! -e /sys/class/net/wlan0 ]]; then
   [[ -e /sys/class/net/wlan0 ]] && echo "tablet-firmware: Wi-Fi up" || echo "tablet-firmware: Wi-Fi still missing"
 fi
 systemctl try-restart bluetooth.service 2>/dev/null
+# The audio DSP's card came up without its firmware on the first boot and
+# stayed silent until the next one (Gen 4 testers), even after the start
+# above. So the boot that first copies the firmware restarts once, before
+# the login manager, and every later boot has it from the start.
+if (( before == 0 )) && [[ ! -e "$dest/.first-boot-restarted" ]]; then
+  : >"$dest/.first-boot-restarted"
+  sync
+  echo "tablet-firmware: firmware copied for the first time, restarting once"
+  systemctl --no-block reboot
+fi
 exit 0

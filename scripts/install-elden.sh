@@ -53,6 +53,9 @@ install -Dm0644 /dev/stdin "$R/usr/lib/udev/rules.d/90-steamos-arm-elden-touch.r
 # Lenovo Legion Y700 Gen 4: the touch panel reports portrait coordinates, Game Mode runs landscape.
 ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitiveTouchScreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
 ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitivePen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
+# Screen flipped 180 degrees (Handheld Control, /etc/steamos-arm/flip-screen): the other landscape.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitiveTouchScreen", TEST=="/etc/steamos-arm/flip-screen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="NVTCapacitivePen", TEST=="/etc/steamos-arm/flip-screen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
 RULES
 mkdir -p "$R/etc/xdg"
 grep -qs 'NVTCapacitiveTouchScreen' "$R/etc/xdg/kcminputrc" || cat >> "$R/etc/xdg/kcminputrc" <<'KCM'
@@ -98,4 +101,36 @@ WantedBy=sysinit.target
 UNIT
 mkdir -p "$R/usr/lib/systemd/system/sysinit.target.wants"
 ln -sfn ../steamos-arm-elden-setup.service "$R/usr/lib/systemd/system/sysinit.target.wants/steamos-arm-elden-setup.service"
+
+# Speakers: their UCM device has no hardware volume, so PipeWire's software
+# curve made 15-25 % silent (testers). Same chain as the Pocket FIT's: +8 dB
+# into x42's peak limiter (true-peak ceiling -1 dBFS), so quiet settings are
+# audible and full scale still doesn't clip. Speaker sink only, by card name.
+[[ -f "$R/usr/lib/lv2/dpl.lv2/manifest.ttl" ]] || die "dpl.lv2 (the speaker limiter) missing from the rootfs"
+install -Dm0644 /dev/stdin "$R/usr/share/wireplumber/wireplumber.conf.d/56-elden-speaker.conf" <<'CONF'
+# Lenovo Legion Y700 Gen 4 speakers: +8 dB into a peak limiter (install-elden.sh).
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_output.*Speaker.*" alsa.card_name = "Lenovo-Y700-Gen4" } ]
+    actions = {
+      update-props = {
+        audioconvert.filter-graph.0 = {
+          nodes = [
+            { type = lv2 name = lim plugin = "http://gareus.org/oss/lv2/dpl#stereo"
+              control = { "gain" = 8.0 "threshold" = -1.0 "release" = 0.01 "truepeak" = 1 } }
+          ]
+          inputs = [ "lim:inL" "lim:inR" ]
+          outputs = [ "lim:outL" "lim:outR" ]
+        }
+      }
+    }
+  }
+]
+CONF
+
+# Charge to 100 % (the battery firmware keeps Android's battery-care limit).
+O="${HERE}/../steamos-overlay"
+install -Dm0755 "$O/usr/lib/steamos-arm/tablet-charge-full" "$R/usr/lib/steamos-arm/tablet-charge-full"
+install -Dm0644 "$O/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service" "$R/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service"
+ln -sfn ../steamos-arm-tablet-charge-full.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-charge-full.service"
 echo "[elden] firmware manifest, topology and audio profile installed"

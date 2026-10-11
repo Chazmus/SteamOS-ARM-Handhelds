@@ -15,7 +15,7 @@
 # reuses the last build tree (only the config fragment changed).
 set -euo pipefail
 OUT="${1:?output dir}"; CPIO="$(readlink -f "${2:?initrd.cpio}")"
-SRC_COMMIT=1cfa907237d190c03db9392cd858de2208eb7892
+SRC_COMMIT=62076530bf1ff34295d671016658965e54e597f1
 SRC_URL="https://codeload.github.com/enij90/armada-tb321fu/tar.gz/${SRC_COMMIT}"
 W="${WORK:-/work/kernel-tb321fu-726}"
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -30,8 +30,15 @@ tar -xzf "$tarball" -C "$W/pkg" --strip-components=3 --wildcards '*/packages/ker
 P="$W/pkg"
 [[ -f "$P/scripts/build-kernel.sh" && -f "$P/patches/series" ]] || die "kernel package not found in the source"
 
-# CSOT: the same board with the CSOT panel selected; BOE keeps the file as is.
 dts="$P/dts/sm8650-lenovo-tb321fu.dts"
+# Volume keys the way Android has them: the series swaps them for a
+# controller grip, and in our landscape they came out reversed (test 6).
+grep -q 'linux,code = <KEY_VOLUMEDOWN>;' "$dts" && grep -q 'linux,code = <KEY_VOLUMEUP>;' "$dts" || die "volume keys not found"
+sed -i -e 's/linux,code = <KEY_VOLUMEDOWN>;/linux,code = <KEY_VOLUME_SWAP>;/' \
+       -e 's/linux,code = <KEY_VOLUMEUP>;/linux,code = <KEY_VOLUMEDOWN>;/' \
+       -e 's/linux,code = <KEY_VOLUME_SWAP>;/linux,code = <KEY_VOLUMEUP>;/' "$dts"
+awk '/key-volume-up/ {f=1} f && /linux,code/ {print; exit}' "$dts" | grep -q KEY_VOLUMEUP || die "volume keys not swapped back"
+# CSOT: the same board with the CSOT panel selected; BOE keeps the file as is.
 sed -e 's/kirby-nt36523-boe-dsc/kirby-nt36523-csot-dsc/g' \
     -e 's/kirby_nt36523_boe_dsc_vid/kirby_nt36523_csot_dsc_vid/' \
     -e 's|^\(\s*model = "\)Lenovo Legion Y700 (2025) / TB321FU"|\1Lenovo Legion Y700 Gen 3 (CSOT panel)"|' \

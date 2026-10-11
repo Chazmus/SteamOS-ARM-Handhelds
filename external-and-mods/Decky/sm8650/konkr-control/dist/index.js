@@ -29,6 +29,7 @@ const setRgb = callable("set_rgb");
 const setMcu = callable("set_mcu");
 const setFan = callable("set_fan");
 const setPowerLed = callable("set_power_led");
+const setFlip = callable("set_flip");
 const setMenuClicks = callable("set_menu_clicks");
 const setBypass = callable("set_bypass");
 const setButton = callable("set_button");
@@ -236,6 +237,12 @@ function Content() {
             })) : null,
         ] }),
         jsxs(DFL.PanelSection, { title: "Display", children: [
+            st.has_flip ? row(jsx(DFL.ToggleField, {
+                label: "Flip screen",
+                description: "Turn Game Mode the other way up, for controllers that plug into the short side. Applies the next time Game Mode starts (restart the tablet)",
+                checked: !!st.flip,
+                onChange: (v) => setFlip(v).then(refresh),
+            })) : null,
             row(jsx(DFL.ToggleField, {
                 label: "Short frame limit list",
                 description: shortFpsSteps(),

@@ -21,6 +21,17 @@ ODIN3D = os.path.exists("/usr/lib/odin3/odin3d")
 STATE = "/var/lib/odin3/state.json" if ODIN3D else "/var/lib/konkrd/state.json"
 DAEMON = "odin3d" if ODIN3D else "konkrd"
 BLACKLIST = "/etc/modprobe.d/konkr-mcu.conf"
+FLIP = "/etc/steamos-arm/flip-screen"
+
+
+def tablet() -> bool:
+    """Lenovo Legion Y700 Gen 3 / Gen 4."""
+    try:
+        with open("/sys/firmware/devicetree/base/compatible", "rb") as fh:
+            compat = fh.read().decode(errors="replace").split("\0")
+    except OSError:
+        return False
+    return "lenovo,tb321fu" in compat or "lenovo,elden" in compat
 PROFILES = ("silent", "balanced", "turbo")
 ACTIONS = ("profile-next", "rgb-next", "sticks-toggle", "fan-boost", "game", "none")
 
@@ -169,6 +180,8 @@ class Plugin:
             "game": game_fan_state(st),
             "power_led": st["power_led"],
             "menu_clicks": st["menu_clicks"],
+            "has_flip": tablet(),
+            "flip": os.path.exists(FLIP),
             "has_motors": any("HID_ID=0003:00004001:00000428" in rd(f"{d}/device/uevent")
                               for d in glob.glob("/sys/class/hidraw/hidraw*")),
             "buttons": st["buttons"],
@@ -255,6 +268,17 @@ class Plugin:
         st["menu_clicks"] = bool(on)
         save(st)
         return st["menu_clicks"]
+
+    async def set_flip(self, on: bool = False, **_: Any) -> bool:
+        """Lenovo tablets: Game Mode the other way up. gamescope reads it when
+        Game Mode starts; the touch mapping follows through udev now."""
+        if on:
+            os.makedirs(os.path.dirname(FLIP), exist_ok=True)
+            open(FLIP, "w").close()
+        elif os.path.exists(FLIP):
+            os.remove(FLIP)
+        await asyncio.to_thread(subprocess.run, ["udevadm", "trigger", "--subsystem-match=input", "--action=change"])
+        return os.path.exists(FLIP)
 
     async def set_power_led(self, on: bool = True, **_: Any) -> bool:
         st = load()

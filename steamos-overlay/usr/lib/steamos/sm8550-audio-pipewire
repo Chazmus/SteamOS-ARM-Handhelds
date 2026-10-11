@@ -22,9 +22,13 @@ fi
 # controls): the Odin 2 policy below put it on pro-audio, which played into
 # PCMs no route was set up for, so it was silent.
 UCM_ONLY=0
-if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null \
-   || tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,tb321fu'; then
+if grep -qaE "KONKR Pocket FIT|AYANEO Pocket S2" /sys/firmware/devicetree/base/model 2>/dev/null; then
   UCM_ONLY=1
+fi
+# Legion Y700 Gen 3: its HiFi profiles never opened (test 6); it plays through
+# pro-audio with routes from steamos-arm-tb321fu-audio.service instead.
+if tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | grep -qx 'lenovo,tb321fu'; then
+  exit 0
 fi
 
 MODE=once
