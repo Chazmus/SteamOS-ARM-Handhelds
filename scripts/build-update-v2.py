@@ -87,8 +87,12 @@ def stale_pyc(key):
 def rewritten(key):
     """pacman's sync databases: pacman -Sy and Discover's update checks rewrite
     them on the device, and an updater from before drop_stale_transient refuses a delta
-    that doesn't carry them (issue #64). They are small; always ship them."""
-    return key.startswith('root/usr/lib/holo/pacmandb/sync/')
+    that doesn't carry them (issue #64). They are small; always ship them.
+    Same for the Pocket FIT front-button map, which konkrd rewrites when a
+    button is set to "game" (issue #64); konkrd writes it back at its next start."""
+    return key.startswith('root/usr/lib/holo/pacmandb/sync/') or key.endswith(
+        ('/etc/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml',
+         '/etc/upper/inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml'))
 
 
 blobs = sorted({e['f'][4] for k, e in inventory.items() if 'f' in e and (
