@@ -33,3 +33,14 @@
 		/delete-property/ no-regmap-bulk-read;
 	};
 };
+
+/*
+ * Rumble: the body motor is an LRA, and stock Android drives it as one at
+ * 1300 mV (Retroid's RP6 and Nova device tree). The Odin 2 setup it inherits (ERM, 5000 mV)
+ * feeds it plain DC with auto-resonance off, so a rumble was a single click
+ * or barely felt.
+ */
+&pm8550b_hv_haptics {
+	/delete-property/ qcom,use-erm;
+	qcom,vmax-mv = <1300>;
+};
