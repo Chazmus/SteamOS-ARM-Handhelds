@@ -1,1 +1,19 @@
-{ "title": "Pulse", "about": "Session, game art, line graphs" }
+{
+ "title": "Pulse",
+ "about": "Session, game art, line graphs",
+ "colors": {
+  "bg": "#080c12",
+  "bgTop": "#0f1622",
+  "card": "#121a25",
+  "cardTop": "#172131",
+  "cardEdge": "#1fffffff",
+  "cardHi": "#24344a",
+  "button": "#1a2433",
+  "line": "#243042",
+  "accent": "#1a9fff",
+  "accentSoft": "#331a9fff",
+  "text": "#eef3f8",
+  "dim": "#8a98aa",
+  "faint": "#5b6878"
+ }
+}

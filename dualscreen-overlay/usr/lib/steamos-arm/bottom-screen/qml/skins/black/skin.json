@@ -1,1 +1,19 @@
-{ "title": "Pure Black", "about": "True black, easy on the OLED" }
+{
+ "title": "Pure Black",
+ "about": "True black, easy on the OLED",
+ "colors": {
+  "bg": "#000000",
+  "bgTop": "#000000",
+  "card": "#0a0a0a",
+  "cardTop": "#0f0f0f",
+  "cardEdge": "#14ffffff",
+  "cardHi": "#1c1c1c",
+  "button": "#121212",
+  "line": "#1e1e1e",
+  "accent": "#ffffff",
+  "accentSoft": "#26ffffff",
+  "text": "#f2f2f2",
+  "dim": "#9a9a9a",
+  "faint": "#5e5e5e"
+ }
+}

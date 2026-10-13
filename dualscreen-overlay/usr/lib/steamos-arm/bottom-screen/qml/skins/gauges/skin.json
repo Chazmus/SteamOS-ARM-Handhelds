@@ -1,1 +1,19 @@
-{ "title": "Gauges", "about": "Round dials" }
+{
+ "title": "Gauges",
+ "about": "Round dials, graphite and amber",
+ "colors": {
+  "bg": "#121212",
+  "bgTop": "#1c1b19",
+  "card": "#1e1d1b",
+  "cardTop": "#272522",
+  "cardEdge": "#1fffffff",
+  "cardHi": "#35322d",
+  "button": "#2a2824",
+  "line": "#3a3731",
+  "accent": "#ffb020",
+  "accentSoft": "#33ffb020",
+  "text": "#f4efe6",
+  "dim": "#b3aa9a",
+  "faint": "#7a7264"
+ }
+}
