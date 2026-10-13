@@ -31,7 +31,7 @@ namespace gamescope
 	static ConVar<float> cv_backlight_max_nits(
 		"backlight_max_nits",
 		500.0f,
-		"Nits that map to 100% backlight when Steam sends a nits value." );
+		"Unused: the top is learned from what Steam sends (kept for configs that set it)." );
 
 	static ConVar<float> cv_backlight_min_nits(
 		"backlight_min_nits",
@@ -213,6 +213,53 @@ namespace gamescope
 			sFile.c_str(), s_nMax, nCurrent );
 	}
 
+	// Steam sends GAMESCOPE_INTERNAL_DISPLAY_BRIGHTNESS in nits, scaled to a
+	// top it derives from the panel. Panels without a gamescope display profile
+	// have no known top: mapping to a fixed 500 nits left Steam's 100 % short of
+	// full brightness (Legion Y700 Gen 4 testers), and the old 1-100 "percent"
+	// branch read low nits values as percentages (too bright, then a jump).
+	// So the top is learned: the highest value Steam has sent, kept across
+	// sessions, since its slider at 100 % sends exactly that.
+	static float s_flTopNits = 0.0f;
+
+	static std::string TopNitsFile()
+	{
+		const char *pszState = getenv( "XDG_STATE_HOME" );
+		const char *pszHome = getenv( "HOME" );
+		if ( pszState && *pszState )
+			return std::string( pszState ) + "/gamescope/backlight-top-nits";
+		if ( pszHome && *pszHome )
+			return std::string( pszHome ) + "/.local/state/gamescope/backlight-top-nits";
+		return {};
+	}
+
+	static void LoadTopNits()
+	{
+		static bool s_bLoaded = false;
+		if ( s_bLoaded )
+			return;
+		s_bLoaded = true;
+		const std::string sFile = TopNitsFile();
+		if ( sFile.empty() )
+			return;
+		std::ifstream f( sFile );
+		float flTop = 0.0f;
+		if ( f >> flTop && std::isfinite( flTop ) && flTop > 1.0f )
+			s_flTopNits = flTop;
+	}
+
+	static void SaveTopNits()
+	{
+		const std::string sFile = TopNitsFile();
+		if ( sFile.empty() )
+			return;
+		std::error_code ec;
+		std::filesystem::create_directories( std::filesystem::path( sFile ).parent_path(), ec );
+		std::ofstream f( sFile, std::ios::trunc );
+		if ( f )
+			f << s_flTopNits << "\n";
+	}
+
 	static float SteamValueToNormalized( float flVal )
 	{
 		if ( !std::isfinite( flVal ) )
@@ -221,12 +268,16 @@ namespace gamescope
 		if ( flVal <= 1.0f )
 			return std::clamp( flVal, 0.0f, 1.0f );
 
-		if ( flVal <= 100.0f )
-			return std::clamp( flVal / 100.0f, 0.0f, 1.0f );
-
-		const float flMin = std::max( 0.0f, float( cv_backlight_min_nits ) );
-		const float flMax = std::max( flMin + 1.0f, float( cv_backlight_max_nits ) );
-		return std::clamp( ( flVal - flMin ) / ( flMax - flMin ), 0.0f, 1.0f );
+		LoadTopNits();
+		if ( flVal > s_flTopNits )
+		{
+			s_flTopNits = flVal;
+			SaveTopNits();
+		}
+		const float flMin = std::clamp( float( cv_backlight_min_nits ), 0.0f, s_flTopNits * 0.5f );
+		const float flNorm = std::clamp( ( flVal - flMin ) / std::max( 1.0f, s_flTopNits - flMin ), 0.0f, 1.0f );
+		s_BacklightLog.infof( "Steam brightness %.1f nits -> %.0f%% (top %.1f nits)", flVal, flNorm * 100.0f, s_flTopNits );
+		return flNorm;
 	}
 
 	bool SetBacklightNormalized( float flNorm )

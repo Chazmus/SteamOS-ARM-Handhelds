@@ -436,5 +436,16 @@ O="${HERE}/../steamos-overlay"
 install -Dm0755 "$O/usr/lib/steamos-arm/tablet-charge-full" "$R/usr/lib/steamos-arm/tablet-charge-full"
 install -Dm0644 "$O/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service" "$R/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service"
 ln -sfn ../steamos-arm-tablet-charge-full.service "$R/usr/lib/systemd/system/multi-user.target.wants/steamos-arm-tablet-charge-full.service"
+# Both Lenovo tablets: start dark and charge when the charger started the
+# tablet, keep the brightness across restarts, and put on screen why the
+# session didn't start when it doesn't.
+for f in tablet-charger-hold tablet-backlight tablet-boot-watch; do
+  install -Dm0755 "$O/usr/lib/steamos-arm/$f" "$R/usr/lib/steamos-arm/$f"
+done
+install -Dm0755 "$O/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats" "$R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats"
+for u in steamos-arm-tablet-charger steamos-arm-tablet-backlight steamos-arm-tablet-boot-watch; do
+  install -Dm0644 "$O/usr/lib/systemd/system/$u.service" "$R/usr/lib/systemd/system/$u.service"
+  ln -sfn ../$u.service "$R/usr/lib/systemd/system/multi-user.target.wants/$u.service"
+done
 [[ -f "$R/usr/lib/lv2/dpl.lv2/manifest.ttl" ]] || die "dpl.lv2 (the output limiter) missing from the rootfs"
 log "firmware and audio profile installed"

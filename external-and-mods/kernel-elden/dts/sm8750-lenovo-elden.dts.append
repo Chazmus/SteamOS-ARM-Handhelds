@@ -33,3 +33,12 @@
 &gpuss6_passive { temperature = <90000>; };
 &gpuss7_alert0 { temperature = <90000>; };
 &gpuss7_passive { temperature = <90000>; };
+
+/*
+ * External displays: without link-frequencies the DP driver stops at HBR2,
+ * and over USB-C with USB 3 alongside only two lanes are free, so 4K ran at
+ * 30 Hz (testers). HBR3, as on Qualcomm's SM8750 MTP, fits 4K60 on two lanes.
+ */
+&mdss_dp0_out {
+	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
+};

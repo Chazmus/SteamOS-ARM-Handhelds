@@ -198,6 +198,39 @@ class Mounts:
             pass
 
 
+def squash(mdt):
+    """Qualcomm split image (X.mdt + X.bNN) back into one ELF, each segment
+    at its p_offset: what Linux loads as X.mbn."""
+    data = Path(mdt).read_bytes()
+    if data[:4] != b"\x7fELF":
+        raise ValueError("not an ELF")
+    is64 = data[4] == 2
+    phoff = struct.unpack_from("<Q" if is64 else "<I", data, 0x20 if is64 else 0x1c)[0]
+    phentsize, phnum = struct.unpack_from("<HH", data, 0x36 if is64 else 0x2a)
+    img = bytearray(data[:phoff + phnum * phentsize])
+    for i in range(phnum):
+        ph = phoff + i * phentsize
+        if is64:
+            off, size = struct.unpack_from("<Q", data, ph + 8)[0], struct.unpack_from("<Q", data, ph + 0x20)[0]
+        else:
+            off, size = struct.unpack_from("<I", data, ph + 4)[0], struct.unpack_from("<I", data, ph + 0x10)[0]
+        if not size:
+            continue
+        seg = Path(str(mdt)[:-4] + f".b{i:02d}")
+        if seg.exists():
+            chunk = seg.read_bytes()
+        elif off + size <= len(data):
+            chunk = data[off:off + size]
+        else:
+            raise ValueError(f"missing {seg.name}")
+        if len(chunk) != size:
+            raise ValueError(f"{seg.name} has the wrong size")
+        if len(img) < off:
+            img += bytes(off - len(img))
+        img[off:off + size] = chunk
+    return bytes(img)
+
+
 def sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -287,18 +320,33 @@ def main():
             os.replace(tmp, t)
             copied += 1
         renamed = 0
-        for path, srcs in byname.items():
+        for path, srcs in list(byname.items()):
             for src, rel in srcs:
                 t = dest / rel
-                if t.is_file() and t.stat().st_size == src.stat().st_size and sha256(t) == sha256(src):
+                if src.suffix.lower() == ".mdt" and rel.lower().endswith(".mbn"):
+                    try:
+                        blob = squash(src)
+                    except (OSError, ValueError, struct.error) as e:
+                        log(f"{rel}: can't join {src}: {e}")
+                        del byname[path]
+                        break
+                else:
+                    blob = None
+                if blob is None and t.is_file() and t.stat().st_size == src.stat().st_size \
+                        and sha256(t) == sha256(src):
+                    continue
+                if blob is not None and t.is_file() and t.read_bytes() == blob:
                     continue
                 t.parent.mkdir(parents=True, exist_ok=True)
                 tmp = t.with_name(t.name + ".part")
-                with open(src, "rb") as fi, open(tmp, "wb") as fo:
-                    fo.write(fi.read())
+                with open(tmp, "wb") as fo:
+                    fo.write(blob if blob is not None else src.read_bytes())
                 os.replace(tmp, t)
                 renamed += 1
-            log(f"{path}: this tablet's own copy (another Android release), from {srcs[0][0]}")
+            else:
+                log(f"{path}: this tablet's own copy (another Android release), from {srcs[0][0]}"
+                    + (" (joined from its split parts)" if srcs[0][0].suffix.lower() == ".mdt"
+                       and path.lower().endswith(".mbn") else ""))
     finally:
         m.close()
 
@@ -331,17 +379,26 @@ def by_name(trees, rows):
     want = {}
     for r in rows:
         want.setdefault(Path(r["path"]).name.lower(), []).append(r)
+    # Some releases ship only the split form (X.mdt + X.bNN) of what Linux
+    # loads as one X.mbn (the GPU's zap): take that and squash it.
+    split = {}
+    for r in rows:
+        n = Path(r["path"]).name.lower()
+        if n.endswith(".mbn"):
+            split.setdefault(n[:-4] + ".mdt", []).append(r)
     hits = {}  # name -> {tree index: [paths]}
     for i, tree in enumerate(trees):
         for root, _dirs, files in os.walk(tree):
             for fn in files:
-                if fn.lower() in want:
+                if fn.lower() in want or fn.lower() in split:
                     p = Path(root) / fn
                     if p.is_file() and not p.is_symlink():
                         hits.setdefault(fn.lower(), {}).setdefault(i, []).append(p)
     out = {}
-    for name, rs in want.items():
+    for name, rs in list(want.items()) + list(split.items()):
         for r in rs:
+            if r["path"] in out:
+                continue
             hint = [x.lower() for x in Path(r["path"]).parts[:-1]]
             pick = None
             for i in sorted(hits.get(name, {})):
@@ -354,7 +411,9 @@ def by_name(trees, rows):
             if pick is None:
                 continue
             srcs = [(pick, r["path"])]
-            if pick.suffix.lower() == ".mdt":
+            if pick.suffix.lower() == ".mdt" and r["path"].lower().endswith(".mbn"):
+                pass  # written squashed, one file
+            elif pick.suffix.lower() == ".mdt":
                 stem = pick.stem
                 for seg in sorted(pick.parent.iterdir()):
                     if seg.stem == stem and len(seg.suffix) == 4 and seg.suffix[1].lower() == "b" \
