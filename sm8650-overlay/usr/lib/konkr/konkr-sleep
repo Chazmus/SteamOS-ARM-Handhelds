@@ -195,8 +195,20 @@ light() {
 wifi_mark() { /usr/lib/steamos-arm/steamos-arm-wifi-wake mark; }
 wifi_watch_start() { /usr/lib/steamos-arm/steamos-arm-wifi-wake start; }
 
+# The stick lights go dark with the screen, not seconds later when the MCU
+# lets go. konkrd puts them back on its SIGHUP in post.
+lights_off() {
+  local l
+  for l in /sys/class/leds/*joysticks* /sys/class/leds/*-joystick; do
+    [[ -e $l/brightness ]] || continue
+    [[ -e $l/effect ]] && echo static >"$l/effect" 2>/dev/null
+    echo 0 >"$l/brightness" 2>/dev/null
+  done
+}
+
 pre() {
   local n u x
+  lights_off
   report_start
   wifi_mark
   x=$(xhci_off)
