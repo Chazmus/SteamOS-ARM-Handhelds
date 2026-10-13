@@ -70,7 +70,7 @@ for b in a.bases:
 def stale_pyc(key):
     """A .pyc older than its source: Python rewrites it on the device the
     first time that module is imported as root (the UFS installer's, in 1.3.0),
-    and an updater from before drop_stale_pycache refuses the delta over it."""
+    and an updater from before drop_stale_transient refuses the delta over it."""
     parts = key.split('/')
     if len(parts) < 3 or parts[-2] != '__pycache__' or not key.endswith('.pyc'):
         return False
@@ -84,8 +84,15 @@ def stale_pyc(key):
     return flags == 0 and (mtime != int(st.st_mtime) & 0xFFFFFFFF or size != st.st_size & 0xFFFFFFFF)
 
 
+def rewritten(key):
+    """pacman's sync databases: pacman -Sy and Discover's update checks rewrite
+    them on the device, and an updater from before drop_stale_transient refuses a delta
+    that doesn't carry them (issue #64). They are small; always ship them."""
+    return key.startswith('root/usr/lib/holo/pacmandb/sync/')
+
+
 blobs = sorted({e['f'][4] for k, e in inventory.items() if 'f' in e and (
-    not bases or any(m.get(k) != e['f'][4] for m in bases) or stale_pyc(k))})
+    not bases or any(m.get(k) != e['f'][4] for m in bases) or stale_pyc(k) or rewritten(k))})
 
 with tempfile.TemporaryDirectory(prefix='sau-', dir=output.parent) as temp:
     stage = Path(temp)

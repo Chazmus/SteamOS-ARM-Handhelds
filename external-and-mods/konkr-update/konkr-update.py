@@ -183,6 +183,11 @@ def xattrs_of(path):
     return xattrs
 
 
+def is_transient(key):
+    """Python bytecode caches and pacman sync databases drift at runtime and are not managed."""
+    return '/__pycache__/' in key or key.endswith('/__pycache__') or '/pacmandb/sync/' in key or key.endswith('/pacmandb/sync')
+
+
 def walk_managed(base_of, skip_etc=False):
     """{managed path: entry}. base_of maps a managed prefix to a real directory."""
     out = {}
@@ -557,13 +562,25 @@ def make_plan(target, root, home, boot):
     return plan
 
 
-def drop_stale_pycache(plan, target, blobs, root, home):
-    """Python rewrites a .pyc whose source looks newer, so the live copy can
-    differ from the release. When the package doesn't carry it, delete it
-    instead of refusing the update: Python rebuilds it from the source."""
-    for key in [k for k in plan['write'] if '/__pycache__/' in k and target[k]['f'][4] not in blobs]:
+# Settings files our own daemons rewrite from Handheld Control (konkrd puts
+# the Pocket FIT's front buttons on controller buttons in this map, issue #64).
+# A release only changes one together with its blob; without the blob the
+# device's copy is the user's setting and stays.
+SETTINGS = tuple(p + 'inputplumber/capability_maps.d/konkr_pocketfit_sysbtn.yaml'
+                 for p in ('root/etc/', 'root/' + UPPER + '/'))
+
+
+def drop_stale_transient(plan, target, blobs, root, home):
+    """Python rewrites a .pyc whose source looks newer, and pacman refreshes
+    sync databases under /usr/lib/holo/pacmandb/sync/, so live copies can differ
+    from the release. When the package doesn't carry them, ignore or delete them
+    instead of refusing the update. Settings files keep the user's copy."""
+    for key in [k for k in plan['write'] if is_transient(k) and target[k]['f'][4] not in blobs]:
         plan['write'].remove(key)
-        if os.path.lexists(real_path(key, root, home)): plan['delete'].append(key)
+        if '/__pycache__/' in key and os.path.lexists(real_path(key, root, home)):
+            plan['delete'].append(key)
+    for key in [k for k in plan['write'] if k in SETTINGS and target[k]['f'][4] not in blobs]:
+        if os.path.lexists(real_path(key, root, home)): plan['write'].remove(key)
     plan['delete'].sort(key=lambda k: (-k.count('/'), k))
 
 
@@ -735,12 +752,16 @@ def stage2(work, package, root_info, home_info, boot_info, model, pending):
     run('mount', '--bind', '/', view)
     try:
         plan = make_plan(target, view, Path('/home'), Path('/boot'))
-        drop_stale_pycache(plan, target, set(manifest['blobs']), view, Path('/home'))
+        drop_stale_transient(plan, target, set(manifest['blobs']), view, Path('/home'))
         need = {target[k]['f'][4] for k in plan['write']}
         missing = need - set(manifest['blobs'])
         if missing:
+            paths = sorted(k for k in plan['write'] if target[k]['f'][4] in missing)
+            shown = ', '.join('/' + k.split('/', 1)[1] if k.startswith('root/') else k for k in paths[:5])
             raise ValueError('this system differs from the releases this update was made for '
-                             f'({", ".join(manifest.get("from") or ["?"])}): install the full update')
+                             f'({", ".join(manifest.get("from") or ["?"])}): {shown}'
+                             + (f' and {len(paths) - 5} more' if len(paths) > 5 else '')
+                             + ' changed; install the full update')
         listing = work / 'blobs.list'
         listing.write_text(''.join(f'blobs/{h[:2]}/{h}\n' for h in sorted(need)))
         if need: run('tar', '-xzf', package, '-C', work, '-T', listing)
