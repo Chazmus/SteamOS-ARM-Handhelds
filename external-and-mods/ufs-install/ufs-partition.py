@@ -42,7 +42,9 @@ GIB = 1 << 30
 MIB = 1 << 20
 BOOT_GIB = 2
 DEFAULT_STORAGE_GIB = 20
-MIN_ANDROID_GIB = 8
+# Android needs room for its own updates and apps; under 16 GiB it runs
+# out of space soon after setup.
+MIN_ANDROID_GIB = 16
 MIN_HOME_GIB = 16
 OURS = ("ROCKNIX", "STORAGE", "HOME")
 # ROCKNIX: an EFI System Partition. The ABL boots Linux from it whatever

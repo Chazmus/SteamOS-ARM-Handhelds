@@ -61,7 +61,7 @@ def probe_sizes() -> dict[str, str]:
     if not script.is_file():
         raise RuntimeError(f"Missing probe script: {script}")
     # Probe may need root for parted on some devices
-    proc = _pkexec(["bash", str(script)])
+    proc = _pkexec([str(script)])
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise RuntimeError(err)
@@ -126,10 +126,7 @@ class MainWindow(Gtk.Window):
                  "• Incorrect use MAY cause data loss or make Android/Linux unbootable.\n"
                  "• Run this from microSD Linux, not from an already-installed UFS root.\n"
                  "• Keep ROCKNIX ABL installed and a working /boot/KERNEL on the SD.\n\n") +
-                "STEAMOS PASSWORD: official SteamOS ships with no user password. "
-                "Create one later (passwd in Konsole, or Users in System Settings). "
-                "This installer asks for that password (pkexec/sudo). "
-                "Without it the internal UFS install cannot run.\n\n"
+                "No password needed. If you set one with passwd, SteamOS may ask for it.\n\n"
                 "Nothing should go wrong if you follow the steps, but DATA LOSS IS POSSIBLE.\n"
                 "Proceed only if you understand the risk."
             )
@@ -173,7 +170,9 @@ class MainWindow(Gtk.Window):
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.refresh_btn = Gtk.Button(label="Refresh UFS info")
         self.refresh_btn.connect("clicked", lambda *_: self.refresh_async())
-        self.install_btn = Gtk.Button(label="Install to internal UFS")
+        self._install_label = "Install to internal UFS"
+        self._reinstall = False
+        self.install_btn = Gtk.Button(label=self._install_label)
         self.install_btn.connect("clicked", self._on_install)
         buttons.pack_start(self.refresh_btn, False, False, 0)
         buttons.pack_start(self.install_btn, False, False, 0)
@@ -234,9 +233,19 @@ class MainWindow(Gtk.Window):
                     self._append(err)
                     return
                 self._info = info
-                fresh = info.get("MODE") == "fresh"
+                mode = info.get("MODE")
                 from_sd = info.get("RUNNING_FROM_SD") == "1"
-                self.install_btn.set_sensitive(fresh and from_sd)
+                # An earlier install, finished or not (an interrupted one left the
+                # app greyed out for good): offer to install it again over our own
+                # partitions. Android and its size stay as they are.
+                self._reinstall = mode == "installed"
+                self.install_btn.set_label("Install again" if self._reinstall else self._install_label)
+                self.install_btn.set_sensitive(mode in ("fresh", "installed") and from_sd)
+                self.size_spin.set_sensitive(not self._reinstall)
+                if self._reinstall and from_sd:
+                    self._append("SteamOS is already on internal storage, or an install didn't finish. "
+                                 "Install again erases internal SteamOS, games and saves included, and copies "
+                                 f"{SOURCE} again. Android isn't touched.")
                 if not from_sd:
                     self._append(f"Running from internal storage: boot {SOURCE} to install.")
                 elif info.get("MODE") == "occupied":
@@ -286,7 +295,11 @@ class MainWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.OK_CANCEL,
             text="Confirm internal UFS install",
         )
+        reinstall = getattr(self, "_reinstall", False)
         dialog.format_secondary_text(
+            "Internal SteamOS (ROCKNIX, STORAGE and HOME) will be ERASED and copied again, "
+            "games and saves on it included. Android isn't touched. Continue?"
+            if reinstall else
             f"Android userdata will be set to {android_gb} GB and ERASED.\n"
             f"Creates ROCKNIX ({boot_gb} GB boot) + STORAGE ({root_gb} GB root) + HOME (remaining).\n"
             "Internal partitions will be rewritten. Continue?"
@@ -307,7 +320,8 @@ class MainWindow(Gtk.Window):
         self._info = {}
 
         def worker() -> None:
-            proc = _pkexec(["bash", str(script), "--force", "--android-gb", str(android_gb),
+            size = ["--resume"] if reinstall else ["--android-gb", str(android_gb)]
+            proc = _pkexec([str(script), "--force", *size,
                             "--expect", fingerprint, "--home", home_mode])
             out = ((proc.stdout or "") + (proc.stderr or "")).strip()
 

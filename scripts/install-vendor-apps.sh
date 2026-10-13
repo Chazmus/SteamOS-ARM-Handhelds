@@ -61,6 +61,10 @@ EOF
     ln -sfn "${s}.sh" "$bin/${s}" || true
   fi
 done
+# The app runs the installer and its probe through pkexec. SteamOS has no
+# user password, so the person at the device may run these two without one.
+install -Dm0644 "${MOD}/ufs-install/polkit/org.steamos-arm.easy-ufs-install.policy" \
+  "$R/usr/share/polkit-1/actions/org.steamos-arm.easy-ufs-install.policy"
 # restore / inspect: `sudo ufs-partition.py restore --backup …` (printed by the installer)
 for s in ufs-partition ufs-bootimg; do
   ln -sfn /usr/share/easy-ufs-install/${s}.py "$bin/${s}.py"
