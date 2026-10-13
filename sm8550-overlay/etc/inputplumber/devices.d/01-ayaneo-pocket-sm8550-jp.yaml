@@ -25,10 +25,11 @@ source_devices:
     evdev:
       vendor_id: "1c4f"
       product_id: "0002"
+      # Only the keys interface. input0 is a mouse whose wheel is the Pocket
+      # DMG's volume wheel: left to sm8550-volume-keys, which turns it into
+      # volume steps (grabbed here it went nowhere, the Deck pad has no wheel).
+      phys_path: "*/input1"
       handler: event*
-    # Two event devices (input0 and input1): both join this controller.
-    # With the default unique: true the second one became a second
-    # virtual pad (two controllers, A/B "swapping" on the Pocket DMG).
     unique: false
     capability_map_id: ayaneo_sm8550_deck_jp
   - group: gamepad
@@ -43,7 +44,7 @@ source_devices:
       vendor_id: "4001"
       product_id: "0428"
       handler: event*
-    capability_map_id: konkr_pocketfit_dinput
+    capability_map_id: ayaneo_dmg_dinput
   - group: gamepad
     hidraw:
       vendor_id: 0x4001

@@ -22,6 +22,8 @@ import sys
 EVENT_FMT = "llHHi"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 EV_KEY = 0x01
+EV_REL = 0x02
+REL_WHEEL = 0x08
 KEY_MUTE = 113
 KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP = 115
@@ -33,6 +35,9 @@ HOLD_INTERVAL = float(os.environ.get("SM8550_VOLUME_HOLD_INTERVAL", "0.1"))
 # paddles, so Volume Up only comes through its keyboard (a grabbed device's
 # raw events reach nobody else, so nothing is counted twice).
 ALLOW = ("gpio-keys", "pmic_resin", "inputplumber keyboard")
+# The AYANEO Pocket DMG's volume wheel: the mouse interface of "AYANEO DEVICE",
+# a scroll wheel (InputPlumber leaves that interface alone on the DMG).
+WHEEL = ("ayaneo device",)
 
 
 def log(msg: str) -> None:
@@ -79,19 +84,30 @@ def has_volume_keys(fd: int) -> bool:
     return bit(KEY_VOLUMEUP) or bit(KEY_VOLUMEDOWN) or bit(KEY_MUTE)
 
 
+def has_wheel(fd: int) -> bool:
+    buf = array.array("B", [0] * 2)
+    ioc = (2 << 30) | (ord("E") << 8) | (0x20 + EV_REL) | (len(buf) << 16)
+    try:
+        fcntl.ioctl(fd, ioc, buf, True)
+    except OSError:
+        return False
+    return bool(buf[REL_WHEEL // 8] & (1 << (REL_WHEEL % 8)))
+
+
 def open_devices(skip: frozenset = frozenset()) -> list[tuple[str, int]]:
     opened: list[tuple[str, int]] = []
     for path in sorted(glob.glob("/dev/input/event*")):
         if path in skip:
             continue
         dname = device_name(path).lower()
-        if not any(a in dname for a in ALLOW):
+        wheel_dev = any(a in dname for a in WHEEL)
+        if not wheel_dev and not any(a in dname for a in ALLOW):
             continue
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
             continue
-        if not has_volume_keys(fd):
+        if not (has_wheel(fd) if wheel_dev else has_volume_keys(fd)):
             os.close(fd)
             continue
         log(f"watch {path} ({dname})")
@@ -168,6 +184,9 @@ def main() -> int:
                 continue
             for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                 _s, _us, etype, code, value = struct.unpack_from(EVENT_FMT, data, off)
+                if etype == EV_REL and code == REL_WHEEL and value:
+                    apply(KEY_VOLUMEUP if value > 0 else KEY_VOLUMEDOWN)
+                    continue
                 if etype != EV_KEY:
                     continue
                 if value == 1:
