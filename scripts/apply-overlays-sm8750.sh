@@ -823,6 +823,25 @@ done
 bad="$(find "$R/usr/share/gamescope" "$R/etc/gamescope" -xdev -type f ! -perm -o=r 2>/dev/null | head -3)"
 [[ -z "$bad" ]] || die "gamescope scripts not readable: $bad"
 
+# The Frame's systemd confs keep the session on cpu0-4 and system services on
+# cpu1-4: on the 8 Elite that hides three of its eight cores from Steam, games
+# and FEX ("Available Logical CPU Cores: 5", issue #63). Same unpinning as the
+# 8 Gen 2 image.
+for f in usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf \
+         usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf \
+         usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf; do
+  install -Dm0644 "$ROOT/sm8550-image-overlay/$f" "$R/$f"
+done
+# Discover: Flatpak apps only. Its PackageKit backend offered Valve's pacman
+# updates for the whole system, which replace this port's own packages (a
+# Legion Y700 Gen 4 tester's system stopped working after one), and its update
+# checks rewrite pacman's sync databases under /usr, which the updater then
+# finds changed ("this system differs", issue #64).
+rm -f "$R/usr/lib/qt6/plugins/discover/packagekit-backend.so"
+# Sleep evidence in the journal (sleep-stats): low-power state counts, wake IRQ.
+install -Dm0755 "$OVL/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats" \
+  "$R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats"
+
 # macOS AppleDouble files (._name) from copying the tree through a Mac.
 # gamescope runs every .lua in its script folders, and ._inspect.lua made it
 # abort on start, over and over: the Odin 3 test 1/2 black screen.

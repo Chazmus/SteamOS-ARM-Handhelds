@@ -676,6 +676,15 @@ ln -sfn ../konkr-sleep.service "$R/usr/lib/systemd/system/sleep.target.wants/kon
 rm -f "$R/usr/lib/systemd/system/multi-user.target.wants/sshd.service" \
   "$R/etc/systemd/system/multi-user.target.wants/sshd.service" \
   "$R/var/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/sshd.service"
+# Discover: Flatpak apps only. Its PackageKit backend offered Valve's pacman
+# updates for the whole system, which replace this port's own packages (a
+# Legion Y700 Gen 4 tester's system stopped working after one), and its update
+# checks rewrite pacman's sync databases under /usr, which the updater then
+# finds changed ("this system differs", issue #64).
+rm -f "$R/usr/lib/qt6/plugins/discover/packagekit-backend.so"
+# Sleep evidence in the journal (sleep-stats): low-power state counts, wake IRQ.
+install -Dm0755 "$OVL/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats" \
+  "$R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats"
 # Discover: fetch the Flathub catalog (never downloaded on a fresh image).
 mkdir -p "$R/usr/lib/systemd/system/timers.target.wants"
 ln -sfn ../konkr-flatpak-appstream.timer \
@@ -835,6 +844,7 @@ rm -f "$R/usr/lib/tmpfiles.d/sm8550-cpuidle-teo.conf" \
       "$R/usr/lib/udev/rules.d/99-zz-sm8550-backlight-untag.rules"
 for f in usr/lib/systemd/zram-generator.conf.d/60-steamos-arm-zram.conf \
          usr/lib/tmpfiles.d/steamos-arm-cpuidle-teo.conf \
+         usr/lib/sysctl.d/60-steamos-arm-net-rmem.conf \
          usr/lib/udev/rules.d/99-zz-steamos-arm-backlight-untag.rules; do
   install_file "$OVL/$f" "$R/$f" 0644
 done
