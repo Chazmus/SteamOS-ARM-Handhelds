@@ -177,6 +177,13 @@ install_file "$OVL/usr/lib/steamos/sm8550-prepare-plasma" \
   "$R/usr/lib/steamos/sm8550-prepare-plasma" 0755
 install_file "$OVL/usr/lib/steamos/sm8550-startplasma" \
   "$R/usr/lib/steamos/sm8550-startplasma" 0755
+# Desktop Mode's Steam autostart through desktop-steam: Steam's on-screen
+# keyboard fits narrow panels (AYANEO Pocket DMG).
+install_file "$OVL/usr/lib/steamos/desktop-steam" "$R/usr/lib/steamos/desktop-steam" 0755
+if [[ -f "$R/etc/xdg/autostart/steam.desktop" ]]; then
+  sed -i 's|^Exec=/usr/bin/steam |Exec=/usr/lib/steamos/desktop-steam |' "$R/etc/xdg/autostart/steam.desktop"
+  grep -q '^Exec=/usr/lib/steamos/desktop-steam ' "$R/etc/xdg/autostart/steam.desktop" || die "Steam autostart not redirected"
+fi
 backup "$R/usr/bin/steamos-session-select" "$STOCK/usr/bin/steamos-session-select"
 install_file "$OVL/usr/bin/steamos-session-select" \
   "$R/usr/bin/steamos-session-select" 0755
