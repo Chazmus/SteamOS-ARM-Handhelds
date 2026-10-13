@@ -685,6 +685,11 @@ rm -f "$R/usr/lib/qt6/plugins/discover/packagekit-backend.so"
 # Sleep evidence in the journal (sleep-stats): low-power state counts, wake IRQ.
 install -Dm0755 "$OVL/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats" \
   "$R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats"
+# Asleep or awake, power off before the battery runs flat: a sleeping
+# handheld at 0 % browns out and can boot-loop on the charger.
+install -Dm0755 "$OVL/usr/lib/systemd/system-sleep/steamos-arm-low-battery" "$R/usr/lib/systemd/system-sleep/steamos-arm-low-battery"
+sed -i -e 's/^PercentageCritical=.*/PercentageCritical=6/' -e 's/^PercentageAction=.*/PercentageAction=4/' \
+  -e 's/^CriticalPowerAction=.*/CriticalPowerAction=PowerOff/' "$R/etc/UPower/UPower.conf"
 # Discover: fetch the Flathub catalog (never downloaded on a fresh image).
 mkdir -p "$R/usr/lib/systemd/system/timers.target.wants"
 ln -sfn ../konkr-flatpak-appstream.timer \

@@ -65,6 +65,11 @@ for f in tablet-backlight tablet-boot-watch; do
   install -Dm0755 $OV/usr/lib/steamos-arm/$f $R/usr/lib/steamos-arm/$f
 done
 install -Dm0755 $OV/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats $R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats
+# Asleep or awake, power off before the battery runs flat: a sleeping
+# handheld at 0 % browns out and can boot-loop on the charger.
+install -Dm0755 "$OV/usr/lib/systemd/system-sleep/steamos-arm-low-battery" "$R/usr/lib/systemd/system-sleep/steamos-arm-low-battery"
+sed -i -e 's/^PercentageCritical=.*/PercentageCritical=6/' -e 's/^PercentageAction=.*/PercentageAction=4/' \
+  -e 's/^CriticalPowerAction=.*/CriticalPowerAction=PowerOff/' "$R/etc/UPower/UPower.conf"
 for u in steamos-arm-tablet-backlight steamos-arm-tablet-boot-watch; do
   install -Dm0644 $OV/usr/lib/systemd/system/$u.service $R/usr/lib/systemd/system/$u.service
   ln -sfn ../$u.service $R/usr/lib/systemd/system/multi-user.target.wants/$u.service
