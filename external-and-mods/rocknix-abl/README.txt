@@ -8,12 +8,13 @@ or newer.
 
 You need Android's "run script as root" option (in the device's settings).
 
-1. In Android, copy this whole rocknix_abl folder from the microSD card's
-   BOOT drive to the top of Android's internal storage, so it ends up as
-   /sdcard/rocknix_abl (the scripts look for it there).
-2. Run flash_abl.sh as root. It first saves your current ABL as abl_a.img
-   and abl_b.img in the same folder, then writes ROCKNIX ABL to both slots.
-   Copy the two .img files to a PC and keep them.
+1. In Android, open the root script tool and run flash_abl.sh from this
+   rocknix_abl folder. It can stay on the microSD card's BOOT drive; copying
+   it to the top of internal storage (/sdcard/rocknix_abl) works too.
+2. The script first saves your current ABL as abl_a.img and abl_b.img in the
+   same folder, then writes ROCKNIX ABL to both slots and reads them back.
+   It ends with "Done" or "FAILED". Copy the two .img files to a PC and keep
+   them.
 3. Restart holding Volume Down. In the menu (Volume to move, Power to
    select): set your device model, choose Linux as the boot mode, Start.
 
