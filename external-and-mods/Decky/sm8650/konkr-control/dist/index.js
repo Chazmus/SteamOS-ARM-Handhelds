@@ -242,7 +242,7 @@ function Content() {
                 layout: "below",
                 description: st.dualboot_text,
                 onClick: () => bootAndroid(),
-                children: "Restart into ZUXOS",
+                children: st.dualboot_label || "Restart into Android",
             })) : null,
             st.has_flip ? row(jsx(DFL.ToggleField, {
                 label: "Flip screen",
