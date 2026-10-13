@@ -49,3 +49,17 @@
 &{/gpio-keys/key-volume-up} {
 	/delete-property/ wakeup-source;
 };
+
+/*
+ * Sound over USB-C to a monitor: the DisplayPort controller's audio codec on
+ * the DSP's DISPLAY_PORT_RX_0, fed from MultiMedia4 in the topology. This
+ * link also creates the "DP0 Jack" control the UCM HDMI device keys off.
+ */
+&{/sound} {
+	dp-dai-link {
+		link-name = "DisplayPort Playback";
+		cpu { sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>; };
+		codec { sound-dai = <&mdss_dp0>; };
+		platform { sound-dai = <&q6apm>; };
+	};
+};
