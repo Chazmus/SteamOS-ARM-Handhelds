@@ -1,0 +1,22 @@
+#!/bin/sh
+# Lepton's rootless container maps steamos's subordinate IDs. Android runs
+# isolated processes (Chrome's page renderers, app zygotes) as 90000-99999,
+# beyond SteamOS's default 65536, so they died at setuid and Chrome loaded
+# nothing. Give steamos enough IDs, past any other user's range.
+need=131072
+for f in /etc/subuid /etc/subgid; do
+  [ -f "$f" ] || touch "$f"
+  line="$(grep '^steamos:' "$f" | head -n1)"
+  count="${line##*:}"
+  [ -n "$line" ] && [ "${count:-0}" -ge "$need" ] && continue
+  start=100000
+  [ -n "$line" ] && start="$(echo "$line" | cut -d: -f2)"
+  # Any other user's range in the way: start after the last one.
+  end="$(grep -v '^steamos:' "$f" | awk -F: -v s="$start" -v n="$need" \
+    '$2 < s + n && $2 + $3 > s { e = $2 + $3 } END { print e + 0 }')"
+  [ "$end" -gt 0 ] && start="$(grep -v '^steamos:' "$f" | awk -F: '{ e = $2 + $3; if (e > m) m = e } END { print m }')"
+  sed -i '/^steamos:/d' "$f"
+  echo "steamos:${start}:${need}" >>"$f"
+  echo "android-subids: $f steamos:${start}:${need}"
+done
+exit 0
