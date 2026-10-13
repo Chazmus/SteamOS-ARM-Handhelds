@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Lenovo Legion Y700 Gen 5 (TB323FU): the GPU off the board-temperature
+ * throttle.
+ *
+ * baldur-skin-thermal.dtsi follows Android's default thermal-engine case and
+ * caps the GPU at 902/646/500/222 MHz from 44/46/48/50 C on the board NTC
+ * (quiet-thermal). A game reaches that within minutes, so the GPU spent most
+ * of its time at a fraction of its clock. Android's game profiles lift these
+ * limits; here the GPU maps go, the CPU steps stay (they cut most of the
+ * heat), and the GPU keeps its own 105 C junction trip from kaanapali.dtsi.
+ *
+ * After github.com/mydanyi/armadaos-freedom
+ * devices/lenovo-tb323fu/boot/quiet-thermal-no-gpu.dtsi (GPL-2.0).
+ */
+
+&{/thermal-zones/quiet-thermal/cooling-maps} {
+	/delete-node/ map2;	/* GPU -> 902 MHz at 44 C */
+	/delete-node/ map5;	/* GPU -> 646 MHz at 46 C */
+	/delete-node/ map8;	/* GPU -> 500 MHz at 48 C */
+	/delete-node/ map10;	/* GPU -> 222 MHz at 50 C */
+};

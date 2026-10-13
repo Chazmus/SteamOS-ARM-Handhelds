@@ -75,6 +75,19 @@ for f in sc4_1882.so fast_lookahead_limiter_1913.so; do
 done
 # The audio topology (generated, in the board project).
 install -Dm0644 "$W/firmware/audio/LENOVO-TB323FU-tplg.bin" "$R/usr/lib/firmware/qcom/kaanapali/LENOVO-TB323FU-tplg.bin"
+# Newer than the board project's (external-and-mods/baldur/rootfs, from
+# github.com/mydanyi/armadaos-freedom): USB-C routing that keeps a real host
+# (dock, PC) on the controller and doesn't drop a pad on the side port when
+# a charger goes in the bottom one, plus a re-check on every role change;
+# speaker gain that waits for the sound card and falls back to the safe
+# attenuation on any failure; the Legion G9 2026 controller (3537:1136) for
+# InputPlumber.
+B="$ROOT/external-and-mods/baldur/rootfs"
+install -m0755 "$B"/usr/libexec/tb323fu/tb323fu-usb-port "$B"/usr/libexec/tb323fu/tb323fu-speaker-gain "$R/usr/libexec/tb323fu/"
+install -Dm0644 "$B/usr/lib/udev/rules.d/71-tb323fu-usb-host.rules" "$R/usr/lib/udev/rules.d/71-tb323fu-usb-host.rules"
+install -Dm0644 "$B/usr/lib/systemd/user/tb323fu-speaker-gain.service" "$R/usr/lib/systemd/user/tb323fu-speaker-gain.service"
+install -Dm0644 "$B/usr/share/inputplumber/devices/05-lenovo-tb323fu-legion-g9-2026.yaml" "$R/usr/share/inputplumber/devices/05-lenovo-tb323fu-legion-g9-2026.yaml"
+install -Dm0644 "$B/usr/share/inputplumber/capability_maps/lenovo_legion_g9_2026.yaml" "$R/usr/share/inputplumber/capability_maps/lenovo_legion_g9_2026.yaml"
 log "platform files"
 
 # Switching, firmware from the card, growing to the card.

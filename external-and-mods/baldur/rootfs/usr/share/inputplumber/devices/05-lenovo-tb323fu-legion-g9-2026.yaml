@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+# Lenovo Legion Tab Y700 5th Gen (TB323FU) with the GameSir Legion Gaming
+# Controller G9 2026 attached. Basic support only: a single evdev gamepad is
+# sourced and mapped through the lenovo_legion_g9_2026 capability map. No IMU,
+# tablet haptics, consumer-key blocking, RGB vendor commands, udev rules,
+# service units or helper changes are added here.
+#
+# The device-tree model strings below are the TB323FU's (the first one is our
+# kernel's); this profile does not match other Legion models.
+#
+# Provenance: adapted from the 3537:1134 profile of
+# https://github.com/enij90/armada-tb321fu/tree/62076530bf1ff34295d671016658965e54e597f1
+# The 1134-specific firmware-timing notes from that profile have not been
+# verified on the 3537:1136 G9 2026 and are deliberately not carried over.
+#
+# Steam sees it as a Steam Deck controller (deck-uhid), like the built-in
+# controllers of the handhelds.
+version: 1
+kind: CompositeDevice
+name: Lenovo Legion Tab Y700 5th Gen (TB323FU) + Legion G9 2026
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: Lenovo Legion Tab Y700 5th Gen
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: Lenovo Legion Y700 Gen 5 (TB323FU)
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: Lenovo Legion Tab Y700 (TB323FU)
+single_source: false
+source_devices:
+  - group: gamepad
+    evdev:
+      name: GameSir Legion Gaming Controller G9 2026
+      vendor_id: "3537"
+      product_id: "1136"
+      handler: event*
+    capability_map_id: lenovo_legion_g9_2026
+options:
+  auto_manage: true
+target_devices:
+  - deck-uhid
+  - keyboard

@@ -24,9 +24,11 @@ cd "$SRC"
 echo "== kernel $(date +%T)"
 cpio=/work/kernel-elden/initramfs/initrd.cpio
 grep -aq "microSD dual boot" "$cpio" || fail "initramfs without root=/dev support (rebuild kernel-elden first)"
-bash scripts/build-baldur-kernel.sh $KO "$cpio" > /work/kbaldur.log 2>&1 || { tail -40 /work/kbaldur.log; fail "kernel"; }
+if [ -z "${SKIP_KERNEL:-}" ]; then
+  bash scripts/build-baldur-kernel.sh $KO "$cpio" > /work/kbaldur.log 2>&1 || { tail -40 /work/kbaldur.log; fail "kernel"; }
+fi
 kr=$(basename "$(ls -d $KO/modules/*)")
-[ "$(strings $KO/boot/Image | grep -c "root=PARTLABEL=steamos-gen5")" -gt 0 ] || fail "cmdline"
+grep -aq "root=PARTLABEL=steamos-gen5" $KO/boot/Image || fail "cmdline"
 
 echo "== speaker filter plugins $(date +%T)"
 rm -rf $LAD; mkdir -p $LAD
@@ -36,6 +38,8 @@ docker run --rm -v $LAD:/out ubuntu:24.04 bash -c '
 [ -s $LAD/sc4_1882.so ] && [ -s $LAD/fast_lookahead_limiter_1913.so ] || fail "ladspa"
 
 echo "== system $(date +%T)"
+# CHECKS_ONLY=1: the system in $O/fs.img is already done, start at the checks.
+if [ -z "${CHECKS_ONLY:-}" ]; then
 rm -rf "$O"; mkdir -p "$O"
 simg2img "$BASE" "$O/fs.img"
 mount -o loop "$O/fs.img" $M
@@ -47,11 +51,34 @@ install -m0755 $OV/usr/lib/steamos/gamescope-session $R/usr/lib/steamos/gamescop
 install -m0755 $OV/usr/bin/steamos-session-select $R/usr/bin/steamos-session-select
 install -m0755 sm8750-overlay/usr/lib/odin3/odin3d $R/usr/lib/odin3/odin3d
 install -m0644 $OV/usr/lib/systemd/system/steamos-arm-tablet-sd-grow.service $OV/usr/lib/systemd/system/steamos-arm-tablet-charge-full.service $R/usr/lib/systemd/system/
+# All eight cores for Steam, games and services (issue #63) and Discover
+# without its PackageKit backend (issue #64), as in apply-overlays-sm8750.sh.
+for f in usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf \
+         usr/lib/systemd/system.conf.d/60-sm8550-cpu-affinity.conf \
+         usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf; do
+  install -Dm0644 sm8550-image-overlay/$f $R/$f
+done
+rm -f $R/usr/lib/qt6/plugins/discover/packagekit-backend.so
+# Brightness kept across restarts, a report on screen when the session never
+# starts, and sleep statistics in the journal (as on the Gen 3 and Gen 4).
+for f in tablet-backlight tablet-boot-watch; do
+  install -Dm0755 $OV/usr/lib/steamos-arm/$f $R/usr/lib/steamos-arm/$f
+done
+install -Dm0755 $OV/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats $R/usr/lib/systemd/system-sleep/steamos-arm-sleep-stats
+for u in steamos-arm-tablet-backlight steamos-arm-tablet-boot-watch; do
+  install -Dm0644 $OV/usr/lib/systemd/system/$u.service $R/usr/lib/systemd/system/$u.service
+  ln -sfn ../$u.service $R/usr/lib/systemd/system/multi-user.target.wants/$u.service
+done
 HC=$(find $M -maxdepth 6 -type d -path "*homebrew/plugins/konkr-control" | head -1)
 [ -n "$HC" ] || fail "Handheld Control"
 install -m0644 external-and-mods/Decky/sm8650/konkr-control/main.py $HC/main.py
 install -m0644 external-and-mods/Decky/sm8650/konkr-control/dist/index.js $HC/dist/index.js
 chown -R 1000:1000 $HC
+else
+mount -o loop "$O/fs.img" $M; R=$M
+OV=steamos-overlay
+HC=$(find $M -maxdepth 6 -type d -path "*homebrew/plugins/konkr-control" | head -1)
+fi
 echo "== check"
 [ -f $R/usr/lib/modules/$kr/modules.dep ] && ls $R/usr/lib/modules/$kr/extra/*aw882xx* >/dev/null || fail "modules"
 [ "$(ls $R/usr/lib/modules)" = "$kr" ] || fail "other kernels' modules left"
@@ -60,7 +87,7 @@ for u in steamos-arm-gen5-firstboot steamos-arm-gen5-emergency-key steamos-arm-t
   ls $R/usr/lib/systemd/system/*.wants/$u.service >/dev/null 2>&1 || fail "$u not enabled"
 done
 for u in tb323fu-dsp tb323fu-audio tb323fu-gen-ids tb323fu-btaddr tb323fu-usb-port; do
-  [ -e $R/etc/systemd/system/multi-user.target.wants/$u.service ] || fail "$u not enabled"
+  [ "$(readlink $R/etc/systemd/system/multi-user.target.wants/$u.service)" = /usr/lib/systemd/system/$u.service ] && [ -f $R/usr/lib/systemd/system/$u.service ] || fail "$u not enabled"
 done
 [ -f $R/usr/share/alsa/ucm2/Lenovo/TB323FU/HiFi.conf ] && [ -f $R/usr/share/pipewire/pipewire.conf.d/60-tb323fu-speakers.conf ] || fail "audio platform files"
 [ -f $R/usr/lib/ladspa/sc4_1882.so ] && [ -f $R/usr/lib/firmware/qcom/kaanapali/LENOVO-TB323FU-tplg.bin ] || fail "speaker filter / topology"
@@ -69,6 +96,14 @@ grep -q 'GAMESCOPE_ORIENTATION=right' $R/etc/systemd/user/gamescope-session.serv
 grep -q baldur $R/usr/bin/steamos-session-select && grep -q baldur $R/usr/lib/steamos/gamescope-session && grep -q gen5 $HC/main.py || fail "tablet integration"
 [ -x $R/usr/lib/steamos-arm/gen5-android ] && [ -x $R/usr/lib/hwsupport/steamos-powerbuttond ] || fail "switching / power button"
 chroot $R sh -c 'command -v sfdisk && command -v partx && command -v resize2fs && command -v pkexec' >/dev/null || fail "tools"
+chroot $R sh -c 'command -v flock && command -v pactl && gpioget --help 2>&1 | grep -q -- --numeric && gpioget --help 2>&1 | grep -q -- --as-is' >/dev/null || fail "USB-C routing / speaker gain tools"
+grep -q "CPUAffinity=0-7" $R/usr/lib/systemd/user.conf.d/60-sm8550-cpu-affinity.conf && grep -q "0xff" $R/usr/lib/systemd/user/steam.service.d/70-sm8550-cpu-affinity.conf || fail "cpu affinity"
+[ ! -e $R/usr/lib/qt6/plugins/discover/packagekit-backend.so ] || fail "Discover PackageKit backend"
+grep -q "lenovo,baldur" $R/usr/lib/systemd/system/steamos-arm-tablet-boot-watch.service && grep -q "lenovo,baldur" $R/usr/lib/systemd/system/steamos-arm-tablet-backlight.service || fail "boot watch / backlight not for Gen 5"
+grep -q host-reconcile $R/usr/libexec/tb323fu/tb323fu-usb-port && [ -f $R/usr/lib/udev/rules.d/71-tb323fu-usb-host.rules ] || fail "USB-C routing"
+grep -q fail_safe $R/usr/libexec/tb323fu/tb323fu-speaker-gain || fail "speaker gain"
+[ -f $R/usr/share/inputplumber/devices/05-lenovo-tb323fu-legion-g9-2026.yaml ] && [ -f $R/usr/share/inputplumber/capability_maps/lenovo_legion_g9_2026.yaml ] || fail "G9 2026"
+[ -L $R/etc/systemd/system/multi-user.target.wants/inputplumber.service ] || [ -L $R/usr/lib/systemd/system/multi-user.target.wants/inputplumber.service ] || fail "InputPlumber not enabled"
 echo "system checks ok"
 sync; umount $M
 e2fsck -fy "$O/fs.img" || [ $? -le 1 ]
