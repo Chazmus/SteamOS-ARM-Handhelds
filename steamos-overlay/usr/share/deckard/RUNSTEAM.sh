@@ -39,6 +39,9 @@ if [[ -z "${GAMESCOPE_WAYLAND_DISPLAY:-}" ]]; then
   fi
 fi
 export GAMESCOPE_WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-gamescope-0}"
+# Remote Play's V4L2 decoder: reset the decoder after its last buffer, which
+# the Qualcomm decoders need before the next stream starts.
+export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
 unset WAYLAND_DISPLAY XDG_SESSION_TYPE || true
 for _i in $(seq 1 50); do
   [[ -S /tmp/.X11-unix/X0 ]] && break
