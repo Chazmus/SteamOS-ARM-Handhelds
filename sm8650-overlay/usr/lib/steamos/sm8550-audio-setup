@@ -71,8 +71,13 @@ if grep -qiE 'APS2|SM8650' /proc/asound/cards; then
     # max; konkr-volume then drives it from Steam's bar with a usable curve
     # in hardware (attenuating the S16-only PCM in software crackled).
     amixer -c "$card_id" cset name='Speakers Volume' 17,17 >/dev/null 2>&1
-    amixer -c "$card_id" cset name='WSA_RX0 Digital Volume' 100% >/dev/null 2>&1
-    amixer -c "$card_id" cset name='WSA_RX1 Digital Volume' 100% >/dev/null 2>&1
+    # The Pocket S2 keeps its volume on the digital stage (UCM "Speakers
+    # Digital"): leave it to WirePlumber's saved level there.
+    case "$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null)" in
+      "AYANEO Pocket S2"*) ;;
+      *) amixer -c "$card_id" cset name='WSA_RX0 Digital Volume' 100% >/dev/null 2>&1
+         amixer -c "$card_id" cset name='WSA_RX1 Digital Volume' 100% >/dev/null 2>&1 ;;
+    esac
   else
     log "alsaucm failed — applying HiFi routes directly"
     cat /tmp/sm8550-alsaucm.log >&2 || true
