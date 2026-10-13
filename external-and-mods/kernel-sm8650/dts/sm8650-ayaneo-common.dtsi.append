@@ -56,6 +56,12 @@
  */
 &pmk8550_rtc {
 	/delete-property/ qcom,uefi-rtc-info;
+	/*
+	 * And the alarm: the board marks it ADSP-owned, but nothing on the DSP
+	 * side uses it under Linux, and the low-battery check sets it to wake
+	 * a sleeping handheld before the battery runs flat.
+	 */
+	/delete-property/ qcom,no-alarm;
 	nvmem-cells = <&rtc_offset>;
 	nvmem-cell-names = "offset";
 };
