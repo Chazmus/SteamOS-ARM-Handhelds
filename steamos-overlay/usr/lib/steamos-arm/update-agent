@@ -13,7 +13,7 @@ parts (.sau.001, .sau.002, ...) with one .sau.sha256 for the whole package;
 the parts are joined and checked before staging.
 A release can also carry steamos-arm-<soc>-<version>-full.sau, every file, for
 a system the delta doesn't fit ("this system differs"). The agent falls back
-to it by itself; agents before 1.3.3 don't see it.
+to it by itself; agents before 1.4 don't see it.
 Packages are signed; konkr-update refuses one whose signature doesn't verify.
 `apply` runs as root (steamos-arm-update.service) and reports its progress in
 /run/steamos-arm-update for steamos-update to pass on to Steam.
