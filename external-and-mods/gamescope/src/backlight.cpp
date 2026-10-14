@@ -227,9 +227,9 @@ namespace gamescope
 		const char *pszState = getenv( "XDG_STATE_HOME" );
 		const char *pszHome = getenv( "HOME" );
 		if ( pszState && *pszState )
-			return std::string( pszState ) + "/gamescope/backlight-top-nits";
+			return std::string( pszState ) + "/gamescope/backlight-top-nits-2";
 		if ( pszHome && *pszHome )
-			return std::string( pszHome ) + "/.local/state/gamescope/backlight-top-nits";
+			return std::string( pszHome ) + "/.local/state/gamescope/backlight-top-nits-2";
 		return {};
 	}
 
@@ -269,7 +269,11 @@ namespace gamescope
 			return std::clamp( flVal, 0.0f, 1.0f );
 
 		LoadTopNits();
-		if ( flVal > s_flTopNits )
+		// One stray value (an external monitor's or an HDR range) must not
+		// become the top for good: then Steam's 100 % stayed dim on the panel
+		// (Legion Y700 Gen 4 tester). A new top is taken only within 1.5x of
+		// the old one; a bigger jump is treated as a one-off and capped at 100 %.
+		if ( s_flTopNits <= 1.0f || ( flVal > s_flTopNits && flVal <= s_flTopNits * 1.5f ) )
 		{
 			s_flTopNits = flVal;
 			SaveTopNits();
