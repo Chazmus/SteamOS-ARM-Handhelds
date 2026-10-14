@@ -21,8 +21,6 @@ since unmute, state, error and interrupt status, which is then cleared)
 and restart the PA the downstream way: GLOBAL_PA_EN off, pulse
 PA_FSM_CTL0 bit 4, GLOBAL_PA_EN on. The check only reads while the
 device is already runtime-active.
-
-Developed with Claude Opus 5.5 (Anthropic) via Claude Code.
 ---
 
 -rw-r--r-- 1 root root 110104 01:01 sound/soc/codecs/wsa884x.o
