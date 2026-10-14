@@ -26,17 +26,29 @@ MANIFEST="$HERE/firmware.tsv"
 MODULE="$HERE/switch-to-steamos"
 WANT_FW=18.0.12.104
 D=/data/adb/steamos-gen5
-SWITCH=0; [[ "${1:-}" == --switch ]] && SWITCH=1
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+SWITCH=0; [[ "${1:-}" == --switch || "${1:-}" == -switch ]] && SWITCH=1
+# adb: ADB=/path/to/adb, else adb, else Windows' adb.exe (WSL). adb.exe
+# prints CRLF and can't open WSL paths, so its output is stripped of \r and
+# the work folder sits next to this script, on the Windows drive.
+ADB="${ADB:-}"
+if [[ -z "$ADB" ]]; then
+  if command -v adb >/dev/null; then ADB=adb; elif command -v adb.exe >/dev/null; then ADB=adb.exe; fi
+fi
+WIN=0; [[ "$ADB" == *.exe ]] && WIN=1
+adb() { "$ADB" "$@"; }
+host() { if ((WIN)) && command -v wslpath >/dev/null; then wslpath -w "$1"; else printf '%s' "$1"; fi; }
+if ((WIN)); then W="$(mktemp -d "$HERE/.work.XXXXXX")"; else W="$(mktemp -d)"; fi
+trap 'rm -rf "$W"' EXIT
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 su_() { adb shell "su -c '$*'" | tr -d '\r'; }
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
-for t in adb python3 tar; do command -v $t >/dev/null || die "needs $t"; done
+[[ -n "$ADB" ]] && command -v "$ADB" >/dev/null || die "needs adb (or ADB=/mnt/c/platform-tools/adb.exe from WSL)"
+for t in python3 tar; do command -v $t >/dev/null || die "needs $t"; done
 for f in "$KERNEL" "$MANIFEST" "$MODULE/action.sh" "$HERE/boot-repack.py"; do [[ -e "$f" ]] || die "missing $f (run from the unpacked release)"; done
 
 say "1. The tablet"
-[[ "$(adb get-state 2>/dev/null)" == device ]] || die "no tablet over adb (USB debugging on, one device)"
+[[ "$(adb get-state 2>/dev/null | tr -d '\r')" == device ]] || die "no tablet over adb (USB debugging on, one device)"
 model="$(adb shell getprop ro.product.model | tr -d '\r') $(adb shell getprop ro.product.device | tr -d '\r')"
 grep -qi "TB323FU\|baldur" <<<"$model" || die "this is not a Legion Y700 Gen 5 ($model)"
 fw="$(adb shell getprop ro.build.display.id | tr -d '\r')"
@@ -123,7 +135,7 @@ say "   ... onto the microSD card"
 part() { adb shell "su -c 'for u in /sys/class/block/*/uevent; do grep -qx PARTNAME=$1 \$u && sed -n s/^DEVNAME=//p \$u; done'" | tr -d '\r' | head -1; }
 logs="$(part steamos-gen5-logs)"; root="$(part steamos-gen5)"
 [[ -n "$logs" && -n "$root" ]] || die "no SteamOS card in the tablet: write steamos-gen5-card.img to the microSD card first"
-adb push "$W/firmware.tar" "$W/android-boot.sha256" /data/local/tmp/ >/dev/null
+adb push "$(host "$W/firmware.tar")" "$(host "$W/android-boot.sha256")" /data/local/tmp/ >/dev/null
 su_ "mkdir -p /data/local/tmp/sg5 && mount -t vfat /dev/block/$logs /data/local/tmp/sg5 && cp /data/local/tmp/firmware.tar /data/local/tmp/android-boot.sha256 /data/local/tmp/sg5/ && sync && umount /data/local/tmp/sg5; rm -f /data/local/tmp/firmware.tar /data/local/tmp/android-boot.sha256" \
   || die "could not write to the card's steamos-gen5-logs partition"
 echo "firmware and the Android image hash are on the card"
@@ -134,15 +146,15 @@ linux="$(sha "$W/linux.img")"
 echo "SteamOS boot image $linux"
 
 say "5. Switch to SteamOS (KernelSU module)"
-adb push "$W/linux.img" /data/local/tmp/steamos-gen5.img >/dev/null
+adb push "$(host "$W/linux.img")" /data/local/tmp/steamos-gen5.img >/dev/null
 su_ "mkdir -p $D && mv /data/local/tmp/steamos-gen5.img $D/linux.img && echo $linux > $D/linux.img.sha256 && chmod 600 $D/linux.img"
 [[ "$(su_ sha256sum $D/linux.img | cut -d' ' -f1)" == "$linux" ]] || die "the staged image doesn't verify on the tablet"
 rm -rf "$W/module"; cp -r "$MODULE" "$W/module"; echo "$android" > "$W/module/android.sha256"
 (cd "$W/module" && python3 -c "import shutil; shutil.make_archive('$W/switch-to-steamos', 'zip', '.')")
-adb push "$W/switch-to-steamos.zip" /data/local/tmp/ >/dev/null
+adb push "$(host "$W/switch-to-steamos.zip")" /data/local/tmp/ >/dev/null
 su_ "cp /data/local/tmp/switch-to-steamos.zip $D/ && /data/adb/ksud module install /data/local/tmp/switch-to-steamos.zip >/dev/null 2>&1; rm -f /data/local/tmp/switch-to-steamos.zip" \
   || echo "note: install switch-to-steamos.zip from $D in the KernelSU app"
-adb push "$MODULE/action.sh" /data/local/tmp/sg5-action.sh >/dev/null
+adb push "$(host "$MODULE/action.sh")" /data/local/tmp/sg5-action.sh >/dev/null
 su_ "mv /data/local/tmp/sg5-action.sh $D/action.sh && chmod 755 $D/action.sh"
 echo "staged. In Android: KernelSU > Modules > Switch to SteamOS > Action"
 
