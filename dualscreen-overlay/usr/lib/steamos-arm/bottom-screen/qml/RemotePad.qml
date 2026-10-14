@@ -145,6 +145,10 @@ Item {
                 minimumTouchPoints: 1
                 maximumTouchPoints: 3
                 mouseEnabled: true
+                // touchPoints only lists TouchPoints declared here: without them
+                // down() was always empty and the pad never moved the pointer
+                // (Thor tester; the keyboard page's drag pad was fine).
+                touchPoints: [ TouchPoint {}, TouchPoint {}, TouchPoint {} ]
 
                 function down() { return touch.touchPoints.filter(function (p) { return p.pressed }) }
                 function centre(pts) {
