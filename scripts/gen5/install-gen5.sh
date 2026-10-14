@@ -19,7 +19,9 @@
 #   6. with --switch: writes it to boot_a and restarts into SteamOS
 # Back to Android: Restart into ZUXOS in Handheld Control, or hold volume up
 # + volume down for 10 s.
-set -euo pipefail
+set -Eeuo pipefail
+# Never stop without saying why.
+trap 'printf "\nERROR: stopped at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 HERE="$(cd "$(dirname "$0")" && pwd)"
 KERNEL="$HERE/Image-gen5"
 MANIFEST="$HERE/firmware.tsv"
@@ -132,7 +134,9 @@ PY
 echo "$android" > "$W/android-boot.sha256"
 
 say "   ... onto the microSD card"
-part() { adb shell "su -c 'for u in /sys/class/block/*/uevent; do grep -qx PARTNAME=$1 \$u && sed -n s/^DEVNAME=//p \$u; done'" | tr -d '\r' | head -1; }
+# The loop's last grep fails for every partition after the match, and adb
+# hands that status back: with pipefail it ended the script here silently.
+part() { { adb shell "su -c 'for u in /sys/class/block/*/uevent; do grep -qx PARTNAME=$1 \$u && sed -n s/^DEVNAME=//p \$u; done; true'" || true; } | tr -d '\r' | head -1; }
 logs="$(part steamos-gen5-logs)"; root="$(part steamos-gen5)"
 [[ -n "$logs" && -n "$root" ]] || die "no SteamOS card in the tablet: write steamos-gen5-card.img to the microSD card first"
 adb push "$(host "$W/firmware.tar")" "$(host "$W/android-boot.sha256")" /data/local/tmp/ >/dev/null
