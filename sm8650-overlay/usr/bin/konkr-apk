@@ -336,7 +336,15 @@ add_title() {
   # The launcher entry can live outside the base manifest too: ask Android.
   [[ -n "$activity" ]] || activity="$(asx "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER $pkg" | tail -n1 | grep / || true)"
   [[ -n "$activity" ]] || return 0   # nothing to open (services, libraries)
-  label="${meta[1]:-$pkg}"
+  # A name with control characters, or an "icon" that isn't really a PNG
+  # (some APKs keep WebP under .png), went into the Steam shortcut as is; a
+  # Play Store install's shortcut then took Steam's library down (Legion Y700
+  # Gen 4 tester).
+  label="$(printf '%s' "${meta[1]:-$pkg}" | tr -d '\000-\037\177' | cut -c1-80)"
+  [[ -n "$label" ]] || label="$pkg"
+  if [[ -f "$icon" && "$(head -c 8 "$icon" | od -An -tx1 | tr -d ' \n')" != 89504e470d0a1a0a ]]; then
+    rm -f "$icon"
+  fi
   [[ -f "$icon" ]] || icon=android-package-archive
   desktop="${DESKTOP_DIR}/konkr-android-${pkg}.desktop"
   mkdir -p "$DESKTOP_DIR"
