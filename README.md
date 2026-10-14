@@ -9,8 +9,8 @@
 <p align="center"><strong>Unofficial SteamOS for Snapdragon handhelds</strong></p>
 
 <p align="center">
-  Valve's SteamOS for ARM, the one made for the Steam Frame, set up for handhelds:
-  Game Mode, the KDE desktop, PC games through FEX and Proton, and Android apps.
+  Valve's SteamOS for ARM, the one made for the Steam Frame, set up for handhelds
+  and tablets: Game Mode, the KDE desktop, PC games through FEX and Proton, and Android apps.
 </p>
 
 <p align="center">
@@ -49,12 +49,23 @@ What you get:
 
 - Game Mode and Desktop Mode, with the controller showing up as a Steam Deck pad
 - x86 PC games through FEX and ARM64 Proton, plus Epic, GOG and Amazon through Heroic
+- Android apps with the Play Store, and Restart into Android from Handheld Control
+- Updates from Settings > System, no reflashing
+- Install to internal storage next to Android, or keep it on a microSD card
+- Game Mode on an external monitor or dock, sound included
+- Lossless Scaling frame gen (lsfg-vk 2.0 and Classic 1.x), Decky and the performance overlay
+- Steam Remote Play with hardware decoding, plus optional PyroWave
 - Loadout, which installs emulators and apps picked for your SoC
-- Sleep that lasts and quiet fan curves
-- Updates through Steam, no reflashing
-- Lossless Scaling frame gen, Decky and the performance overlay
-- Android apps with the Play Store
-- A dashboard on the bottom screen of the AYN Thor and AYANEO Pocket DS
+- Sleep that lasts, quiet fan curves, and a clean power off before the battery runs flat
+- A dashboard with themes on the bottom screen of the AYN Thor and AYANEO Pocket DS
+
+## Quick start
+
+1. Flash the ROCKNIX ABL bootloader for your SoC, the [ABL guide](https://steamos-arm-port.github.io/getting-started/abl/) walks you through it. Back up your stock ABL first.
+2. Download the image for your SoC from [Releases](https://github.com/hashtagbasit/SteamOS-ARM-Port/releases/latest), open the `.001` part with 7-Zip and flash the `.img` inside to a microSD card (32 GB+) with balenaEtcher or Rufus.
+3. Boot the card from the ABL menu and pick your device. First boot takes a couple of minutes.
+
+Already on it? Go to Settings > System > Check for updates.
 
 ## Devices
 
@@ -65,22 +76,27 @@ What you get:
 | Snapdragon 8 Elite | AYN Odin 3, KONKR Pocket FIT Elite | Stable |
 | Snapdragon 8 Gen 3 | KONKR Pocket FIT, AYANEO Pocket S2 / S2 Pro | Stable |
 | Snapdragon 8 Gen 2 | AYN Odin 2 / Mini / Portal / Thor, AYANEO Pocket ACE / DMG / DS / EVO / S 1K / S 2K, Retroid Pocket 6 / Nova | Stable |
+| Snapdragon 865 | Retroid Pocket 5 / Flip 2 / Mini / Mini V2, AYN Thor Lite, MANGMI Air Y Pro / Pocket Max, AYANEO Pocket MICRO 2 | Beta |
 
 There's one image per SoC, you pick your device in the ABL menu and it sets
-itself up. I only own a Pocket FIT, so if you have one of the others please
+itself up. I only own a Pocket FIT, the rest is tested by the community, so if
+you have one of the others please
 [let me know how it runs](https://github.com/hashtagbasit/SteamOS-ARM-Port/issues).
 
 ### Phones & tablets
 
 | Device | SoC | Status |
 |---|---|---|
-| Lenovo Legion Y700 Gen 3 (TB321FU) | Snapdragon 8 Gen 3 | Testing |
-| Lenovo Legion Y700 Gen 4 (TB322FC) | Snapdragon 8 Elite | Testing |
+| Lenovo Legion Y700 Gen 3 (TB321FU) | Snapdragon 8 Gen 3 | Beta |
+| Lenovo Legion Y700 Gen 4 (TB322FC) | Snapdragon 8 Elite | Beta |
+| Lenovo Legion Y700 Gen 5 (TB323FU) | Snapdragon 8 Elite Gen 5 | Testing |
 | REDMAGIC 6 (NX669J) | Snapdragon 888 | Build it yourself ([guide](docs/redmagic6.md)) |
 
-The Lenovo tablets boot from a USB drive and install to internal storage,
-nobody has run them on a real tablet yet. If you have one and want to help,
-ask on [Discord](https://discord.gg/EP53nZYvg) and see the
+The Gen 3 and Gen 4 install to internal storage next to Android, and the
+Gen 4 can also run from a microSD card. The Gen 5 runs from a microSD card
+and is switched on from Android, it's in early testing with a few testers
+right now. Tablet builds go out in the Discord first, so if you have one and
+want to help, come say hi on [Discord](https://discord.gg/EP53nZYvg) and see the
 [Lenovo page](https://steamos-arm-port.github.io/devices/lenovo/).
 
 ## Documentation
@@ -117,8 +133,10 @@ development is the fastest way to get it there, message me on
 
 ## Credits
 
-The kernels and device support come from [ROCKNIX](https://github.com/ROCKNIX/distribution).
-The full list of projects and people is in [CREDITS.md](CREDITS.md).
+The kernels and device support build on [ROCKNIX](https://github.com/ROCKNIX/distribution),
+with fixes shared back and forth with other ARM handheld projects. Thanks to
+everyone who contributed code, and to the testers in the Discord who send logs
+for devices I don't own. The full list of projects and people is in [CREDITS.md](CREDITS.md).
 
 ## License
 
