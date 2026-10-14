@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Lenovo Legion Y700 Gen 5: the microSD card at up to 100 MHz (SDR50).
+ * At SDR104 a tester's card failed its tuning ("tuning execution failed",
+ * "recovery failed") and every read after that errored: systemd crashed and
+ * the kernel panicked. The controller doesn't tune at 100 MHz and below.
+ */
+&sdhc_2 {
+	max-frequency = <100000000>;
+};

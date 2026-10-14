@@ -164,6 +164,7 @@ echo "staged. In Android: KernelSU > Modules > Switch to SteamOS > Action"
 
 if [[ $SWITCH == 1 ]]; then
   say "6. Restarting into SteamOS"
-  adb shell "su -c 'sh $D/action.sh'" | tr -d '\r'
+  # The tablet restarts while this runs, which drops adb: not an error.
+  { adb shell "su -c 'sh $D/action.sh'" || true; } | tr -d '\r' || true
 fi
 say "Done"
