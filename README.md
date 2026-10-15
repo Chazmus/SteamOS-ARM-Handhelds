@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/hashtagbasit/SteamOS-ARM-Port/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/hashtagbasit/SteamOS-ARM-Port?include_prereleases&style=flat&color=7c5cf0&label=release"></a>
+  <a href="https://github.com/hashtagbasit/SteamOS-ARM-Port/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/hashtagbasit/SteamOS-ARM-Port/total?style=flat&color=7c5cf0&label=downloads"></a>
   <a href="https://steamos-arm-port.github.io/"><img alt="Documentation" src="https://img.shields.io/badge/docs-steamos--arm--port.github.io-18181a?style=flat"></a>
   <a href="LICENSE"><img alt="GPL-2.0 license" src="https://img.shields.io/badge/license-GPL--2.0-18181a?style=flat"></a>
   <a href="https://discord.gg/EP53nZYvg"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865F2?style=flat&amp;logo=discord&amp;logoColor=white"></a>
